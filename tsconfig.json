@@ -11,6 +11,7 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "noUncheckedSideEffectImports": false,
     "incremental": true,
     "noEmit": true,
     "plugins": [{ "name": "next" }],
