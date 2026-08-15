@@ -10,7 +10,7 @@ import { EngagementBar } from './EngagementBar'
 import { TotalsRow } from './TotalsRow'
 import { useDragSelect } from './useDragSelect'
 
-const AUCUN_TOTAL: LineEngagementTotals = { realiseMinutes: 0, prevuMinutes: 0 }
+const AUCUN_TOTAL: LineEngagementTotals = []
 
 const CELLULE_CRENEAUX =
   'Journée saisie par créneaux : la cellule agrège plusieurs créneaux et ne se modifie pas ici.'

@@ -176,26 +176,53 @@ describe('getLineEngagementTotals', () => {
     await saveEntry({ userId, lineId: lineA, date: '2026-04-14', minutes: 240, kind: 'PREVISIONNEL' })
 
     const totals = await getLineEngagementTotals(userId, [lineA])
-    expect(totals[lineA]).toEqual({ realiseMinutes: 1440, prevuMinutes: 240 })
+    // Toutes les saisies partagent le même facteur (settings inchangés) : un
+    // seul groupe par kind.
+    expect(totals[lineA]).toEqual(
+      expect.arrayContaining([
+        { kind: 'REALISE', minutes: 1440, minutesParJour: 480 },
+        { kind: 'PREVISIONNEL', minutes: 240, minutesParJour: 480 },
+      ]),
+    )
+    expect(totals[lineA]).toHaveLength(2)
   })
 
-  it('sépare les lignes et renvoie zéro pour une ligne sans saisie', async () => {
+  it('sépare les lignes et renvoie un tableau vide pour une ligne sans saisie', async () => {
     await saveEntry({ userId, lineId: lineA, date: '2026-03-10', minutes: 480, kind: 'REALISE' })
 
     const totals = await getLineEngagementTotals(userId, [lineA, lineB])
-    expect(totals[lineA]).toEqual({ realiseMinutes: 480, prevuMinutes: 0 })
-    expect(totals[lineB]).toEqual({ realiseMinutes: 0, prevuMinutes: 0 })
+    expect(totals[lineA]).toEqual([{ kind: 'REALISE', minutes: 480, minutesParJour: 480 }])
+    expect(totals[lineB]).toEqual([])
   })
 
   it('scope par utilisateur', async () => {
     await saveEntry({ userId, lineId: lineA, date: '2026-03-10', minutes: 480, kind: 'REALISE' })
 
     const totals = await getLineEngagementTotals(intrusId, [lineA])
-    expect(totals[lineA]).toEqual({ realiseMinutes: 0, prevuMinutes: 0 })
+    expect(totals[lineA]).toEqual([])
   })
 
   it('accepte une liste de lignes vide sans requête', async () => {
     expect(await getLineEngagementTotals(userId, [])).toEqual({})
+  })
+
+  // Le trou du lot 1d comblé par cette tâche : une saisie porte son facteur de
+  // conversion figé à l'écriture, et un changement de réglage entre deux
+  // saisies ne doit fusionner ni réinterpréter aucune des deux — elles
+  // ressortent en groupes séparés, chacun avec son propre `minutesParJour`.
+  it('ventile les saisies par facteur de conversion figé, sans les fusionner', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-10', minutes: 480, kind: 'REALISE' })
+    await updateSettings({ minutesParJour: 420 })
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-11', minutes: 420, kind: 'REALISE' })
+
+    const totals = await getLineEngagementTotals(userId, [lineA])
+    expect(totals[lineA]).toEqual(
+      expect.arrayContaining([
+        { kind: 'REALISE', minutes: 480, minutesParJour: 480 },
+        { kind: 'REALISE', minutes: 420, minutesParJour: 420 },
+      ]),
+    )
+    expect(totals[lineA]).toHaveLength(2)
   })
 })
 

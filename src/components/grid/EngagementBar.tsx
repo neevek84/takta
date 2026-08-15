@@ -10,6 +10,11 @@ import type { LineEngagementTotals } from '@/services/time-entries'
  * `totals` est un cumul **sur toute la durée de la ligne**, jamais les saisies
  * du seul mois affiché : l'engagement se consomme d'un mois sur l'autre, et le
  * comparer aux jours vendus du contrat entier n'a de sens qu'à ce prix.
+ *
+ * `totals` porte, pour chaque saisie regroupée, le facteur de conversion figé
+ * à son écriture — jamais le facteur courant de `line`. Le convertir avec
+ * `line.minutesParJour` réinterpréterait le réalisé/prévisionnel à chaque
+ * changement de réglage, exactement ce que ce lot corrige ailleurs.
  */
 export function EngagementBar({
   line,
@@ -20,10 +25,7 @@ export function EngagementBar({
 }) {
   const e = computeEngagement({
     venduCentiemes: line.soldCentiemes,
-    entries: [
-      { kind: 'REALISE', minutes: totals.realiseMinutes, minutesParJour: line.minutesParJour },
-      { kind: 'PREVISIONNEL', minutes: totals.prevuMinutes, minutesParJour: line.minutesParJour },
-    ],
+    entries: totals,
   })
 
   const pct = (v: number) => (e.venduCentiemes === 0 ? 0 : (v / e.venduCentiemes) * 100)

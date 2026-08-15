@@ -50,10 +50,24 @@ export async function getMonthEntries(userId: string, month: string): Promise<Mo
   }))
 }
 
-export interface LineEngagementTotals {
-  realiseMinutes: number
-  prevuMinutes: number
+export interface LineEngagementEntry {
+  kind: TimeEntryKind
+  minutes: number
+  /** durée d'une journée figée à l'écriture des saisies regroupées ici */
+  minutesParJour: number
 }
+
+/**
+ * Cumul des minutes d'une ligne, ventilé par facteur de conversion figé à
+ * l'écriture (voir `minutesParJour` sur `TimeEntry`).
+ *
+ * Volontairement *pas* un total déjà converti : deux saisies écrites sous des
+ * facteurs différents (avant/après un changement de réglage ou de cascade) ne
+ * s'additionnent pas en minutes brutes sans réinterpréter l'historique. C'est
+ * `computeEngagement` — jamais ce module ni ses appelants — qui sait convertir
+ * chaque groupe séparément avant de sommer les centièmes.
+ */
+export type LineEngagementTotals = LineEngagementEntry[]
 
 /**
  * Totaux d'une ligne de prestation, **toutes périodes confondues**.
@@ -62,19 +76,23 @@ export interface LineEngagementTotals {
  * affiché, comme le fait `getMonthEntries`, donne un reste à consommer faux dès
  * le deuxième mois de la mission.
  *
- * Renvoie une entrée pour chaque `lineId` demandé, à zéro quand la ligne n'a
- * aucune saisie. Scopé par `userId` comme toute fonction de service.
+ * Renvoie une entrée pour chaque `lineId` demandé, à zéro (tableau vide) quand
+ * la ligne n'a aucune saisie. Scopé par `userId` comme toute fonction de
+ * service.
  */
 export async function getLineEngagementTotals(
   userId: string,
   lineIds: string[],
 ): Promise<Record<string, LineEngagementTotals>> {
   const totals: Record<string, LineEngagementTotals> = {}
-  for (const id of lineIds) totals[id] = { realiseMinutes: 0, prevuMinutes: 0 }
+  for (const id of lineIds) totals[id] = []
   if (lineIds.length === 0) return totals
 
+  // Groupé par facteur en plus de la ligne et du type : additionner des
+  // minutes converties à des facteurs différents n'a aucun sens (voir
+  // `LineEngagementTotals`).
   const rows = await prisma.timeEntry.groupBy({
-    by: ['lineId', 'kind'],
+    by: ['lineId', 'kind', 'minutesParJour'],
     where: { userId, lineId: { in: lineIds } },
     _sum: { minutes: true },
   })
@@ -83,8 +101,8 @@ export async function getLineEngagementTotals(
     const bucket = totals[row.lineId]
     if (bucket === undefined) continue
     const minutes = row._sum.minutes ?? 0
-    if ((row.kind as TimeEntryKind) === 'REALISE') bucket.realiseMinutes += minutes
-    else bucket.prevuMinutes += minutes
+    if (minutes === 0) continue
+    bucket.push({ kind: row.kind as TimeEntryKind, minutes, minutesParJour: row.minutesParJour })
   }
 
   return totals

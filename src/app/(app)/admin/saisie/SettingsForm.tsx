@@ -1,7 +1,7 @@
 'use client'
 
 import { useActionState, useState } from 'react'
-import { saveSettings, type SaveSettingsState } from './actions'
+import { saveSettings, lancerReetalonnage, type SaveSettingsState } from './actions'
 import type { AppSettings } from '@/services/settings'
 import { ENGAGEMENT_SOURCES } from '@/services/settings'
 import { crossesMidnight, slotDurationMinutes, type Slot } from '@/core/time/slots'
@@ -71,7 +71,18 @@ function slotsToRows(slots: Slot[]): SlotRow[] {
   }))
 }
 
-export function SettingsForm({ settings }: { settings: AppSettings }) {
+interface RecalibrationPreview {
+  concernees: number
+  verrouillees: number
+}
+
+export function SettingsForm({
+  settings,
+  preview,
+}: {
+  settings: AppSettings
+  preview: RecalibrationPreview
+}) {
   const [state, formAction, pending] = useActionState<SaveSettingsState, FormData>(
     saveSettings,
     null,
@@ -105,6 +116,7 @@ export function SettingsForm({ settings }: { settings: AppSettings }) {
   )
 
   return (
+    <>
     <form action={formAction} className="flex flex-col gap-6">
       {state && !state.ok && (
         <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
@@ -351,5 +363,37 @@ export function SettingsForm({ settings }: { settings: AppSettings }) {
         {pending ? 'Enregistrement…' : 'Enregistrer'}
       </button>
     </form>
+
+    <section className="border-t pt-4">
+      <h2 className="mb-2 font-medium">Réétalonnage</h2>
+      {preview.concernees === 0 && preview.verrouillees === 0 ? (
+        <p className="text-sm text-slate-500">
+          Toutes les saisies utilisent déjà la durée de journée en vigueur.
+        </p>
+      ) : (
+        <>
+          <p className="mb-2 text-sm text-slate-600">
+            {preview.concernees} saisie(s) d’un mois ouvert utilisent une durée de journée
+            différente de celle en vigueur.
+            {preview.verrouillees > 0 && (
+              <> {preview.verrouillees} autre(s) appartiennent à un mois validé et ne seront
+              jamais modifiées.</>
+            )}
+          </p>
+          {preview.concernees > 0 && (
+            <form
+              action={async () => {
+                await lancerReetalonnage()
+              }}
+            >
+              <button className="rounded border px-3 py-1 text-sm">
+                Réétalonner les {preview.concernees} saisie(s)
+              </button>
+            </form>
+          )}
+        </>
+      )}
+    </section>
+    </>
   )
 }

@@ -31,7 +31,7 @@ function renderClient(): void {
       days={buildMonthDays('2026-03', [1, 2, 3, 4, 5], [])}
       lines={lines}
       entries={[]}
-      engagementTotals={{ l1: { realiseMinutes: 0, prevuMinutes: 0 } }}
+      engagementTotals={{ l1: [] }}
       capacityMinutes={480}
       minutesParJour={480}
     />,

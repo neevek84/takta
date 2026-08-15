@@ -39,8 +39,8 @@ const entries: MonthEntry[] = [
 ]
 
 const engagementTotals: Record<string, LineEngagementTotals> = {
-  l1: { realiseMinutes: 480, prevuMinutes: 0 },
-  l2: { realiseMinutes: 240, prevuMinutes: 0 },
+  l1: [{ kind: 'REALISE', minutes: 480, minutesParJour: 480 }],
+  l2: [{ kind: 'REALISE', minutes: 240, minutesParJour: 480 }],
 }
 
 function renderGrid(
@@ -110,8 +110,8 @@ describe('MonthGrid', () => {
     renderGrid({
       entries: [],
       engagementTotals: {
-        l1: { realiseMinutes: 480 * 18, prevuMinutes: 0 },
-        l2: { realiseMinutes: 0, prevuMinutes: 0 },
+        l1: [{ kind: 'REALISE', minutes: 480 * 18, minutesParJour: 480 }],
+        l2: [],
       },
     })
     const bandeau = screen.getByTestId('engagement-l1').textContent ?? ''
