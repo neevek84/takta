@@ -8,6 +8,7 @@ const LIENS = [
   { href: '/missions', label: 'Missions' },
   { href: '/cra', label: 'CRA' },
   { href: '/admin/saisie', label: 'Admin' },
+  { href: '/admin/theme', label: 'Thème' },
 ]
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
