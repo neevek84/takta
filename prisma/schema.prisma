@@ -1,0 +1,164 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("ADMIN")
+  createdAt    DateTime @default(now())
+
+  timeEntries TimeEntry[]
+  assignments Assignment[]
+  cras        Cra[]
+}
+
+model Client {
+  id        String    @id @default(cuid())
+  name      String
+  createdAt DateTime  @default(now())
+  missions  Mission[]
+}
+
+model Mission {
+  id        String        @id @default(cuid())
+  clientId  String
+  label     String
+  startDate DateTime?
+  endDate   DateTime?
+  archived  Boolean       @default(false)
+  createdAt DateTime      @default(now())
+
+  client Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lines  MissionLine[]
+  cras   Cra[]
+
+  @@index([clientId])
+}
+
+model MissionLine {
+  id                String  @id @default(cuid())
+  missionId         String
+  label             String
+  /// jours vendus, en centièmes de jour
+  soldCentiemes     Int     @default(0)
+  /// TJM en centimes — informatif, l'app ne facture pas
+  tjmCents          Int     @default(0)
+  /// 'JOUR' | 'DEMI_JOUR' | 'HEURE'
+  displayUnit       String  @default("JOUR")
+  /// surcharge de Settings.minutesParJour, null = hérite
+  minutesParJour    Int?
+  /// 'MANUEL' | 'DOLIBARR_PROPALE' | 'DOLIBARR_PROJET'
+  engagementSource  String  @default("MANUEL")
+  /// ids de créneaux autorisés, séparés par des virgules. Vide = tous.
+  allowedSlotIds    String  @default("")
+  archived          Boolean @default(false)
+  position          Int     @default(0)
+
+  mission     Mission      @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  assignments Assignment[]
+  timeEntries TimeEntry[]
+
+  @@index([missionId])
+}
+
+model Assignment {
+  id            String    @id @default(cuid())
+  lineId        String
+  userId        String
+  /// part allouée à cet utilisateur, en centièmes de jour
+  soldCentiemes Int       @default(0)
+  startDate     DateTime?
+  endDate       DateTime?
+
+  line MissionLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  user User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([lineId, userId])
+  @@index([userId])
+}
+
+model TimeEntry {
+  id        String   @id @default(cuid())
+  lineId    String
+  userId    String
+  /// minuit UTC du jour concerné
+  date      DateTime
+  minutes   Int
+  /// 'REALISE' | 'PREVISIONNEL'
+  kind      String
+  /// id du créneau ; chaîne vide = journée entière.
+  /// NON nullable : un NULL n'est jamais égal à lui-même dans un index
+  /// unique, la contrainte ci-dessous ne protégerait donc rien.
+  slotId    String   @default("")
+  comment   String   @default("")
+  updatedAt DateTime @updatedAt
+
+  line MissionLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  user User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([lineId, userId, date, slotId])
+  @@index([userId, date])
+  @@index([lineId])
+}
+
+model Cra {
+  id        String   @id @default(cuid())
+  missionId String
+  userId    String
+  /// premier jour du mois, minuit UTC
+  month     DateTime
+  /// 'BROUILLON' | 'ENVOYE' | 'VALIDE' | 'REFUSE'
+  status    String   @default("BROUILLON")
+
+  invoiceNumber String?
+  invoicedAt    DateTime?
+  paidAt        DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([missionId, userId, month])
+  @@index([userId])
+}
+
+model ExternalLink {
+  id         String    @id @default(cuid())
+  entityType String
+  entityId   String
+  provider   String
+  externalId String
+  syncedAt   DateTime?
+  syncState  String    @default("PENDING")
+
+  @@unique([entityType, entityId, provider])
+  @@index([provider, externalId])
+}
+
+model Settings {
+  id String @id @default("singleton")
+
+  /// durée d'une journée, en minutes (7 h 12 -> 432)
+  minutesParJour Int    @default(480)
+  /// 'DESACTIVE' | 'AVERTISSEMENT' | 'BLOCAGE'
+  capacityMode   String @default("AVERTISSEMENT")
+  /// seuil, en centièmes de jour
+  capacityCentiemes Int @default(100)
+  /// jours de semaine ouvrés, 1=lundi .. 7=dimanche, séparés par des virgules
+  workingDays    String @default("1,2,3,4,5")
+  /// JSON, lu et écrit en bloc uniquement
+  slotsJson      String @default("[]")
+  /// JSON, lu et écrit en bloc uniquement
+  holidaysJson   String @default("[]")
+  defaultDisplayUnit      String @default("JOUR")
+  defaultEngagementSource String @default("MANUEL")
+}
