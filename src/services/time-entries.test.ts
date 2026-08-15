@@ -4,6 +4,7 @@ import { updateSettings } from './settings'
 import { createClient } from './clients'
 import { createMission, createLine } from './missions'
 import { saveEntry, getMonthEntries, getLineEngagementTotals } from './time-entries'
+import { listPastForecast, convertPastForecast } from './time-entries'
 
 let userId = ''
 let intrusId = ''
@@ -185,5 +186,86 @@ describe('getLineEngagementTotals', () => {
 
   it('accepte une liste de lignes vide sans requête', async () => {
     expect(await getLineEngagementTotals(userId, [])).toEqual({})
+  })
+})
+
+describe('conversion du prévisionnel échu', () => {
+  it('ne retient que le prévisionnel strictement passé', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-10', minutes: 480, kind: 'PREVISIONNEL' })
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-20', minutes: 480, kind: 'PREVISIONNEL' })
+    await saveEntry({ userId, lineId: lineB, date: '2026-03-05', minutes: 240, kind: 'REALISE' })
+
+    const past = await listPastForecast(userId, '2026-03', '2026-03-15')
+    expect(past.map((e) => e.date)).toEqual(['2026-03-10'])
+  })
+
+  it('exclut le jour même', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-15', minutes: 480, kind: 'PREVISIONNEL' })
+    expect(await listPastForecast(userId, '2026-03', '2026-03-15')).toHaveLength(0)
+  })
+
+  it('convertit le passé et laisse le futur intact', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-10', minutes: 480, kind: 'PREVISIONNEL' })
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-20', minutes: 480, kind: 'PREVISIONNEL' })
+
+    const r = await convertPastForecast(userId, '2026-03', '2026-03-15')
+    expect(r).toEqual({ converted: 1, skippedLocked: 0 })
+
+    const entries = await getMonthEntries(userId, '2026-03')
+    const byDate = new Map(entries.map((e) => [e.date, e.kind]))
+    expect(byDate.get('2026-03-10')).toBe('REALISE')
+    expect(byDate.get('2026-03-20')).toBe('PREVISIONNEL')
+  })
+
+  it('ne modifie jamais les minutes', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-10', minutes: 240, kind: 'PREVISIONNEL' })
+    await convertPastForecast(userId, '2026-03', '2026-03-15')
+
+    const entry = (await getMonthEntries(userId, '2026-03')).find((e) => e.date === '2026-03-10')
+    expect(entry!.minutes).toBe(240)
+  })
+
+  it('saute une mission dont le CRA est validé, sans toucher aux autres', async () => {
+    const line = await prisma.missionLine.findUniqueOrThrow({ where: { id: lineA } })
+    await prisma.cra.create({
+      data: {
+        missionId: line.missionId,
+        userId,
+        month: new Date('2026-03-01T00:00:00Z'),
+        status: 'VALIDE',
+      },
+    })
+
+    // lineA et lineB appartiennent à la même mission dans ce fichier de test :
+    // les deux entrées sont donc sautées.
+    await prisma.timeEntry.create({
+      data: { lineId: lineA, userId, date: new Date('2026-03-10T00:00:00Z'), minutes: 480, kind: 'PREVISIONNEL' },
+    })
+
+    const r = await convertPastForecast(userId, '2026-03', '2026-03-15')
+    expect(r.converted).toBe(0)
+    expect(r.skippedLocked).toBe(1)
+
+    const entry = (await getMonthEntries(userId, '2026-03')).find((e) => e.date === '2026-03-10')
+    expect(entry!.kind).toBe('PREVISIONNEL')
+
+    await prisma.cra.deleteMany({ where: { userId } })
+  })
+
+  it('ne touche pas au prévisionnel d un autre utilisateur', async () => {
+    const autre = await prisma.user.create({
+      data: { email: 'autre-conv@test.local', name: 'A', passwordHash: 'x' },
+    })
+    await prisma.timeEntry.create({
+      data: { lineId: lineA, userId: autre.id, date: new Date('2026-03-10T00:00:00Z'), minutes: 480, kind: 'PREVISIONNEL' },
+    })
+
+    const r = await convertPastForecast(userId, '2026-03', '2026-03-15')
+    expect(r.converted).toBe(0)
+
+    const restant = await prisma.timeEntry.findFirst({ where: { userId: autre.id } })
+    expect(restant!.kind).toBe('PREVISIONNEL')
+
+    await prisma.user.delete({ where: { id: autre.id } })
   })
 })

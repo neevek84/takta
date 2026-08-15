@@ -209,3 +209,71 @@ export async function saveEntry(args: {
     ? { ok: true, minutes: args.minutes }
     : { ok: true, minutes: args.minutes, warning }
 }
+
+/**
+ * Prévisionnel strictement antérieur à `today`, pour le mois donné.
+ *
+ * `today` est un paramètre (jamais lu de l'horloge ici) afin que la fonction
+ * reste testable sans geler le temps.
+ */
+export async function listPastForecast(
+  userId: string,
+  month: string,
+  today: string,
+): Promise<MonthEntry[]> {
+  const entries = await getMonthEntries(userId, month)
+  return entries.filter((e) => e.kind === 'PREVISIONNEL' && e.date < today)
+}
+
+/**
+ * Convertit en `REALISE` le prévisionnel échu d'un mois, jamais automatiquement
+ * — seulement à la demande explicite de l'utilisateur (voir `validerJoursPasses`).
+ *
+ * Le verrou du CRA porte sur un couple (mission, mois) : un même mois peut
+ * mêler une mission verrouillée et une mission ouverte. On traite donc les
+ * missions ouvertes et on compte celles qu'on a sautées, plutôt que de tout
+ * refuser en bloc dès qu'une mission du mois est verrouillée.
+ */
+export async function convertPastForecast(
+  userId: string,
+  month: string,
+  today: string,
+): Promise<{ converted: number; skippedLocked: number }> {
+  const candidates = await listPastForecast(userId, month, today)
+  if (candidates.length === 0) return { converted: 0, skippedLocked: 0 }
+
+  const lines = await prisma.missionLine.findMany({
+    where: { id: { in: [...new Set(candidates.map((e) => e.lineId))] } },
+    select: { id: true, missionId: true },
+  })
+  const missionByLine = new Map(lines.map((l) => [l.id, l.missionId]))
+
+  const cras = await prisma.cra.findMany({
+    where: {
+      userId,
+      month: new Date(`${month}-01T00:00:00.000Z`),
+      missionId: { in: [...new Set(lines.map((l) => l.missionId))] },
+    },
+    select: { missionId: true, status: true },
+  })
+  const lockedMissions = new Set(
+    cras.filter((c) => isLocked(c.status as CraStatus)).map((c) => c.missionId),
+  )
+
+  const convertibles = candidates.filter((e) => {
+    const missionId = missionByLine.get(e.lineId)
+    return missionId !== undefined && !lockedMissions.has(missionId)
+  })
+
+  if (convertibles.length > 0) {
+    await prisma.timeEntry.updateMany({
+      where: { id: { in: convertibles.map((e) => e.id) }, userId },
+      data: { kind: 'REALISE' },
+    })
+  }
+
+  return {
+    converted: convertibles.length,
+    skippedLocked: candidates.length - convertibles.length,
+  }
+}

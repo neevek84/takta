@@ -4,6 +4,7 @@ import { requireUser, signOut } from '@/auth'
 
 const LIENS = [
   { href: '/saisie', label: 'Saisie' },
+  { href: '/charge', label: 'Charge' },
   { href: '/missions', label: 'Missions' },
   { href: '/cra', label: 'CRA' },
   { href: '/admin/saisie', label: 'Admin' },
