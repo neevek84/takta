@@ -174,4 +174,8 @@ model Settings {
   objectifCaExerciceCents Int @default(0)
   /// mois de début d'exercice, 1-12
   debutExerciceMois       Int @default(1)
+
+  /// palette du thème, JSON lu et écrit en bloc uniquement.
+  /// "{}" = jamais configuré, le thème par défaut s'applique.
+  themeJson String @default("{}")
 }
