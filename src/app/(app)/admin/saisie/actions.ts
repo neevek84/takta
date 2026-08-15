@@ -55,6 +55,8 @@ export async function saveSettings(
       slots,
       defaultDisplayUnit: String(formData.get('defaultDisplayUnit')) as DisplayUnit,
       defaultEngagementSource: String(formData.get('defaultEngagementSource')) as EngagementSource,
+      objectifCaExerciceCents: Math.round(Number(formData.get('objectifCaEuros')) * 100),
+      debutExerciceMois: Number(formData.get('debutExerciceMois')),
     })
   } catch (err) {
     if (err instanceof SettingsValidationError) {

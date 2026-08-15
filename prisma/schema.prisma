@@ -161,4 +161,9 @@ model Settings {
   holidaysJson   String @default("[]")
   defaultDisplayUnit      String @default("JOUR")
   defaultEngagementSource String @default("MANUEL")
+
+  /// objectif de CA sur l'exercice, en centimes. 0 = non défini.
+  objectifCaExerciceCents Int @default(0)
+  /// mois de début d'exercice, 1-12
+  debutExerciceMois       Int @default(1)
 }

@@ -185,3 +185,47 @@ describe('validation des réglages (C4 — perte de données silencieuse)', () =
     }
   })
 })
+
+describe('réglages d exercice', () => {
+  it('expose des valeurs par défaut neutres', async () => {
+    // Les tests précédents du fichier ont muté le singleton : on repart
+    // d'une base vierge, sinon ce test dépendrait de l'ordre d'exécution.
+    await prisma.settings.deleteMany({})
+
+    const s = await getSettings()
+    expect(s.objectifCaExerciceCents).toBe(0)
+    expect(s.debutExerciceMois).toBe(1)
+  })
+
+  it('persiste un objectif et un mois de début', async () => {
+    const s = await updateSettings({ objectifCaExerciceCents: 15_000_000, debutExerciceMois: 4 })
+    expect(s.objectifCaExerciceCents).toBe(15_000_000)
+    expect(s.debutExerciceMois).toBe(4)
+
+    const relu = await getSettings()
+    expect(relu.objectifCaExerciceCents).toBe(15_000_000)
+    expect(relu.debutExerciceMois).toBe(4)
+  })
+
+  it('refuse un mois de début hors de 1-12 et ne le persiste jamais', async () => {
+    await updateSettings({ debutExerciceMois: 4 })
+
+    await expect(updateSettings({ debutExerciceMois: 0 })).rejects.toThrow()
+    await expect(updateSettings({ debutExerciceMois: 13 })).rejects.toThrow()
+
+    expect((await getSettings()).debutExerciceMois).toBe(4)
+  })
+
+  it('refuse un mois de début non entier', async () => {
+    await expect(updateSettings({ debutExerciceMois: 4.5 })).rejects.toThrow()
+  })
+
+  it('refuse un objectif négatif', async () => {
+    await expect(updateSettings({ objectifCaExerciceCents: -1 })).rejects.toThrow()
+  })
+
+  it('accepte un objectif nul, qui signifie non défini', async () => {
+    const s = await updateSettings({ objectifCaExerciceCents: 0 })
+    expect(s.objectifCaExerciceCents).toBe(0)
+  })
+})

@@ -310,6 +310,39 @@ export function SettingsForm({ settings }: { settings: AppSettings }) {
         </p>
       </fieldset>
 
+      <fieldset className="border-t pt-4">
+        <legend className="mb-2 font-medium">Exercice</legend>
+
+        <label className="mb-3 flex flex-col text-sm">
+          Mois de début d’exercice
+          <select
+            name="debutExerciceMois"
+            defaultValue={String(settings.debutExerciceMois)}
+            className="w-48 rounded border px-2 py-1"
+          >
+            {['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
+              .map((label, i) => (
+                <option key={label} value={i + 1}>{label}</option>
+              ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col text-sm">
+          Objectif de chiffre d’affaires sur l’exercice (€)
+          <input
+            name="objectifCaEuros"
+            type="number"
+            min="0"
+            step="100"
+            defaultValue={settings.objectifCaExerciceCents / 100}
+            className="w-48 rounded border px-2 py-1"
+          />
+          <span className="mt-1 text-xs text-slate-500">
+            0 masque la barre d’exercice sur le plan de charge.
+          </span>
+        </label>
+      </fieldset>
+
       <button
         type="submit"
         disabled={pending}
