@@ -1,5 +1,6 @@
 import { prisma } from '@/db/client'
 import { getSettings } from './settings'
+import { resolveMinutesParJour } from '@/core/rates/cascade'
 import type { DisplayUnit } from '@/core/types'
 
 export interface LineForGrid {
@@ -16,9 +17,14 @@ export interface LineForGrid {
 export async function createMission(args: {
   clientId: string
   label: string
+  minutesParJour?: number | null
 }): Promise<{ id: string }> {
   const m = await prisma.mission.create({
-    data: { clientId: args.clientId, label: args.label },
+    data: {
+      clientId: args.clientId,
+      label: args.label,
+      minutesParJour: args.minutesParJour ?? null,
+    },
   })
   return { id: m.id }
 }
@@ -66,6 +72,10 @@ export interface MissionForUser {
   id: string
   label: string
   clientName: string
+  /** durée d'une journée réellement appliquée, après cascade */
+  minutesParJourEffectif: number
+  /** surcharge portée par la mission elle-même, null si héritée */
+  minutesParJourSurcharge: number | null
   lines: Array<{
     id: string
     label: string
@@ -85,22 +95,31 @@ export interface MissionForUser {
  * plusieurs consultants ne fuit pas les lignes des autres).
  */
 export async function listMissionsForUser(userId: string): Promise<MissionForUser[]> {
-  const missions = await prisma.mission.findMany({
-    where: {
-      archived: false,
-      OR: [{ lines: { none: {} } }, { lines: { some: { assignments: { some: { userId } } } } }],
-    },
-    include: {
-      client: true,
-      lines: { where: { archived: false, assignments: { some: { userId } } } },
-    },
-    orderBy: { createdAt: 'desc' },
-  })
+  const [missions, settings] = await Promise.all([
+    prisma.mission.findMany({
+      where: {
+        archived: false,
+        OR: [{ lines: { none: {} } }, { lines: { some: { assignments: { some: { userId } } } } }],
+      },
+      include: {
+        client: true,
+        lines: { where: { archived: false, assignments: { some: { userId } } } },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    getSettings(),
+  ])
 
   return missions.map((m) => ({
     id: m.id,
     label: m.label,
     clientName: m.client.name,
+    minutesParJourEffectif: resolveMinutesParJour({
+      mission: m.minutesParJour,
+      client: m.client.minutesParJour,
+      global: settings.minutesParJour,
+    }),
+    minutesParJourSurcharge: m.minutesParJour,
     lines: m.lines.map((l) => ({
       id: l.id,
       label: l.label,

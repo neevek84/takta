@@ -1,7 +1,10 @@
 import { prisma } from '@/db/client'
 
-export async function createClient(name: string): Promise<{ id: string; name: string }> {
-  const c = await prisma.client.create({ data: { name } })
+export async function createClient(
+  name: string,
+  minutesParJour?: number | null,
+): Promise<{ id: string; name: string }> {
+  const c = await prisma.client.create({ data: { name, minutesParJour: minutesParJour ?? null } })
   return { id: c.id, name: c.name }
 }
 

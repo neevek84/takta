@@ -3,6 +3,7 @@ import type { CraStatus, TimeEntryKind } from '@/core/types'
 import { checkCapacity } from '@/core/capacity/check'
 import { isLocked } from '@/core/cra/state-machine'
 import { centiemesToMinutes } from '@/core/time/units'
+import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { getSettings } from './settings'
 
 export interface MonthEntry {
@@ -14,6 +15,8 @@ export interface MonthEntry {
   kind: TimeEntryKind
   /** chaîne vide = journée entière */
   slotId: string
+  /** durée d'une journée figée à l'écriture, en minutes */
+  minutesParJour: number
 }
 
 function monthBounds(month: string): { start: Date; end: Date } {
@@ -43,6 +46,7 @@ export async function getMonthEntries(userId: string, month: string): Promise<Mo
     minutes: r.minutes,
     kind: r.kind as TimeEntryKind,
     slotId: r.slotId,
+    minutesParJour: r.minutesParJour,
   }))
 }
 
@@ -100,6 +104,26 @@ export type SaveResult =
 
 function monthStartOf(isoDate: string): Date {
   return new Date(`${isoDate.slice(0, 7)}-01T00:00:00.000Z`)
+}
+
+/** Résout le facteur effectif d'une prestation en remontant la cascade. */
+async function facteurDeLaLigne(lineId: string, globalMinutesParJour: number): Promise<number> {
+  const line = await prisma.missionLine.findUniqueOrThrow({
+    where: { id: lineId },
+    select: {
+      minutesParJour: true,
+      mission: {
+        select: { minutesParJour: true, client: { select: { minutesParJour: true } } },
+      },
+    },
+  })
+
+  return resolveMinutesParJour({
+    line: line.minutesParJour,
+    mission: line.mission.minutesParJour,
+    client: line.mission.client.minutesParJour,
+    global: globalMinutesParJour,
+  })
 }
 
 /**
@@ -190,6 +214,11 @@ export async function saveEntry(args: {
       ? { totalMinutes: verdict.totalMinutes, capacityMinutes: verdict.capacityMinutes }
       : null
 
+  // Le facteur de conversion est figé au moment de l'écriture : le rejouer au
+  // moment de la lecture réinterpréterait tout l'historique dès que le
+  // réglage change.
+  const minutesParJour = await facteurDeLaLigne(args.lineId, settings.minutesParJour)
+
   await prisma.timeEntry.upsert({
     where: {
       lineId_userId_date_slotId: { lineId: args.lineId, userId: args.userId, date, slotId },
@@ -201,8 +230,9 @@ export async function saveEntry(args: {
       slotId,
       minutes: args.minutes,
       kind: args.kind,
+      minutesParJour,
     },
-    update: { minutes: args.minutes, kind: args.kind },
+    update: { minutes: args.minutes, kind: args.kind, minutesParJour },
   })
 
   return warning === null

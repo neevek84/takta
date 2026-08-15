@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/db/client'
+import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { updateSettings } from './settings'
 import { createClient } from './clients'
 import { createMission, createLine } from './missions'
@@ -346,5 +347,84 @@ describe('getPastForecastWithLockStatus', () => {
 
     const status = await getPastForecastWithLockStatus(intrusId, '2026-03', '2026-03-15')
     expect(status).toEqual({ entries: [], lockedCount: 0 })
+  })
+})
+
+describe('gel du facteur de conversion', () => {
+  it('fige le facteur effectif au moment de l écriture', async () => {
+    await updateSettings({ minutesParJour: 480 })
+    await saveEntry({ userId, lineId: lineA, date: '2026-06-01', minutes: 480, kind: 'REALISE' })
+
+    const avant = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: lineA, date: new Date('2026-06-01T00:00:00.000Z') },
+    })
+    expect(avant.minutesParJour).toBe(480)
+  })
+
+  it('n écrit jamais le défaut du schéma quand le réglage vaut autre chose', async () => {
+    // Si le chemin d'écriture oubliait de renseigner la colonne, ce test
+    // verrait 480 — le défaut du schéma — au lieu de 420.
+    await updateSettings({ minutesParJour: 420 })
+    await saveEntry({ userId, lineId: lineA, date: '2026-06-02', minutes: 420, kind: 'REALISE' })
+
+    const e = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: lineA, date: new Date('2026-06-02T00:00:00.000Z') },
+    })
+    expect(e.minutesParJour).toBe(420)
+  })
+
+  it('ne réécrit jamais une saisie existante quand le réglage change', async () => {
+    await updateSettings({ minutesParJour: 480 })
+    await saveEntry({ userId, lineId: lineA, date: '2026-06-03', minutes: 480, kind: 'REALISE' })
+
+    await updateSettings({ minutesParJour: 420 })
+
+    const e = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: lineA, date: new Date('2026-06-03T00:00:00.000Z') },
+    })
+    expect(e.minutesParJour).toBe(480)
+  })
+
+  it('laisse coexister deux facteurs dans le même mois', async () => {
+    await updateSettings({ minutesParJour: 480 })
+    await saveEntry({ userId, lineId: lineA, date: '2026-06-04', minutes: 480, kind: 'REALISE' })
+    await updateSettings({ minutesParJour: 420 })
+    await saveEntry({ userId, lineId: lineB, date: '2026-06-05', minutes: 420, kind: 'REALISE' })
+
+    const entries = await getMonthEntries(userId, '2026-06')
+    const facteurs = entries.map((e) => e.minutesParJour).sort()
+    expect(facteurs).toEqual([420, 480])
+  })
+
+  it('restitue le facteur dans MonthEntry', async () => {
+    await updateSettings({ minutesParJour: 450 })
+    await saveEntry({ userId, lineId: lineA, date: '2026-06-06', minutes: 450, kind: 'REALISE' })
+
+    const entry = (await getMonthEntries(userId, '2026-06')).find((e) => e.date === '2026-06-06')
+    expect(entry!.minutesParJour).toBe(450)
+  })
+
+  it('respecte une surcharge portée par le client', async () => {
+    const line = await prisma.missionLine.findUniqueOrThrow({
+      where: { id: lineA },
+      select: { mission: { select: { clientId: true } } },
+    })
+    await prisma.client.update({
+      where: { id: line.mission.clientId },
+      data: { minutesParJour: 400 },
+    })
+    await updateSettings({ minutesParJour: 480 })
+
+    await saveEntry({ userId, lineId: lineA, date: '2026-06-07', minutes: 400, kind: 'REALISE' })
+
+    const e = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: lineA, date: new Date('2026-06-07T00:00:00.000Z') },
+    })
+    expect(e.minutesParJour).toBe(400)
+
+    await prisma.client.update({
+      where: { id: line.mission.clientId },
+      data: { minutesParJour: null },
+    })
   })
 })

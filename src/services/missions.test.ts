@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/db/client'
 import { createClient, listClients } from './clients'
 import { createMission, createLine, listActiveLines, listMissionsForUser } from './missions'
+import { updateSettings } from './settings'
 
 let userId = ''
 
@@ -27,6 +28,7 @@ afterAll(async () => {
     },
   })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'ACME' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'SURCHARGE' } } })
   await prisma.$disconnect()
 })
 
@@ -166,5 +168,49 @@ describe('clients et missions', () => {
     expect((await listMissionsForUser(autre.id)).some((x) => x.id === m.id)).toBe(true)
 
     await prisma.user.delete({ where: { id: autre.id } })
+  })
+})
+
+describe('surcharges de durée de journée', () => {
+  it('crée un client avec sa surcharge', async () => {
+    const c = await createClient('SURCHARGE client', 420)
+    const relu = await prisma.client.findUniqueOrThrow({ where: { id: c.id } })
+    expect(relu.minutesParJour).toBe(420)
+  })
+
+  it('crée un client sans surcharge par défaut', async () => {
+    const c = await createClient('SURCHARGE sans')
+    const relu = await prisma.client.findUniqueOrThrow({ where: { id: c.id } })
+    expect(relu.minutesParJour).toBeNull()
+  })
+
+  it('crée une mission avec sa surcharge', async () => {
+    const c = await createClient('SURCHARGE mission')
+    const m = await createMission({ clientId: c.id, label: 'M', minutesParJour: 450 })
+    const relu = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect(relu.minutesParJour).toBe(450)
+  })
+
+  it('expose la valeur effective et la surcharge propre de la mission', async () => {
+    await updateSettings({ minutesParJour: 480 })
+    const c = await createClient('SURCHARGE effectif', 420)
+    const m = await createMission({ clientId: c.id, label: 'ME' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.label === 'ME')
+    // Héritée du client, pas surchargée sur la mission.
+    expect(mission!.minutesParJourEffectif).toBe(420)
+    expect(mission!.minutesParJourSurcharge).toBeNull()
+  })
+
+  it('la surcharge de mission l emporte sur celle du client', async () => {
+    await updateSettings({ minutesParJour: 480 })
+    const c = await createClient('SURCHARGE priorite', 420)
+    const m = await createMission({ clientId: c.id, label: 'MP', minutesParJour: 450 })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.label === 'MP')
+    expect(mission!.minutesParJourEffectif).toBe(450)
+    expect(mission!.minutesParJourSurcharge).toBe(450)
   })
 })
