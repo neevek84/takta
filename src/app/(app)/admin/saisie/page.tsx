@@ -1,6 +1,6 @@
 import { requireUser } from '@/auth'
 import { getSettings } from '@/services/settings'
-import { saveSettings } from './actions'
+import { saveSettings, reloadHolidays } from './actions'
 
 const JOURS = [
   { value: 1, label: 'Lundi' },
@@ -94,6 +94,19 @@ export default async function AdminSaisiePage() {
           Enregistrer
         </button>
       </form>
+
+      <section className="border-t pt-4">
+        <h2 className="mb-2 font-medium">Jours fériés</h2>
+        <p className="mb-2 text-sm text-slate-600">
+          {s.holidays.length} jour(s) férié(s) enregistré(s). Ils sont grisés dans la grille
+          mais restent saisissables.
+        </p>
+        <form action={reloadHolidays}>
+          <button className="rounded border px-3 py-1 text-sm">
+            Charger les fériés français (année précédente à N+2)
+          </button>
+        </form>
+      </section>
     </main>
   )
 }

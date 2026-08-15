@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireUser } from '@/auth'
-import { updateSettings } from '@/services/settings'
+import { updateSettings, loadFrenchHolidays } from '@/services/settings'
 import type { CapacityMode } from '@/core/types'
 
 export async function saveSettings(formData: FormData) {
@@ -18,5 +18,12 @@ export async function saveSettings(formData: FormData) {
     workingDays: formData.getAll('workingDays').map((d) => Number(d)),
   })
 
+  revalidatePath('/admin/saisie')
+}
+
+export async function reloadHolidays() {
+  await requireUser()
+  const y = new Date().getUTCFullYear()
+  await loadFrenchHolidays(y - 1, y + 2)
   revalidatePath('/admin/saisie')
 }

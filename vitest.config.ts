@@ -24,6 +24,10 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.{ts,tsx}'],
+    // Les fichiers de test partagent une seule base SQLite : les exécuter en
+    // parallèle produit des échecs non déterministes. La suite tourne en
+    // moins d'une seconde, la sérialisation ne coûte rien.
+    fileParallelism: false,
   },
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },

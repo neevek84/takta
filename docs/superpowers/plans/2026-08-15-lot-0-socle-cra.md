@@ -1906,11 +1906,13 @@ describe('clients et missions', () => {
 
   it('porte deux lignes tarifées différemment sous une même mission', async () => {
     const c = await createClient('ACME deux lignes')
-    const m = await createMission({ clientId: c.id, label: 'ITSM' })
+    // Libellé distinct du test précédent : listActiveLines scope par userId,
+    // deux missions homonymes se mélangeraient dans le filtre.
+    const m = await createMission({ clientId: c.id, label: 'ITSM deux lignes' })
     await createLine({ missionId: m.id, userId, label: 'Jour', soldCentiemes: 3000, tjmCents: 80000 })
     await createLine({ missionId: m.id, userId, label: 'Nuit', soldCentiemes: 1000, tjmCents: 120000 })
 
-    const lines = (await listActiveLines(userId)).filter((l) => l.missionLabel === 'ITSM')
+    const lines = (await listActiveLines(userId)).filter((l) => l.missionLabel === 'ITSM deux lignes')
     expect(lines).toHaveLength(2)
     expect(lines.map((l) => l.label).sort()).toEqual(['Jour', 'Nuit'])
   })

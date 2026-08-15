@@ -1,6 +1,7 @@
 import { prisma } from '@/db/client'
 import type { Slot } from '@/core/time/slots'
 import type { CapacityMode, DisplayUnit, EngagementSource } from '@/core/types'
+import { frenchHolidays } from '@/core/calendar/holidays-fr'
 
 export const DEFAULT_SLOTS: Slot[] = [
   { id: 'matin', label: 'Matin', startMinute: 540, endMinute: 780, centiemes: 50 },
@@ -71,4 +72,13 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
     },
   })
   return toAppSettings(row)
+}
+
+/** Recharge les fériés français sur une plage d'années, en remplaçant les existants. */
+export async function loadFrenchHolidays(fromYear: number, toYear: number): Promise<AppSettings> {
+  const dates: string[] = []
+  for (let y = fromYear; y <= toYear; y++) {
+    dates.push(...frenchHolidays(y).map((h) => h.date))
+  }
+  return updateSettings({ holidays: dates })
 }
