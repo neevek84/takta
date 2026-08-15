@@ -6,6 +6,7 @@ import type { LineForGrid } from '@/services/missions'
 import type { MonthEntry } from '@/services/time-entries'
 import { EngagementBar } from './EngagementBar'
 import { TotalsRow } from './TotalsRow'
+import { useDragSelect } from './useDragSelect'
 
 export function MonthGrid({
   days,
@@ -22,6 +23,10 @@ export function MonthGrid({
 }) {
   const byKey = new Map(entries.map((e) => [`${e.lineId}|${e.date}`, e]))
   const minutesParJour = lines[0]?.minutesParJour ?? 480
+
+  const drag = useDragSelect((sel, raw) => {
+    for (const date of sel.dates) onSave(sel.lineId, date, raw)
+  })
 
   return (
     <div className="overflow-x-auto">
@@ -62,11 +67,27 @@ export function MonthGrid({
                 const entry = byKey.get(`${l.id}|${d.date}`)
                 const value = entry ? formatQuantity(entry.minutes, l.displayUnit, l.minutesParJour) : ''
                 return (
-                  <td key={d.date} className={d.isWorking && !d.isHoliday ? '' : 'bg-slate-50'}>
+                  <td
+                    key={d.date}
+                    onMouseDown={() => drag.handlers.onMouseDown(l.id, d.date)}
+                    onMouseEnter={() => drag.handlers.onMouseEnter(l.id, d.date)}
+                    onMouseUp={drag.handlers.onMouseUp}
+                    className={`${d.isWorking && !d.isHoliday ? '' : 'bg-slate-50'} ${
+                      drag.isSelected(l.id, d.date) ? 'ring-2 ring-inset ring-blue-400' : ''
+                    }`}
+                  >
                     <input
                       aria-label={`${l.label} ${d.date}`}
                       defaultValue={value}
                       onBlur={(ev) => onSave(l.id, d.date, ev.target.value)}
+                      onKeyDown={(ev) => {
+                        if (ev.key === 'Enter' && drag.selection && drag.selection.dates.length > 1) {
+                          ev.preventDefault()
+                          drag.applyToSelection(ev.currentTarget.value)
+                          drag.clear()
+                        }
+                        if (ev.key === 'Escape') drag.clear()
+                      }}
                       className={`h-8 w-9 border-0 bg-transparent text-center text-xs outline-none focus:bg-blue-50 ${
                         entry?.kind === 'PREVISIONNEL' ? 'text-slate-400 italic' : ''
                       }`}

@@ -3,6 +3,7 @@ import Credentials from 'next-auth/providers/credentials'
 import { z } from 'zod'
 import { prisma } from '@/db/client'
 import { verifyPassword } from './auth-password'
+import { authConfig } from './auth.config'
 import type { Role } from '@/core/types'
 
 const credentialsSchema = z.object({
@@ -11,8 +12,7 @@ const credentialsSchema = z.object({
 })
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  session: { strategy: 'jwt' },
-  pages: { signIn: '/login' },
+  ...authConfig,
   providers: [
     Credentials({
       credentials: { email: {}, password: {} },
@@ -30,20 +30,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
-  callbacks: {
-    jwt({ token, user }) {
-      if (user) {
-        token.id = user.id
-        token.role = (user as { role: Role }).role
-      }
-      return token
-    },
-    session({ session, token }) {
-      session.user.id = token.id as string
-      session.user.role = token.role as Role
-      return session
-    },
-  },
 })
 
 export async function requireUser(): Promise<{ id: string; role: Role }> {

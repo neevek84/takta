@@ -1,11 +1,9 @@
-import { auth } from '@/auth'
+import NextAuth from 'next-auth'
+import { authConfig } from './auth.config'
 
-export default auth((req) => {
-  const isLogin = req.nextUrl.pathname.startsWith('/login')
-  if (!req.auth && !isLogin) {
-    return Response.redirect(new URL('/login', req.nextUrl.origin))
-  }
-})
+// Edge runtime: built from auth.config.ts only, which is free of Prisma and
+// @node-rs/argon2. Do not import from '@/auth' here.
+export default NextAuth(authConfig).auth
 
 export const config = {
   matcher: ['/((?!api/auth|_next/static|_next/image|favicon.ico).*)'],
