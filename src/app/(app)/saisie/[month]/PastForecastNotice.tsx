@@ -3,6 +3,8 @@
 import { useActionState } from 'react'
 import { validerJoursPasses, type ConversionEtat } from './actions'
 import type { MonthEntry } from '@/services/time-entries'
+import { Banner } from '@/components/ui/Banner'
+import { Button } from '@/components/ui/Button'
 
 function messageConversion(etat: NonNullable<ConversionEtat>): string {
   const { converted, skippedLocked } = etat
@@ -52,49 +54,51 @@ export function PastForecastNotice({
   const convertibles = entries.length - lockedCount
 
   return (
-    <section className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
-      {entries.length > 0 && (
-        <>
-          <p className="mb-2 text-amber-900">
-            {entries.length === 1
-              ? '1 jour prévu est déjà passé.'
-              : `${entries.length} jours prévus sont déjà passés.`}{' '}
-            Ils ne deviendront du temps réalisé que si tu le décides.
+    <div className="mb-4">
+      <Banner tone="warning">
+        {entries.length > 0 && (
+          <>
+            <p className="mb-2">
+              {entries.length === 1
+                ? '1 jour prévu est déjà passé.'
+                : `${entries.length} jours prévus sont déjà passés.`}{' '}
+              Ils ne deviendront du temps réalisé que si tu le décides.
+            </p>
+
+            <ul className="mb-2 flex flex-wrap gap-2 text-xs">
+              {entries.map((e) => (
+                <li key={e.id} className="rounded bg-surface px-2 py-0.5">
+                  {e.date}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {convertibles > 0 ? (
+          <form action={convertir}>
+            <input type="hidden" name="month" value={month} />
+            <Button variant="secondary" disabled={enCours}>
+              {enCours
+                ? 'Conversion en cours…'
+                : `Valider ${convertibles === 1 ? 'ce jour' : `ces ${convertibles} jours`}`}
+            </Button>
+          </form>
+        ) : null}
+
+        {lockedCount > 0 && (
+          <p className="mt-1 text-xs">
+            {lockedCount === 1 ? '1 jour appartient' : `${lockedCount} jours appartiennent`} à une
+            mission dont le CRA est validé. Rouvre-le pour pouvoir les convertir.
           </p>
+        )}
 
-          <ul className="mb-2 flex flex-wrap gap-2 text-xs text-amber-800">
-            {entries.map((e) => (
-              <li key={e.id} className="rounded bg-amber-100 px-2 py-0.5">
-                {e.date}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      {convertibles > 0 ? (
-        <form action={convertir}>
-          <input type="hidden" name="month" value={month} />
-          <button className="rounded border border-amber-400 bg-white px-3 py-1" disabled={enCours}>
-            {enCours
-              ? 'Conversion en cours…'
-              : `Valider ${convertibles === 1 ? 'ce jour' : `ces ${convertibles} jours`}`}
-          </button>
-        </form>
-      ) : null}
-
-      {lockedCount > 0 && (
-        <p className="mt-1 text-xs text-amber-800">
-          {lockedCount === 1 ? '1 jour appartient' : `${lockedCount} jours appartiennent`} à une
-          mission dont le CRA est validé. Rouvre-le pour pouvoir les convertir.
-        </p>
-      )}
-
-      {etat !== null && (
-        <p role="status" className="mt-1 text-amber-900">
-          {messageConversion(etat)}
-        </p>
-      )}
-    </section>
+        {etat !== null && (
+          <p role="status" className="mt-1">
+            {messageConversion(etat)}
+          </p>
+        )}
+      </Banner>
+    </div>
   )
 }
