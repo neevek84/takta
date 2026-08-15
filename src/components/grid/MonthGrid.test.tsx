@@ -31,9 +31,11 @@ const lines: LineForGrid[] = [
   },
 ]
 
+// `minutesParJour` est figé sur chaque saisie depuis le lot 1d : les deux
+// lignes du jeu d'essai travaillent en journées de 8 h.
 const entries: MonthEntry[] = [
-  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '' },
-  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'nuit' },
+  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
+  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'nuit', minutesParJour: 480 },
 ]
 
 const engagementTotals: Record<string, LineEngagementTotals> = {
@@ -123,7 +125,7 @@ describe('MonthGrid', () => {
     const journeeCourte: LineForGrid = { ...lines[0]!, minutesParJour: 432 }
     const journeeStandard: LineForGrid = { ...lines[1]!, displayUnit: 'JOUR', minutesParJour: 480 }
     const uneJourneeSurL2: MonthEntry[] = [
-      { id: 'e1', lineId: 'l2', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '' },
+      { id: 'e1', lineId: 'l2', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
     ]
 
     it('formate avec le minutesParJour global, pas celui de la première ligne', () => {
@@ -184,7 +186,7 @@ describe('MonthGrid', () => {
           days={days}
           lines={lines}
           entries={[
-            { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: '' },
+            { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: '', minutesParJour: 480 },
           ]}
           engagementTotals={engagementTotals}
           capacityMinutes={480}
@@ -241,8 +243,8 @@ describe('MonthGrid', () => {
   // son modèle de données plutôt que d'en masquer un.
   describe('journée éclatée en créneaux', () => {
     const deuxCreneaux: MonthEntry[] = [
-      { id: 'e1', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin' },
-      { id: 'e2', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi' },
+      { id: 'e1', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', minutesParJour: 480 },
+      { id: 'e2', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', minutesParJour: 480 },
     ]
 
     it('additionne les créneaux d une même journée au lieu d en masquer un', () => {

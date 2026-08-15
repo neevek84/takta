@@ -1,9 +1,14 @@
 /**
  * Convention « cumuler puis convertir », alignée sur `computeEngagement` :
- * on cumule les minutes par ligne, puis on ne convertit qu'une seule fois
- * par ligne. Un arrondi par entrée (l'ancien comportement) dérive de façon
- * systématique dès que `minutes / minutesParJour` ne tombe pas juste et que
- * l'appelant passe de nombreuses entrées pour une même ligne.
+ * on cumule les minutes, puis on ne convertit qu'une seule fois. Un arrondi
+ * par entrée (l'ancien comportement) dérive de façon systématique dès que
+ * `minutes / minutesParJour` ne tombe pas juste et que l'appelant passe de
+ * nombreuses entrées pour une même ligne.
+ *
+ * Le cumul n'a de sens qu'à **facteur constant** : le facteur est désormais
+ * porté par chaque saisie (figé à son écriture), et des minutes valorisées à
+ * 420/jour ne s'additionnent pas à des minutes valorisées à 480/jour. On
+ * cumule donc par couple (ligne, facteur), avec un seul arrondi par groupe.
  *
  * Écart résiduel : cette fonction ne cumule qu'à l'intérieur d'un seul
  * appel. `services/charge.ts` l'appelle une fois par mois (pour
@@ -14,25 +19,27 @@
  * chose que cette fonction pure peut résoudre sans changer sa signature.
  */
 export function caFromEntries(
-  entries: ReadonlyArray<{ lineId: string; minutes: number }>,
-  lines: ReadonlyArray<{ id: string; tjmCents: number; minutesParJour: number }>,
+  entries: ReadonlyArray<{ lineId: string; minutes: number; minutesParJour: number }>,
+  lines: ReadonlyArray<{ id: string; tjmCents: number }>,
 ): number {
-  const byId = new Map(lines.map((l) => [l.id, l]))
-  const minutesByLineId = new Map<string, number>()
+  const tjmById = new Map(lines.map((l) => [l.id, l.tjmCents]))
 
+  // Cumul des minutes par (ligne, facteur) : un seul arrondi par groupe.
+  const parGroupe = new Map<string, { lineId: string; facteur: number; minutes: number }>()
   for (const e of entries) {
-    const line = byId.get(e.lineId)
-    // Entrée orpheline : contribue zéro plutôt que de faire tomber l'écran.
-    if (line === undefined || line.minutesParJour <= 0) continue
-    minutesByLineId.set(e.lineId, (minutesByLineId.get(e.lineId) ?? 0) + e.minutes)
+    // Entrée orpheline, ou facteur inexploitable : contribue zéro plutôt que
+    // de faire tomber l'écran.
+    if (!tjmById.has(e.lineId) || e.minutesParJour <= 0) continue
+    const cle = `${e.lineId}|${e.minutesParJour}`
+    const g = parGroupe.get(cle) ?? { lineId: e.lineId, facteur: e.minutesParJour, minutes: 0 }
+    g.minutes += e.minutes
+    parGroupe.set(cle, g)
   }
 
   let cents = 0
-  for (const [lineId, minutes] of minutesByLineId) {
-    const line = byId.get(lineId)!
-    cents += Math.round((minutes * line.tjmCents) / line.minutesParJour)
+  for (const g of parGroupe.values()) {
+    cents += Math.round((g.minutes * (tjmById.get(g.lineId) ?? 0)) / g.facteur)
   }
-
   return cents
 }
 

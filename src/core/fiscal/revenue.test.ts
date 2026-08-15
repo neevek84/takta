@@ -7,34 +7,36 @@ import {
 } from './revenue'
 
 // Deux lignes de la même mission, tarifées différemment — le cas réel.
+// Le facteur de conversion n'est plus porté par la ligne : chaque saisie
+// transporte celui qui a été figé à son écriture.
 const LINES = [
-  { id: 'jour', tjmCents: 80000, minutesParJour: 480 },
-  { id: 'nuit', tjmCents: 120000, minutesParJour: 480 },
+  { id: 'jour', tjmCents: 80000 },
+  { id: 'nuit', tjmCents: 120000 },
 ]
 
 describe('caFromEntries', () => {
   it('valorise une journée pleine au TJM de sa ligne', () => {
-    expect(caFromEntries([{ lineId: 'jour', minutes: 480 }], LINES)).toBe(80000)
+    expect(caFromEntries([{ lineId: 'jour', minutes: 480, minutesParJour: 480 }], LINES)).toBe(80000)
   })
 
   it('valorise une demi-journée à la moitié', () => {
-    expect(caFromEntries([{ lineId: 'jour', minutes: 240 }], LINES)).toBe(40000)
+    expect(caFromEntries([{ lineId: 'jour', minutes: 240, minutesParJour: 480 }], LINES)).toBe(40000)
   })
 
   it('applique à chaque entrée le TJM de SA ligne', () => {
     const ca = caFromEntries(
       [
-        { lineId: 'jour', minutes: 480 },
-        { lineId: 'nuit', minutes: 480 },
+        { lineId: 'jour', minutes: 480, minutesParJour: 480 },
+        { lineId: 'nuit', minutes: 480, minutesParJour: 480 },
       ],
       LINES,
     )
     expect(ca).toBe(200000)
   })
 
-  it('respecte un minutesParJour surchargé par ligne', () => {
-    const ca = caFromEntries([{ lineId: 'sept', minutes: 420 }], [
-      { id: 'sept', tjmCents: 70000, minutesParJour: 420 },
+  it('respecte un minutesParJour surchargé porté par la saisie', () => {
+    const ca = caFromEntries([{ lineId: 'sept', minutes: 420, minutesParJour: 420 }], [
+      { id: 'sept', tjmCents: 70000 },
     ])
     expect(ca).toBe(70000)
   })
@@ -44,7 +46,14 @@ describe('caFromEntries', () => {
   })
 
   it('ignore une entrée dont la ligne est inconnue', () => {
-    expect(caFromEntries([{ lineId: 'fantome', minutes: 480 }], LINES)).toBe(0)
+    expect(caFromEntries([{ lineId: 'fantome', minutes: 480, minutesParJour: 480 }], LINES)).toBe(0)
+  })
+
+  it('ignore une saisie dont le facteur est nul ou négatif', () => {
+    // Division par zéro : la saisie ne contribue rien plutôt que d'infecter
+    // le total d'un Infinity ou d'un NaN.
+    expect(caFromEntries([{ lineId: 'jour', minutes: 480, minutesParJour: 0 }], LINES)).toBe(0)
+    expect(caFromEntries([{ lineId: 'jour', minutes: 480, minutesParJour: -480 }], LINES)).toBe(0)
   })
 
   it('ne dérive pas sur un cumul de nombreuses saisies dont l arrondi par entrée ne tombe pas juste', () => {
@@ -55,8 +64,12 @@ describe('caFromEntries', () => {
     // ligne, puis on arrondit une seule fois -> 4 166 625.
     // Un arrondi par entrée donnerait 300 * round(13888,75) = 4 166 700,
     // soit une dérive de 75 centimes.
-    const lines = [{ id: 'jour', tjmCents: 33333, minutesParJour: 480 }]
-    const entries = Array.from({ length: 300 }, () => ({ lineId: 'jour', minutes: 200 }))
+    const lines = [{ id: 'jour', tjmCents: 33333 }]
+    const entries = Array.from({ length: 300 }, () => ({
+      lineId: 'jour',
+      minutes: 200,
+      minutesParJour: 480,
+    }))
     expect(caFromEntries(entries, lines)).toBe(4_166_625)
   })
 
@@ -65,16 +78,49 @@ describe('caFromEntries', () => {
     // entrée qui ne tombe pas juste : la conversion doit se faire une seule
     // fois par ligne, pas une seule fois pour l ensemble des entrées.
     const lines = [
-      { id: 'a', tjmCents: 33333, minutesParJour: 480 },
-      { id: 'b', tjmCents: 77777, minutesParJour: 420 },
+      { id: 'a', tjmCents: 33333 },
+      { id: 'b', tjmCents: 77777 },
     ]
     const entries = [
-      ...Array.from({ length: 5 }, () => ({ lineId: 'a', minutes: 200 })),
-      ...Array.from({ length: 5 }, () => ({ lineId: 'b', minutes: 150 })),
+      ...Array.from({ length: 5 }, () => ({ lineId: 'a', minutes: 200, minutesParJour: 480 })),
+      ...Array.from({ length: 5 }, () => ({ lineId: 'b', minutes: 150, minutesParJour: 420 })),
     ]
     const attenduA = Math.round((5 * 200 * 33333) / 480)
     const attenduB = Math.round((5 * 150 * 77777) / 420)
     expect(caFromEntries(entries, lines)).toBe(attenduA + attenduB)
+  })
+})
+
+describe('caFromEntries — facteur porté par la saisie', () => {
+  it('valorise chaque saisie au facteur qu elle porte', () => {
+    const ca = caFromEntries(
+      [
+        { lineId: 'a', minutes: 420, minutesParJour: 420 },
+        { lineId: 'a', minutes: 480, minutesParJour: 480 },
+      ],
+      [{ id: 'a', tjmCents: 80000 }],
+    )
+    // Deux journées pleines à 800 €.
+    expect(ca).toBe(160000)
+  })
+
+  it('ignore une saisie dont la ligne est inconnue', () => {
+    expect(caFromEntries([{ lineId: 'x', minutes: 480, minutesParJour: 480 }], [
+      { id: 'a', tjmCents: 80000 },
+    ])).toBe(0)
+  })
+
+  it('cumule par (ligne, facteur) : un seul arrondi par groupe', () => {
+    // Même ligne, deux facteurs : chaque groupe cumule ses minutes avant son
+    // unique arrondi. Mélanger les deux groupes, ou arrondir chaque saisie,
+    // donnerait un autre chiffre.
+    const entries = [
+      ...Array.from({ length: 5 }, () => ({ lineId: 'a', minutes: 200, minutesParJour: 480 })),
+      ...Array.from({ length: 5 }, () => ({ lineId: 'a', minutes: 200, minutesParJour: 420 })),
+    ]
+    const attendu =
+      Math.round((5 * 200 * 33333) / 480) + Math.round((5 * 200 * 33333) / 420)
+    expect(caFromEntries(entries, [{ id: 'a', tjmCents: 33333 }])).toBe(attendu)
   })
 })
 

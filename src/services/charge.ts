@@ -40,9 +40,30 @@ export interface ChargeMatrix {
 interface ChargeLine {
   id: string
   label: string
-  minutesParJour: number
   soldCentiemes: number
   tjmCents: number
+}
+
+/**
+ * Convertit un cumul de minutes déjà **groupé par facteur** : un seul arrondi
+ * par groupe, comme `centiemesParFacteur` dans `core/engagement/compute`.
+ *
+ * La convention du lot est « cumuler les minutes, convertir une fois ». Elle ne
+ * tient qu'à facteur constant : des minutes valorisées à 420 min/jour et à
+ * 480 min/jour ne s'additionnent pas. Un accumulateur de minutes indifférent au
+ * facteur produirait un total faux dès qu'un mois mélange deux durées de
+ * journée — et convertir chaque saisie séparément ferait dériver l'arrondi
+ * (dix saisies d'une heure sur une journée à 420 min donnent 140 centièmes au
+ * lieu de 143). En pratique un groupe est presque toujours seul.
+ */
+function centiemesDuCumul(parFacteur: ReadonlyMap<number, number>): number {
+  let centiemes = 0
+  for (const [facteur, minutes] of parFacteur) {
+    // Facteur inexploitable : contribue zéro plutôt que d'afficher un Infinity.
+    if (facteur <= 0) continue
+    centiemes += minutesToCentiemes(minutes, facteur)
+  }
+  return centiemes
 }
 
 /** Minuit UTC du premier jour du mois `YYYY-MM`. */
@@ -84,7 +105,6 @@ function monthEnd(month: string): Date {
 async function listLinesForFiscalYear(
   userId: string,
   fiscalYear: FiscalYear,
-  defaultMinutesParJour: number,
 ): Promise<ChargeLine[]> {
   const debut = monthStart(fiscalYear.months[0]!)
   const fin = monthEnd(fiscalYear.months[fiscalYear.months.length - 1]!)
@@ -101,10 +121,12 @@ async function listLinesForFiscalYear(
     orderBy: [{ line: { position: 'asc' } }],
   })
 
+  // Aucun facteur de conversion n'est lu ici : il est porté par chaque saisie,
+  // figé à son écriture. Le rejouer depuis la ligne ou depuis les réglages
+  // réinterpréterait tout l'historique dès qu'un réglage change.
   return assignments.map((a) => ({
     id: a.line.id,
     label: `${a.line.mission.client.name} · ${a.line.mission.label} · ${a.line.label}`,
-    minutesParJour: a.line.minutesParJour ?? defaultMinutesParJour,
     soldCentiemes: a.soldCentiemes,
     tjmCents: a.line.tjmCents,
   }))
@@ -116,7 +138,7 @@ export async function buildChargeMatrix(
 ): Promise<ChargeMatrix> {
   const settings = await getSettings()
   const fiscalYear = fiscalYearFromStartYear(startYear, settings.debutExerciceMois)
-  const lines = await listLinesForFiscalYear(userId, fiscalYear, settings.minutesParJour)
+  const lines = await listLinesForFiscalYear(userId, fiscalYear)
 
   const emptyTotals = fiscalYear.months.map(() => ({ centiemes: 0, caCents: 0 }))
 
@@ -138,7 +160,7 @@ export async function buildChargeMatrix(
   // toute la durée de la ligne — comme au lot 0.
   const rows = await prisma.timeEntry.findMany({
     where: { userId, lineId: { in: lineIds } },
-    select: { lineId: true, date: true, minutes: true, kind: true },
+    select: { lineId: true, date: true, minutes: true, kind: true, minutesParJour: true },
   })
 
   const entries = rows.map((r) => ({
@@ -146,13 +168,11 @@ export async function buildChargeMatrix(
     date: toIsoDate(r.date),
     minutes: r.minutes,
     kind: r.kind as TimeEntryKind,
+    minutesParJour: r.minutesParJour,
   }))
 
-  const priced = lines.map((l) => ({
-    id: l.id,
-    tjmCents: l.tjmCents,
-    minutesParJour: l.minutesParJour,
-  }))
+  // Les lignes n'apportent plus que leur tarif : le facteur vient des saisies.
+  const priced = lines.map((l) => ({ id: l.id, tjmCents: l.tjmCents }))
 
   const monthTotals = emptyTotals.map(() => ({ centiemes: 0, caCents: 0 }))
 
@@ -160,23 +180,22 @@ export async function buildChargeMatrix(
     const lineEntries = entries.filter((e) => e.lineId === line.id)
 
     // Convention du lot : on cumule les **minutes**, puis on convertit une
-    // seule fois — la même discipline que `computeEngagement`. Convertir
-    // chaque saisie séparément fait dériver l'arrondi (dix saisies d'une heure
-    // sur une journée à 420 min donnent 140 centièmes au lieu de 143) et fait
-    // diverger la cellule affichée du reste à planifier de la même ligne.
-    const realiseMinutes = fiscalYear.months.map(() => 0)
-    const prevuMinutes = fiscalYear.months.map(() => 0)
+    // seule fois — la même discipline que `computeEngagement`. Le cumul se
+    // fait par (cellule, facteur), car une même ligne peut porter des saisies
+    // figées à des durées de journée différentes ; voir `centiemesDuCumul`.
+    const realiseParFacteur = fiscalYear.months.map(() => new Map<number, number>())
+    const prevuParFacteur = fiscalYear.months.map(() => new Map<number, number>())
 
     for (const e of lineEntries) {
       const i = monthIndex.get(e.date.slice(0, 7))
       if (i === undefined) continue
-      if (e.kind === 'REALISE') realiseMinutes[i]! += e.minutes
-      else prevuMinutes[i]! += e.minutes
+      const parFacteur = e.kind === 'REALISE' ? realiseParFacteur[i]! : prevuParFacteur[i]!
+      parFacteur.set(e.minutesParJour, (parFacteur.get(e.minutesParJour) ?? 0) + e.minutes)
     }
 
     const cells: ChargeCell[] = fiscalYear.months.map((_, i) => ({
-      realiseCentiemes: minutesToCentiemes(realiseMinutes[i]!, line.minutesParJour),
-      prevuCentiemes: minutesToCentiemes(prevuMinutes[i]!, line.minutesParJour),
+      realiseCentiemes: centiemesDuCumul(realiseParFacteur[i]!),
+      prevuCentiemes: centiemesDuCumul(prevuParFacteur[i]!),
     }))
 
     // Le total d'une colonne est la somme des cellules déjà converties, et non
@@ -190,7 +209,6 @@ export async function buildChargeMatrix(
     const engagement = computeEngagement({
       venduCentiemes: line.soldCentiemes,
       entries: lineEntries,
-      minutesParJour: line.minutesParJour,
     })
 
     return {

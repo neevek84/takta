@@ -294,6 +294,49 @@ describe('buildChargeMatrix', () => {
     })
   })
 
+  it('groupe par facteur une cellule qui mélange deux durées de journée', async () => {
+    // Une ligne dont la durée de journée a changé en cours de route : les
+    // saisies antérieures gardent 480, les suivantes portent 420. Les minutes
+    // des deux groupes ne sont pas commensurables — 240 min à 8 h et 210 min à
+    // 7 h font une journée pleine, pas 450 minutes à convertir en bloc (94 ou
+    // 107 centièmes selon le facteur choisi).
+    await withTempLine({ soldCentiemes: 2000, tjmCents: 80000, minutesParJour: 480 }, async (lineId) => {
+      await saveEntry({ userId, lineId, date: '2026-05-04', minutes: 240, kind: 'REALISE' })
+      await prisma.missionLine.update({ where: { id: lineId }, data: { minutesParJour: 420 } })
+      await saveEntry({ userId, lineId, date: '2026-05-05', minutes: 210, kind: 'REALISE' })
+
+      const m = await buildChargeMatrix(userId, 2026)
+      const row = m.rows.find((r) => r.lineId === lineId)!
+      expect(row.cells[1]!.realiseCentiemes).toBe(100)
+      expect(row.engagement.realiseCentiemes).toBe(100)
+      expect(m.monthTotals[1]!.centiemes).toBe(100)
+      // Une demi-journée à 800 € plus une demi-journée à 800 €.
+      expect(m.monthTotals[1]!.caCents).toBe(80_000)
+      expect(m.progress.realiseCents).toBe(80_000)
+    })
+  })
+
+  it('un mois validé garde ses jours après un changement de réglage', async () => {
+    // 20 journées de 480 minutes, saisies alors que le réglage vaut 480.
+    await updateSettings({ minutesParJour: 480, capacityMode: 'DESACTIVE' })
+    for (let j = 1; j <= 20; j++) {
+      const jour = String(j).padStart(2, '0')
+      await saveEntry({ userId, lineId: lineJour, date: `2026-05-${jour}`, minutes: 480, kind: 'REALISE' })
+    }
+
+    const avant = await buildChargeMatrix(userId, 2026)
+    const ligneAvant = avant.rows.find((r) => r.lineId === lineJour)!
+    expect(ligneAvant.engagement.realiseCentiemes).toBe(2000)
+
+    // Le réglage passe à 7 h. Aucune saisie ne doit être réinterprétée.
+    await updateSettings({ minutesParJour: 420 })
+
+    const apres = await buildChargeMatrix(userId, 2026)
+    const ligneApres = apres.rows.find((r) => r.lineId === lineJour)!
+    expect(ligneApres.engagement.realiseCentiemes).toBe(2000)
+    expect(apres.progress.realiseCents).toBe(avant.progress.realiseCents)
+  })
+
   it('chiffre le reste à planifier de la ligne en euros', async () => {
     await saveEntry({ userId, lineId: lineJour, date: '2026-05-12', minutes: 480 * 18, kind: 'REALISE' })
 

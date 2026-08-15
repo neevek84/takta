@@ -21,10 +21,9 @@ export function EngagementBar({
   const e = computeEngagement({
     venduCentiemes: line.soldCentiemes,
     entries: [
-      { kind: 'REALISE', minutes: totals.realiseMinutes },
-      { kind: 'PREVISIONNEL', minutes: totals.prevuMinutes },
+      { kind: 'REALISE', minutes: totals.realiseMinutes, minutesParJour: line.minutesParJour },
+      { kind: 'PREVISIONNEL', minutes: totals.prevuMinutes, minutesParJour: line.minutesParJour },
     ],
-    minutesParJour: line.minutesParJour,
   })
 
   const pct = (v: number) => (e.venduCentiemes === 0 ? 0 : (v / e.venduCentiemes) * 100)

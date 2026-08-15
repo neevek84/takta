@@ -11,7 +11,9 @@ vi.mock('./actions', () => ({ validerJoursPasses }))
 import { PastForecastNotice } from './PastForecastNotice'
 
 function entry(id: string, date: string): MonthEntry {
-  return { id, lineId: 'l1', date, minutes: 480, kind: 'PREVISIONNEL', slotId: '' }
+  // Le facteur est figé sur la saisie depuis le lot 1d ; l'encart ne s'en sert
+  // pas, mais le type l'exige — les journées du jeu d'essai font 8 h.
+  return { id, lineId: 'l1', date, minutes: 480, kind: 'PREVISIONNEL', slotId: '', minutesParJour: 480 }
 }
 
 beforeEach(() => {
