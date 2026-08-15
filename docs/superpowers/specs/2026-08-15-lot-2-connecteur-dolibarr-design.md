@@ -117,24 +117,24 @@ Le mécanisme qui le garantit est spécifié au **lot 1d** : chaque saisie porte
 
 ---
 
-## 8 bis. Proposer la facture — et où passe exactement la frontière
+## 8 bis. Demander la facture à Dolibarr
 
-Après validation d'un CRA et push réussi des temps, l'application **propose** de créer la facture correspondante dans Dolibarr. Une proposition, jamais un automatisme.
+Après validation d'un CRA et push réussi des temps, l'application **propose** de faire créer la facture correspondante dans Dolibarr. Une proposition, jamais un automatisme.
 
-C'est un revirement par rapport à la règle « l'application ne facture jamais », et il faut dire précisément ce qui change et ce qui ne change pas.
+**Ce n'est pas une entorse à la règle « l'application ne facture pas ».** C'est exactement ce qu'elle fait déjà en poussant les temps : elle demande à Dolibarr de faire son métier. **Dolibarr facture, pas le CRA.** La distinction n'est pas cosmétique — elle détermine où vit la charge réglementaire.
 
-**Ce que l'application fait :** elle demande à Dolibarr de créer une facture **au brouillon**, avec une ligne par prestation, quantité égale aux jours validés et prix unitaire égal au TJM de la ligne. C'est de la saisie de données, transmise à l'outil dont c'est le métier.
+**Ce que l'application fait :** elle demande à Dolibarr de créer une facture, avec une ligne par prestation, quantité égale aux jours validés et prix unitaire égal au TJM de la ligne. C'est un appel d'API qui transmet des données à l'outil dont c'est la responsabilité.
+
+**Par défaut, la facture est créée au brouillon.** Non par principe, mais par prudence : un brouillon se corrige, une facture validée est numérotée et immuable — d'autant plus sur une instance française où le module de journalisation inaltérable est actif. L'utilisateur vérifie et valide dans Dolibarr.
 
 **Ce que l'application ne fait jamais :**
 
-- elle ne **valide** pas la facture et ne lui attribue aucun numéro ;
+- elle ne **numérote** rien et n'attribue aucune référence de facture ;
 - elle ne calcule **aucune TVA**, ne choisit aucun taux, n'applique aucune mention légale ;
-- elle n'émet, ne transmet et n'archive **aucun document** ;
+- elle n'**émet**, ne transmet et n'archive **aucun document** ;
 - elle ne gère **ni relance, ni paiement, ni lettrage**.
 
-La facture reste au brouillon jusqu'à ce que l'utilisateur la vérifie et la valide **dans Dolibarr**. Toute la charge réglementaire — facturation électronique, numérotation, conservation — demeure du côté de Dolibarr, dont c'est la responsabilité.
-
-C'est la ligne à tenir : **créer un brouillon est de la saisie ; le valider est de la facturation.** L'application fait la première, jamais la seconde.
+Toute la charge réglementaire — facturation électronique, numérotation, conservation, journalisation inaltérable — demeure du côté de Dolibarr. C'est ce qui permet à cette application de rester un outil de CRA et de ne jamais devenir un produit de conformité.
 
 **Le CRA reste sans montant** (voir lot 3) : le document que le client signe atteste du temps passé, et rien d'autre.
 
@@ -144,7 +144,7 @@ Si la proposition est déclinée, ou si Dolibarr est indisponible, le CRA reste 
 
 ## 9. Règles métier
 
-- **L'application ne valide aucune facture, ne numérote rien, ne calcule aucune TVA et n'émet aucun document.** Elle peut créer un brouillon dans Dolibarr, sur proposition acceptée ; la validation et l'émission restent chez Dolibarr.
+- **Dolibarr facture, pas le CRA.** L'application peut lui demander de créer une facture, sur proposition acceptée ; numérotation, TVA, émission et conservation restent entièrement chez lui.
 - **La proposition de facture est toujours un choix**, jamais un automatisme, et son refus n'a aucune conséquence.
 - **Jamais de prévisionnel vers Dolibarr.**
 - **Le connecteur est additif** : tout reste créable et modifiable localement sans lui.
@@ -157,7 +157,7 @@ Si la proposition est déclinée, ou si Dolibarr est indisponible, le CRA reste 
 
 ## 10. Hors périmètre
 
-- **Validation, numérotation, TVA, émission et archivage des factures.** L'application peut créer un brouillon dans Dolibarr ; tout le reste y demeure.
+- **Numérotation, TVA, émission, conservation et journalisation des factures.** L'application demande la création ; tout le reste demeure chez Dolibarr.
 - **Relecture des temps depuis Dolibarr.** L'application est maître ; une modification faite dans Dolibarr est écrasée au prochain push.
 - **Synchronisation des congés, des notes de frais, des contrats.**
 - **Passage par n8n pour le chemin interactif.** n8n peut appeler l'endpoint de vidage de la file, comme un cron, mais n'est jamais exigé.
