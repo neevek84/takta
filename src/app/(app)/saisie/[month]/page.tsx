@@ -4,6 +4,7 @@ import { listActiveLines } from '@/services/missions'
 import { getLineEngagementTotals, getMonthEntries } from '@/services/time-entries'
 import { buildMonthDays } from '@/core/month/build'
 import { centiemesToMinutes } from '@/core/time/units'
+import { MonthNav } from '@/components/MonthNav'
 import { SaisieClient } from './SaisieClient'
 
 export default async function SaisiePage({ params }: { params: Promise<{ month: string }> }) {
@@ -22,7 +23,8 @@ export default async function SaisiePage({ params }: { params: Promise<{ month: 
 
   return (
     <main className="p-6">
-      <h1 className="mb-4 text-xl font-semibold">Saisie · {month}</h1>
+      <h1 className="mb-4 text-xl font-semibold">Saisie</h1>
+      <MonthNav month={month} />
       <SaisieClient
         month={month}
         days={days}
