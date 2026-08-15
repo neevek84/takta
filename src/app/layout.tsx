@@ -1,11 +1,8 @@
 import './globals.css'
 import localFont from 'next/font/local'
 import type { CSSProperties, ReactNode } from 'react'
-// `getTheme` vit dans `@/services/settings` (tâche 5) et non dans
-// `@/services/theme` : l'agent de la tâche 5 avait un périmètre restreint à
-// `settings.ts` et a intégré le code du brief là plutôt que dans un nouveau
-// fichier. Voir task-5-report.md.
-import { getTheme } from '@/services/settings'
+import { getTheme } from '@/services/theme'
+import { DEFAULT_THEME } from '@/core/theme/tokens'
 import { themeToCssVars } from '@/core/theme/css-vars'
 
 const inter = localFont({
@@ -31,7 +28,19 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   // Le thème est lu à chaque rendu : l'enregistrer suffit à le voir appliqué,
   // sans reconstruction. Les variables posées ici l'emportent sur celles de
   // `@layer theme` produites par `@theme`.
-  const theme = await getTheme()
+  //
+  // Le service est tolérant au *contenu* de la colonne, mais l'appel peut
+  // jeter : base injoignable, colonne ou table absente. Ce layout étant la
+  // racine, une telle panne emporterait toutes les pages, `/login` compris,
+  // et l'exploitant n'aurait plus d'écran pour diagnostiquer. La règle « un
+  // habillage ne fait jamais tomber la page » vaut donc aussi pour l'appel,
+  // pas seulement pour ce qu'il lit.
+  let theme = DEFAULT_THEME
+  try {
+    theme = await getTheme()
+  } catch (err) {
+    console.error('Thème illisible, repli sur la palette par défaut :', err)
+  }
 
   return (
     <html

@@ -51,8 +51,10 @@ describe('cibles tactiles', () => {
   })
 
   it('sur chaque cellule de la grille de saisie', () => {
-    // La surface la plus dense de l'application, à 375 px de large comme
-    // ailleurs : c'est là que la règle coûte le plus, et qu'elle compte le plus.
+    // La surface la plus dense de l'application : c'est là que la règle coûte
+    // le plus, et qu'elle compte le plus. Comme ci-dessus, happy-dom ne calcule
+    // aucune mise en page — ce test ne dit rien d'une largeur d'écran donnée,
+    // il vérifie que chaque cellule porte le jeton qui vaut 44 points.
     render(
       <MonthGrid
         days={buildMonthDays('2026-03', [1, 2, 3, 4, 5], [])}

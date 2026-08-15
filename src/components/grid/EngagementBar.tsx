@@ -3,6 +3,7 @@
 import { computeEngagement } from '@/core/engagement/compute'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals } from '@/services/time-entries'
+import { SEGMENT_PREVU, SEGMENT_REALISE } from '@/components/ui/SegmentLegend'
 
 /**
  * Bandeau d'engagement d'une ligne de prestation.
@@ -34,16 +35,21 @@ export function EngagementBar({
     <div data-testid={`engagement-${line.id}`} className="flex items-center gap-3 text-xs">
       <div className="h-2 w-40 overflow-hidden rounded-sm bg-off-strong">
         {/* Le prévisionnel se hachure : la teinte plus claire seule ne le
-            distinguerait pas du réalisé en vision monochrome. */}
+            distinguerait pas du réalisé en vision monochrome. Le nom des deux
+            segments est porté par la légende visible de la grille, une fois
+            pour toutes les lignes — pas par ces `title`, qui n'existent qu'à
+            la souris. */}
         <div className="flex h-full">
           <div
+            data-segment="realise"
             title="Réalisé"
-            className="bg-accent"
+            className={SEGMENT_REALISE}
             style={{ width: `${pct(e.realiseCentiemes)}%` }}
           />
           <div
+            data-segment="prevu"
             title="Prévisionnel"
-            className="bg-accent/45 pattern-hatch"
+            className={SEGMENT_PREVU}
             style={{ width: `${pct(e.prevuCentiemes)}%` }}
           />
         </div>

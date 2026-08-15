@@ -47,7 +47,9 @@ describe('Button', () => {
   it('reste cliquable hors chargement', () => {
     render(<Button>Enregistrer</Button>)
     expect(screen.getByRole('button').hasAttribute('disabled')).toBe(false)
-    expect(screen.getByRole('button').getAttribute('aria-busy')).toBe('false')
+    // `aria-busy="false"` sur tous les boutons de l'application est du bruit :
+    // hors chargement, l'attribut n'a rien à dire et ne doit pas être émis.
+    expect(screen.getByRole('button').hasAttribute('aria-busy')).toBe(false)
   })
 })
 

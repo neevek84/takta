@@ -1,4 +1,5 @@
 import type { ExerciceProgress } from '@/core/fiscal/revenue'
+import { SegmentLegend, SEGMENT_PREVU, SEGMENT_REALISE } from '@/components/ui/SegmentLegend'
 
 function euros(cents: number): string {
   return (cents / 100).toLocaleString('fr-FR', { maximumFractionDigits: 0 })
@@ -37,23 +38,28 @@ export function ExerciceBar({
       </h2>
 
       <div className="mb-2 h-3 w-full overflow-hidden rounded-sm bg-off-strong">
-        {/* Le prévisionnel se hachure et se nomme : sa teinte plus claire ne
-            suffirait pas à le distinguer du réalisé sans la couleur. */}
+        {/* Le prévisionnel se hachure : sa teinte plus claire ne suffirait pas
+            à le distinguer du réalisé sans la couleur. Le `title` n'est qu'un
+            complément à la souris — c'est la légende ci-dessous qui nomme. */}
         <div className="flex h-full">
           <div
             data-testid="bar-realise"
+            data-segment="realise"
             title="Réalisé"
-            className="bg-accent"
+            className={SEGMENT_REALISE}
             style={{ width: `${pctRealise}%` }}
           />
           <div
             data-testid="bar-prevu"
+            data-segment="prevu"
             title="Prévisionnel"
-            className="bg-accent/45 pattern-hatch"
+            className={SEGMENT_PREVU}
             style={{ width: `${pctPrevu}%` }}
           />
         </div>
       </div>
+
+      <SegmentLegend className="mb-2" />
 
       <p className="text-sm text-muted">
         {euros(progress.realiseCents)} € réalisés · {euros(progress.prevuCents)} € prévus ·{' '}

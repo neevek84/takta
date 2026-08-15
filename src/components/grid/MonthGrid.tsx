@@ -6,6 +6,7 @@ import type { MonthDay } from '@/core/month/build'
 import type { TimeEntryKind } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
+import { SegmentLegend } from '@/components/ui/SegmentLegend'
 import { EngagementBar } from './EngagementBar'
 import { TotalsRow } from './TotalsRow'
 import { useDragSelect } from './useDragSelect'
@@ -165,6 +166,24 @@ export function MonthGrid({
   return (
     <div className="overflow-x-auto">
       <div className="mb-3 flex flex-col gap-1">
+        {/* Les bandeaux dessinent deux segments, et les colonnes trois états
+            de jour ; sans légende, rien ne dit lequel est lequel ailleurs
+            qu'au survol de la souris — donc jamais au clavier ni au tactile. */}
+        <SegmentLegend className="mb-1" />
+        <p
+          data-testid="legende-jours"
+          className="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted"
+        >
+          {(['weekend', 'ferie'] as const).map((etat) => (
+            <span key={etat} className="inline-flex items-center gap-1">
+              <span
+                aria-hidden="true"
+                className={`inline-block h-3 w-4 rounded-sm border border-rule ${FOND_JOUR[etat]}`}
+              />
+              {TITRE_JOUR[etat]}
+            </span>
+          ))}
+        </p>
         {lines.map((l) => (
           <EngagementBar key={l.id} line={l} totals={engagementTotals[l.id] ?? AUCUN_TOTAL} />
         ))}
@@ -234,9 +253,14 @@ export function MonthGrid({
                         }
                         if (ev.key === 'Escape') drag.clear()
                       }}
-                      className={`touch-target w-11 border-0 bg-transparent text-center text-xs text-ink focus:bg-off ${
+                      // L'input recouvre exactement toute la cellule (`w-11` +
+                      // `touch-target`, `<td>` sans rembourrage) : tout fond
+                      // opaque posé ici efface le fond ET le motif du jour.
+                      // Le focus se voit par le contour de `globals.css`, et
+                      // les créneaux par un liseré — jamais par un aplat.
+                      className={`touch-target w-11 border-0 bg-transparent text-center text-xs text-ink ${
                         cell?.kind === 'PREVISIONNEL' ? 'pattern-hatch italic text-muted' : ''
-                      } ${parCreneaux ? 'bg-warning text-warning-ink' : ''}`}
+                      } ${parCreneaux ? 'text-warning-ink ring-1 ring-inset ring-warning-edge' : ''}`}
                     />
                   </td>
                 )

@@ -121,9 +121,21 @@ describe('MonthGrid', () => {
       expect(ferie.className).toContain('pattern-dots')
     })
 
-    it('nomme le férié autrement que par sa teinte', () => {
+    it('nomme le férié et le week-end par une légende visible', () => {
+      // Le `title` posé sur le `<th>` n'existe qu'au survol de la souris : il
+      // ne peut pas être ce qui « nomme » un état de jour. La légende, si.
       renderGrid({ days: joursAvecFerie })
-      expect(screen.getByTestId('day-header-2026-03-02').getAttribute('title')).toContain('érié')
+      const legende = screen.getByTestId('legende-jours')
+      expect(legende.textContent).toContain('Jour férié')
+      expect(legende.textContent).toContain('Jour non ouvré')
+
+      // Et ses pastilles reprennent l'habillage exact des colonnes.
+      const pastilles = legende.querySelectorAll('[aria-hidden="true"]')
+      expect(pastilles).toHaveLength(2)
+      expect(pastilles[1]!.className).toContain('bg-off-strong pattern-dots')
+      expect(screen.getByTestId('day-header-2026-03-02').className).toContain(
+        'bg-off-strong pattern-dots',
+      )
     })
 
     it('distingue réalisé, prévisionnel et vide sur la saisie', () => {
@@ -157,6 +169,32 @@ describe('MonthGrid', () => {
       renderGrid()
       // `outline-none` sans remplacement rendrait la grille inutilisable au clavier.
       expect(cell('Consultant ITSM', '2026-03-12').className).not.toContain('outline-none')
+    })
+
+    // I4 — l'input occupe exactement toute la cellule (w-11 + touch-target, et
+    // le `<td>` n'a aucun rembourrage). Tout fond opaque posé sur lui recouvre
+    // le fond ET le motif du `<td>`, c'est-à-dire l'état du jour.
+    it('ne recouvre jamais l état du jour d un fond opaque', () => {
+      renderGrid({ days: joursAvecFerie })
+      for (const champ of screen.getAllByLabelText(/^Consultant ITSM 2026-03-/)) {
+        // Aucune classe de fond, dans aucun état (`focus:bg-off` compris), sauf
+        // la transparence qui laisse voir la cellule.
+        expect(champ.className.split(/\s+/).filter((c) => /(^|:)bg-/.test(c))).toEqual([
+          'bg-transparent',
+        ])
+      }
+    })
+
+    it('laisse le férié pris au focus se distinguer encore du week-end', () => {
+      renderGrid({ days: joursAvecFerie })
+      const ferie = cell('Consultant ITSM', '2026-03-02').closest('td')!
+      const weekend = cell('Consultant ITSM', '2026-03-01').closest('td')!
+
+      // 2026-03-02 est férié dans ce jeu, 2026-03-01 est un dimanche : leurs
+      // motifs diffèrent, et rien dans la cellule ne les efface au focus.
+      expect(ferie.className).toContain('pattern-dots')
+      expect(weekend.className).toContain('pattern-stripes')
+      expect(cell('Consultant ITSM', '2026-03-02').className).not.toMatch(/(^|:)bg-off/)
     })
   })
 
@@ -335,5 +373,27 @@ describe('MonthGrid', () => {
       await waitFor(() => expect(input.value).toBe('1'))
       expect(onSave).not.toHaveBeenCalled()
     })
+
+    // I4 — le signal « par créneaux » était un fond opaque permanent, qui
+    // effaçait l'état du jour sur toutes les journées concernées.
+    it('signale les créneaux par un liseré, pas par un fond qui masque la cellule', () => {
+      renderGrid({ entries: deuxCreneaux })
+      const input = cell('Consultant ITSM', '2026-03-16')
+
+      expect(input.className).not.toContain('bg-warning')
+      expect(input.className).toContain('ring-warning-edge')
+      // Le `<td>` garde son état de jour : le 16 mars 2026 est un lundi ouvré.
+      expect(input.closest('td')!.className).toContain('bg-surface')
+    })
+  })
+
+  // I5 — le seul lien segment → sens des bandeaux d'engagement était un
+  // `title` sur un `<div>` non focalisable : invisible au clavier, invisible
+  // au tactile, non annoncé. La grille nomme ses segments visiblement.
+  it('nomme visiblement les segments des bandeaux d engagement', () => {
+    renderGrid()
+    const legende = screen.getByTestId('legende-segments')
+    expect(legende.textContent).toContain('Réalisé')
+    expect(legende.textContent).toContain('Prévisionnel')
   })
 })

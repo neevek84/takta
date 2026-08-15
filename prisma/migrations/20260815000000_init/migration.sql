@@ -18,6 +18,7 @@ CREATE TABLE "Client" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "minutesParJour" INTEGER,
 
     CONSTRAINT "Client_pkey" PRIMARY KEY ("id")
 );
@@ -31,6 +32,7 @@ CREATE TABLE "Mission" (
     "endDate" TIMESTAMP(3),
     "archived" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "minutesParJour" INTEGER,
 
     CONSTRAINT "Mission_pkey" PRIMARY KEY ("id")
 );
@@ -74,6 +76,7 @@ CREATE TABLE "TimeEntry" (
     "kind" TEXT NOT NULL,
     "slotId" TEXT NOT NULL DEFAULT '',
     "comment" TEXT NOT NULL DEFAULT '',
+    "minutesParJour" INTEGER NOT NULL DEFAULT 480,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "TimeEntry_pkey" PRIMARY KEY ("id")
@@ -118,6 +121,9 @@ CREATE TABLE "Settings" (
     "holidaysJson" TEXT NOT NULL DEFAULT '[]',
     "defaultDisplayUnit" TEXT NOT NULL DEFAULT 'JOUR',
     "defaultEngagementSource" TEXT NOT NULL DEFAULT 'MANUEL',
+    "objectifCaExerciceCents" INTEGER NOT NULL DEFAULT 0,
+    "debutExerciceMois" INTEGER NOT NULL DEFAULT 1,
+    "themeJson" TEXT NOT NULL DEFAULT '{}',
 
     CONSTRAINT "Settings_pkey" PRIMARY KEY ("id")
 );

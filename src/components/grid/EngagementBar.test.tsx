@@ -94,8 +94,11 @@ describe('EngagementBar', () => {
       />,
     )
     const bandeau = screen.getByTestId('engagement-l1')
-    const prevu = bandeau.querySelector('[title="Prévisionnel"]')
-    const realise = bandeau.querySelector('[title="Réalisé"]')
+    // Les segments se repèrent par un attribut de données, pas par leur
+    // `title` : un `title` sur un `<div>` n'est ni atteignable au clavier ni
+    // annoncé, il ne peut donc pas être ce que le test tient pour un nommage.
+    const prevu = bandeau.querySelector('[data-segment="prevu"]')
+    const realise = bandeau.querySelector('[data-segment="realise"]')
 
     expect(realise).not.toBeNull()
     expect(prevu).not.toBeNull()

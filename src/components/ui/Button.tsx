@@ -36,7 +36,9 @@ export function Button({
       {...rest}
       ref={ref}
       disabled={disabled === true || loading}
-      aria-busy={loading}
+      // Hors chargement l'attribut n'a rien à dire : `aria-busy="false"` sur
+      // chaque bouton de l'application est du bruit pour rien.
+      aria-busy={loading || undefined}
       className={`touch-target inline-flex items-center justify-center gap-2 rounded-md px-4 text-sm font-medium disabled:opacity-60 ${VARIANTS[variant]} ${className}`}
     >
       {/* L'état de chargement se lit dans le texte, pas seulement dans une

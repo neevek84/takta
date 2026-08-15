@@ -2,11 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireUser } from '@/auth'
-// Écart assumé au brief : la tâche 5 a porté `getTheme`/`updateTheme`/
-// `resetTheme`/`ThemeValidationError` dans `@/services/settings`, aux côtés
-// des autres réglages d'instance, plutôt que dans un `@/services/theme`
-// séparé. Le contrat (signatures, comportement) est inchangé.
-import { updateTheme, resetTheme, ThemeValidationError } from '@/services/settings'
+import { updateTheme, resetTheme, ThemeValidationError } from '@/services/theme'
 import { THEME_TOKEN_KEYS } from '@/core/theme/tokens'
 
 export type SaveThemeState = { ok: true } | { ok: false; errors: string[] } | null
@@ -38,8 +34,29 @@ export async function saveTheme(
   return { ok: true }
 }
 
-export async function restoreDefaultTheme(): Promise<void> {
-  await requireUser()
-  await resetTheme()
+/**
+ * Rend un verdict au lieu de jeter, et pour la même raison que `saveTheme` :
+ * l'écran doit pouvoir dire ce qui s'est passé. Une session expirée ou une
+ * base indisponible produiraient sinon un rejet que personne n'écoute,
+ * pendant que l'écran, lui, se serait déjà repeint au défaut — l'utilisateur
+ * quitterait la page convaincu d'avoir réinitialisé le thème.
+ *
+ * Aucune validation n'est contournée : `resetTheme` repasse par `updateTheme`.
+ */
+export async function restoreDefaultTheme(): Promise<Exclude<SaveThemeState, null>> {
+  try {
+    await requireUser()
+    await resetTheme()
+  } catch (err) {
+    if (err instanceof ThemeValidationError) return { ok: false, errors: err.errors }
+    // Le détail reste au journal du serveur : il peut nommer la base.
+    console.error('Retour au thème par défaut impossible :', err)
+    return {
+      ok: false,
+      errors: ['Vérifiez que votre session est toujours ouverte, puis réessayez.'],
+    }
+  }
+
   revalidatePath('/', 'layout')
+  return { ok: true }
 }

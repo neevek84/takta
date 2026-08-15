@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState, useState, useTransition } from 'react'
 import { saveTheme, restoreDefaultTheme, type SaveThemeState } from './actions'
 import {
   DEFAULT_THEME,
@@ -14,27 +14,46 @@ export function ThemeForm({ theme }: { theme: ThemeTokens }) {
   const [state, formAction, pending] = useActionState<SaveThemeState, FormData>(saveTheme, null)
   const [values, setValues] = useState<ThemeTokens>(theme)
 
+  // Le retour au défaut est une écriture comme une autre : il passe par une
+  // transition, se laisse attendre, et ne repeint les champs qu'une fois la
+  // base d'accord. Repeindre d'abord ferait affirmer à l'écran un état que la
+  // base n'a pas — l'utilisateur quitterait la page en croyant avoir
+  // réinitialisé le thème.
+  const [resetState, setResetState] = useState<SaveThemeState>(null)
+  const [resetting, startReset] = useTransition()
+
+  // Un seul bandeau : c'est le dernier geste qui s'exprime.
+  const retour = resetState ?? state
+  const succes = resetState?.ok ? 'Thème par défaut restauré.' : 'Palette enregistrée.'
+  const echec = resetState
+    ? 'Le thème par défaut n’a pas été restauré :'
+    : 'La palette n’a pas été enregistrée :'
+
   return (
-    <form action={formAction} className="flex flex-col gap-6">
-      {state && !state.ok && (
+    <form
+      action={formAction}
+      onSubmit={() => setResetState(null)}
+      className="flex flex-col gap-6"
+    >
+      {retour && !retour.ok && (
         <div
           role="alert"
           className="rounded-md border border-danger-edge bg-danger px-3 py-2 text-sm text-danger-ink"
         >
-          <p className="font-medium">La palette n’a pas été enregistrée :</p>
+          <p className="font-medium">{echec}</p>
           <ul className="mt-1 list-disc pl-5">
-            {state.errors.map((e) => (
+            {retour.errors.map((e) => (
               <li key={e}>{e}</li>
             ))}
           </ul>
         </div>
       )}
-      {state?.ok && (
+      {retour?.ok && (
         <p
           role="status"
           className="rounded-md border border-success-edge bg-success px-3 py-2 text-sm text-success-ink"
         >
-          Palette enregistrée.
+          {succes}
         </p>
       )}
 
@@ -85,9 +104,13 @@ export function ThemeForm({ theme }: { theme: ThemeTokens }) {
         </button>
         <button
           type="button"
+          disabled={resetting}
           onClick={() => {
-            setValues(DEFAULT_THEME)
-            void restoreDefaultTheme()
+            startReset(async () => {
+              const verdict = await restoreDefaultTheme()
+              if (verdict.ok) setValues(DEFAULT_THEME)
+              setResetState(verdict)
+            })
           }}
           className="touch-target rounded-md border border-rule px-4 text-link hover:bg-off"
         >

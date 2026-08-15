@@ -59,8 +59,28 @@ describe('ExerciceBar', () => {
 
     expect(prevu.className).toContain('pattern-hatch')
     expect(realise.className).not.toContain('pattern-hatch')
-    expect(prevu.getAttribute('title')).toContain('révisionnel')
-    expect(realise.getAttribute('title')).toContain('éalisé')
+  })
+
+  // I5 — le nom des segments ne peut pas reposer sur un `title` posé sur un
+  // `<div>` non focalisable : au clavier et au tactile il n'existe pas, et il
+  // n'est pas annoncé. C'est la légende visible, et elle seule, qui vaut
+  // nommage.
+  it('nomme ses deux segments par une légende visible', () => {
+    render(<ExerciceBar label="Exercice 2026-2027" progress={base} resteEnJoursCentiemes={null} />)
+    const legende = screen.getByTestId('legende-segments')
+    expect(legende.textContent).toContain('Réalisé')
+    expect(legende.textContent).toContain('Prévisionnel')
+  })
+
+  it('habille les pastilles de la légende comme les segments qu elles nomment', () => {
+    render(<ExerciceBar label="Exercice 2026-2027" progress={base} resteEnJoursCentiemes={null} />)
+    const pastilles = screen
+      .getByTestId('legende-segments')
+      .querySelectorAll('[aria-hidden="true"]')
+
+    expect(pastilles).toHaveLength(2)
+    expect(pastilles[0]!.className).toContain(screen.getByTestId('bar-realise').className)
+    expect(pastilles[1]!.className).toContain(screen.getByTestId('bar-prevu').className)
   })
 
   // Constat revue C.2 — objectif 10 000 €, réalisé 9 000 € (90 %), prévu
