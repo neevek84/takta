@@ -23,6 +23,13 @@ export function ExerciceBar({
 
   const pct = (v: number) => Math.min(100, (v / progress.objectifCents) * 100)
 
+  // Le réalisé est un fait acquis, sa largeur n'est jamais rabotée. Le
+  // prévisionnel, lui, cède la place s'il faut pour que la somme des deux
+  // segments ne dépasse jamais 100 % — sinon le flexbox les comprime tous
+  // les deux et fausse le rapport visuel réalisé/prévu.
+  const pctRealise = pct(progress.realiseCents)
+  const pctPrevu = Math.min(pct(progress.prevuCents), 100 - pctRealise)
+
   return (
     <section className="mb-6">
       <h2 className="mb-2 text-sm font-medium text-slate-600">
@@ -31,8 +38,16 @@ export function ExerciceBar({
 
       <div className="mb-2 h-3 w-full overflow-hidden rounded bg-slate-200">
         <div className="flex h-full">
-          <div className="bg-slate-800" style={{ width: `${pct(progress.realiseCents)}%` }} />
-          <div className="bg-slate-400" style={{ width: `${pct(progress.prevuCents)}%` }} />
+          <div
+            data-testid="bar-realise"
+            className="bg-slate-800"
+            style={{ width: `${pctRealise}%` }}
+          />
+          <div
+            data-testid="bar-prevu"
+            className="bg-slate-400"
+            style={{ width: `${pctPrevu}%` }}
+          />
         </div>
       </div>
 

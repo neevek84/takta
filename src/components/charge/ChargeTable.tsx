@@ -22,6 +22,7 @@ export function ChargeTable({ matrix }: { matrix: ChargeMatrix }) {
   return (
     <div className="overflow-x-auto">
       <table className="border-collapse text-sm">
+        <caption className="sr-only">Plan de charge de {matrix.fiscalYear.label}</caption>
         <thead>
           <tr>
             <th scope="col" className="sticky left-0 bg-white px-2 py-1 text-left">
@@ -44,7 +45,11 @@ export function ChargeTable({ matrix }: { matrix: ChargeMatrix }) {
               </th>
 
               {row.cells.map((cell, i) => (
-                <td key={i} className="px-1 py-1 text-center text-xs">
+                <td
+                  key={i}
+                  data-testid={`cell-${row.lineId}-${matrix.fiscalYear.months[i]}`}
+                  className="px-1 py-1 text-center text-xs"
+                >
                   {cell.realiseCentiemes > 0 && <span>{jours(cell.realiseCentiemes)}</span>}
                   {cell.prevuCentiemes > 0 && (
                     <span className="text-slate-400 italic">
@@ -55,11 +60,11 @@ export function ChargeTable({ matrix }: { matrix: ChargeMatrix }) {
                 </td>
               ))}
 
-              <td className="px-3 py-1 text-right text-xs">
-                {row.engagement.resteCentiemes / 100} j · {euros(row.resteAVendreCents)} €
+              <td data-testid={`reste-${row.lineId}`} className="px-3 py-1 text-right text-xs">
+                {jours(row.engagement.resteCentiemes)} j · {euros(row.resteAVendreCents)} €
                 {row.engagement.depassementCentiemes > 0 && (
                   <span className="ml-1 text-amber-600">
-                    (+{row.engagement.depassementCentiemes / 100} j)
+                    (+{jours(row.engagement.depassementCentiemes)} j)
                   </span>
                 )}
               </td>

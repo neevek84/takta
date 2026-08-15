@@ -35,25 +35,31 @@ export async function createLine(args: {
 }): Promise<{ id: string }> {
   const settings = await getSettings()
 
-  const line = await prisma.missionLine.create({
-    data: {
-      missionId: args.missionId,
-      label: args.label,
-      soldCentiemes: args.soldCentiemes,
-      tjmCents: args.tjmCents,
-      displayUnit: args.displayUnit ?? settings.defaultDisplayUnit,
-      minutesParJour: args.minutesParJour ?? null,
-      engagementSource: settings.defaultEngagementSource,
-      allowedSlotIds: (args.allowedSlotIds ?? []).join(','),
-    },
-  })
+  // Les deux écritures tiennent dans une seule transaction : une ligne sans
+  // affectation n'existe pas dans le modèle — `listActiveLines` part des
+  // affectations, donc une telle ligne serait invisible dans l'interface tout
+  // en occupant la base, sans moyen de la supprimer.
+  return prisma.$transaction(async (tx) => {
+    const line = await tx.missionLine.create({
+      data: {
+        missionId: args.missionId,
+        label: args.label,
+        soldCentiemes: args.soldCentiemes,
+        tjmCents: args.tjmCents,
+        displayUnit: args.displayUnit ?? settings.defaultDisplayUnit,
+        minutesParJour: args.minutesParJour ?? null,
+        engagementSource: settings.defaultEngagementSource,
+        allowedSlotIds: (args.allowedSlotIds ?? []).join(','),
+      },
+    })
 
-  // Provision multi-consultants : l'affectation existe toujours, même à un seul.
-  await prisma.assignment.create({
-    data: { lineId: line.id, userId: args.userId, soldCentiemes: args.soldCentiemes },
-  })
+    // Provision multi-consultants : l'affectation existe toujours, même à un seul.
+    await tx.assignment.create({
+      data: { lineId: line.id, userId: args.userId, soldCentiemes: args.soldCentiemes },
+    })
 
-  return { id: line.id }
+    return { id: line.id }
+  })
 }
 
 export interface MissionForUser {

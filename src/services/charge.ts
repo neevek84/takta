@@ -9,7 +9,6 @@ import {
 } from '@/core/fiscal/revenue'
 import { computeEngagement, type EngagementSummary } from '@/core/engagement/compute'
 import { minutesToCentiemes } from '@/core/time/units'
-import { listActiveLines } from './missions'
 import { getSettings } from './settings'
 import { toIsoDate } from './time-entries'
 import type { TimeEntryKind } from '@/core/types'
@@ -38,13 +37,86 @@ export interface ChargeMatrix {
   resteEnJoursCentiemes: number | null
 }
 
+interface ChargeLine {
+  id: string
+  label: string
+  minutesParJour: number
+  soldCentiemes: number
+  tjmCents: number
+}
+
+/** Minuit UTC du premier jour du mois `YYYY-MM`. */
+function monthStart(month: string): Date {
+  return new Date(`${month}-01T00:00:00.000Z`)
+}
+
+/** Minuit UTC du premier jour du mois *suivant* `YYYY-MM` (borne exclue). */
+function monthEnd(month: string): Date {
+  const year = Number(month.slice(0, 4))
+  const m = Number(month.slice(5, 7))
+  return new Date(Date.UTC(year, m, 1))
+}
+
+/**
+ * Univers de lignes du plan de charge, pour un utilisateur et un exercice.
+ *
+ * Ce n'est **pas** `listActiveLines`, qui répond à « sur quoi puis-je saisir
+ * aujourd'hui » et exclut donc tout ce qui est archivé. Le plan de charge
+ * répond à « qu'ai-je réalisé et planifié sur cet exercice » : le chiffre
+ * d'affaires d'un exercice est un fait comptable, il ne disparaît pas parce
+ * qu'une mission a été archivée après coup. L'univers retenu est donc :
+ *
+ *  - les lignes actives affectées à l'utilisateur, même sans aucune saisie —
+ *    ce sont elles qui portent un reste à planifier ;
+ *  - **plus** les lignes archivées affectées à l'utilisateur qui portent au
+ *    moins une de ses saisies **dans l'exercice demandé**.
+ *
+ * Une ligne archivée sans saisie de l'exercice reste donc absente : l'archivage
+ * garde tout son effet sur ce qui est encore à vendre. Le même univers sert aux
+ * lignes affichées, aux cellules, aux totaux mensuels et au CA de l'exercice :
+ * les dissocier ferait afficher au pied d'une colonne des jours et des euros
+ * qu'aucune cellule visible ne justifierait.
+ *
+ * La requête est écrite ici plutôt que dans `missions.ts` : `listActiveLines`
+ * garde sa sémantique de grille de saisie, et le scope `userId` vit dans le
+ * service, y compris sur la condition de saisie (`timeEntries.some`).
+ */
+async function listLinesForFiscalYear(
+  userId: string,
+  fiscalYear: FiscalYear,
+  defaultMinutesParJour: number,
+): Promise<ChargeLine[]> {
+  const debut = monthStart(fiscalYear.months[0]!)
+  const fin = monthEnd(fiscalYear.months[fiscalYear.months.length - 1]!)
+
+  const assignments = await prisma.assignment.findMany({
+    where: {
+      userId,
+      OR: [
+        { line: { archived: false, mission: { archived: false } } },
+        { line: { timeEntries: { some: { userId, date: { gte: debut, lt: fin } } } } },
+      ],
+    },
+    include: { line: { include: { mission: { include: { client: true } } } } },
+    orderBy: [{ line: { position: 'asc' } }],
+  })
+
+  return assignments.map((a) => ({
+    id: a.line.id,
+    label: `${a.line.mission.client.name} · ${a.line.mission.label} · ${a.line.label}`,
+    minutesParJour: a.line.minutesParJour ?? defaultMinutesParJour,
+    soldCentiemes: a.soldCentiemes,
+    tjmCents: a.line.tjmCents,
+  }))
+}
+
 export async function buildChargeMatrix(
   userId: string,
   startYear: number,
 ): Promise<ChargeMatrix> {
   const settings = await getSettings()
   const fiscalYear = fiscalYearFromStartYear(startYear, settings.debutExerciceMois)
-  const lines = await listActiveLines(userId)
+  const lines = await listLinesForFiscalYear(userId, fiscalYear, settings.minutesParJour)
 
   const emptyTotals = fiscalYear.months.map(() => ({ centiemes: 0, caCents: 0 }))
 
@@ -78,32 +150,41 @@ export async function buildChargeMatrix(
 
   const priced = lines.map((l) => ({
     id: l.id,
-    tjmCents: 0,
+    tjmCents: l.tjmCents,
     minutesParJour: l.minutesParJour,
   }))
-  const tjmByLine = await prisma.missionLine.findMany({
-    where: { id: { in: lineIds } },
-    select: { id: true, tjmCents: true },
-  })
-  const tjmMap = new Map(tjmByLine.map((l) => [l.id, l.tjmCents]))
-  for (const p of priced) p.tjmCents = tjmMap.get(p.id) ?? 0
 
   const monthTotals = emptyTotals.map(() => ({ centiemes: 0, caCents: 0 }))
 
   const chargeRows: ChargeRow[] = lines.map((line) => {
     const lineEntries = entries.filter((e) => e.lineId === line.id)
-    const cells: ChargeCell[] = fiscalYear.months.map(() => ({
-      realiseCentiemes: 0,
-      prevuCentiemes: 0,
-    }))
+
+    // Convention du lot : on cumule les **minutes**, puis on convertit une
+    // seule fois — la même discipline que `computeEngagement`. Convertir
+    // chaque saisie séparément fait dériver l'arrondi (dix saisies d'une heure
+    // sur une journée à 420 min donnent 140 centièmes au lieu de 143) et fait
+    // diverger la cellule affichée du reste à planifier de la même ligne.
+    const realiseMinutes = fiscalYear.months.map(() => 0)
+    const prevuMinutes = fiscalYear.months.map(() => 0)
 
     for (const e of lineEntries) {
       const i = monthIndex.get(e.date.slice(0, 7))
       if (i === undefined) continue
-      const c = minutesToCentiemes(e.minutes, line.minutesParJour)
-      if (e.kind === 'REALISE') cells[i]!.realiseCentiemes += c
-      else cells[i]!.prevuCentiemes += c
-      monthTotals[i]!.centiemes += c
+      if (e.kind === 'REALISE') realiseMinutes[i]! += e.minutes
+      else prevuMinutes[i]! += e.minutes
+    }
+
+    const cells: ChargeCell[] = fiscalYear.months.map((_, i) => ({
+      realiseCentiemes: minutesToCentiemes(realiseMinutes[i]!, line.minutesParJour),
+      prevuCentiemes: minutesToCentiemes(prevuMinutes[i]!, line.minutesParJour),
+    }))
+
+    // Le total d'une colonne est la somme des cellules déjà converties, et non
+    // la conversion d'un cumul de minutes : deux lignes peuvent avoir des
+    // journées de durées différentes, leurs minutes ne s'additionnent pas. Le
+    // pied de colonne affiche ainsi exactement ce que ses cellules affichent.
+    for (const [i, c] of cells.entries()) {
+      monthTotals[i]!.centiemes += c.realiseCentiemes + c.prevuCentiemes
     }
 
     const engagement = computeEngagement({
@@ -112,30 +193,39 @@ export async function buildChargeMatrix(
       minutesParJour: line.minutesParJour,
     })
 
-    const tjmCents = tjmMap.get(line.id) ?? 0
-
     return {
       lineId: line.id,
-      label: `${line.clientName} · ${line.missionLabel} · ${line.label}`,
-      tjmCents,
+      label: line.label,
+      tjmCents: line.tjmCents,
       cells,
       engagement,
-      resteAVendreCents: Math.round((engagement.resteCentiemes * tjmCents) / 100),
+      resteAVendreCents: Math.round((engagement.resteCentiemes * line.tjmCents) / 100),
     }
   })
 
+  // Le CA de l'exercice est la **somme des douze totaux mensuels**, et non un
+  // appel global à `caFromEntries` sur les entrées de l'exercice. `caFromEntries`
+  // cumule les minutes puis arrondit une fois par ligne, mais seulement à
+  // l'intérieur d'un appel : deux découpages différents (par mois / sur
+  // l'exercice) arrondissent indépendamment et divergent de quelques centimes.
+  // La barre d'exercice et le pied du tableau sont affichés sur le même écran ;
+  // ils doivent se sommer exactement.
+  let realiseCents = 0
+  let prevuCents = 0
+
   for (const [i, month] of fiscalYear.months.entries()) {
     const ofMonth = entries.filter((e) => e.date.slice(0, 7) === month)
-    monthTotals[i]!.caCents = caFromEntries(ofMonth, priced)
+    const moisRealise = caFromEntries(ofMonth.filter((e) => e.kind === 'REALISE'), priced)
+    const moisPrevu = caFromEntries(ofMonth.filter((e) => e.kind === 'PREVISIONNEL'), priced)
+    monthTotals[i]!.caCents = moisRealise + moisPrevu
+    realiseCents += moisRealise
+    prevuCents += moisPrevu
   }
 
-  const inYear = entries.filter((e) => monthIndex.has(e.date.slice(0, 7)))
-  const realiseCents = caFromEntries(inYear.filter((e) => e.kind === 'REALISE'), priced)
-  const prevuCents = caFromEntries(inYear.filter((e) => e.kind === 'PREVISIONNEL'), priced)
   const progress = exerciceProgress(settings.objectifCaExerciceCents, realiseCents, prevuCents)
 
   const tjmMoyen = tjmMoyenPondere(
-    lines.map((l) => ({ tjmCents: tjmMap.get(l.id) ?? 0, soldCentiemes: l.soldCentiemes })),
+    lines.map((l) => ({ tjmCents: l.tjmCents, soldCentiemes: l.soldCentiemes })),
   )
 
   return {

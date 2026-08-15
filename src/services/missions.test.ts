@@ -55,6 +55,27 @@ describe('clients et missions', () => {
     expect(assignment!.soldCentiemes).toBe(3000)
   })
 
+  // Défaut observé en usage réel : la ligne était créée, puis l'affectation
+  // échouait (`Foreign key constraint violated`), laissant une ligne orpheline
+  // — invisible dans l'interface, puisque `listActiveLines` exige une
+  // affectation, et impossible à supprimer.
+  it("ne laisse aucune ligne orpheline quand l'affectation échoue", async () => {
+    const c = await createClient('ACME transaction')
+    const m = await createMission({ clientId: c.id, label: 'Transaction' })
+
+    await expect(
+      createLine({
+        missionId: m.id,
+        userId: 'utilisateur-inexistant',
+        label: 'Orpheline',
+        soldCentiemes: 100,
+        tjmCents: 0,
+      }),
+    ).rejects.toThrow()
+
+    expect(await prisma.missionLine.count({ where: { missionId: m.id } })).toBe(0)
+  })
+
   it('porte deux lignes tarifées différemment sous une même mission', async () => {
     const c = await createClient('ACME deux lignes')
     const m = await createMission({ clientId: c.id, label: 'ITSM deux lignes' })

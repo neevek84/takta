@@ -34,15 +34,26 @@ export async function saveCell(args: {
   return result
 }
 
+/** Compte rendu de la dernière conversion, `null` avant tout clic. */
+export type ConversionEtat = { converted: number; skippedLocked: number } | null
+
 /**
  * Convertit le prévisionnel échu en réalisé — jamais déclenché seul, toujours
  * à l'initiative de l'utilisateur via le bouton de `PastForecastNotice`.
+ *
+ * Rend compte de ce qu'elle a réellement fait : le nombre annoncé au rendu et
+ * le nombre converti au clic peuvent différer (un jour qui bascule entre les
+ * deux, un CRA validé entre-temps). Sans ce retour, l'écart resterait invisible.
  */
-export async function validerJoursPasses(formData: FormData) {
+export async function validerJoursPasses(
+  _etatPrecedent: ConversionEtat,
+  formData: FormData,
+): Promise<ConversionEtat> {
   const user = await requireUser()
   const month = String(formData.get('month'))
   const today = new Date().toISOString().slice(0, 10)
 
-  await convertPastForecast(user.id, month, today)
+  const resultat = await convertPastForecast(user.id, month, today)
   revalidatePath(`/saisie/${month}`)
+  return resultat
 }

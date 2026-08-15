@@ -74,4 +74,18 @@ describe('shiftMonth', () => {
   it('renvoie le mois inchangé pour un décalage nul', () => {
     expect(shiftMonth('2026-08', 0)).toBe('2026-08')
   })
+
+  it('gère un décalage négatif qui fait passer le total sous zéro', () => {
+    // year*12 + (m-1) + delta devient négatif : le '%' de JS rendrait un
+    // reste négatif ('-1-00') sans le correctif du modulo positif.
+    expect(shiftMonth('2000-01', -24001)).toBe('-0001-12')
+  })
+
+  it('zero-pade l année de sortie même quand elle devient nulle ou négative', () => {
+    expect(shiftMonth('0001-01', -1)).toBe('0000-12')
+  })
+
+  it('reste correct sur un grand décalage négatif qui ne descend pas sous l an zéro', () => {
+    expect(shiftMonth('2026-01', -25)).toBe('2023-12')
+  })
 })

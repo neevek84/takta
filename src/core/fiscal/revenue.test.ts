@@ -47,9 +47,34 @@ describe('caFromEntries', () => {
     expect(caFromEntries([{ lineId: 'fantome', minutes: 480 }], LINES)).toBe(0)
   })
 
-  it('ne dérive pas sur un cumul de nombreuses demi-journées', () => {
-    const entries = Array.from({ length: 300 }, () => ({ lineId: 'jour', minutes: 240 }))
-    expect(caFromEntries(entries, LINES)).toBe(300 * 40000)
+  it('ne dérive pas sur un cumul de nombreuses saisies dont l arrondi par entrée ne tombe pas juste', () => {
+    // 200 * 33333 / 480 = 13888,75 : ne divise jamais exactement, donc un
+    // arrondi par entrée dérive de façon systématique sur beaucoup de saisies.
+    // Convention « cumuler puis convertir » (même discipline que
+    // computeEngagement) : on cumule les 300 * 200 = 60 000 minutes de la
+    // ligne, puis on arrondit une seule fois -> 4 166 625.
+    // Un arrondi par entrée donnerait 300 * round(13888,75) = 4 166 700,
+    // soit une dérive de 75 centimes.
+    const lines = [{ id: 'jour', tjmCents: 33333, minutesParJour: 480 }]
+    const entries = Array.from({ length: 300 }, () => ({ lineId: 'jour', minutes: 200 }))
+    expect(caFromEntries(entries, lines)).toBe(4_166_625)
+  })
+
+  it('cumule les minutes par ligne avant de convertir, indépendamment pour chaque ligne', () => {
+    // Deux lignes à des tarifs différents, chacune avec un arrondi par
+    // entrée qui ne tombe pas juste : la conversion doit se faire une seule
+    // fois par ligne, pas une seule fois pour l ensemble des entrées.
+    const lines = [
+      { id: 'a', tjmCents: 33333, minutesParJour: 480 },
+      { id: 'b', tjmCents: 77777, minutesParJour: 420 },
+    ]
+    const entries = [
+      ...Array.from({ length: 5 }, () => ({ lineId: 'a', minutes: 200 })),
+      ...Array.from({ length: 5 }, () => ({ lineId: 'b', minutes: 150 })),
+    ]
+    const attenduA = Math.round((5 * 200 * 33333) / 480)
+    const attenduB = Math.round((5 * 150 * 77777) / 420)
+    expect(caFromEntries(entries, lines)).toBe(attenduA + attenduB)
   })
 })
 

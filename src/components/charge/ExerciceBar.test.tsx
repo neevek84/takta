@@ -49,4 +49,35 @@ describe('ExerciceBar', () => {
     render(<ExerciceBar label="Exercice 2026-2027" progress={depasse} resteEnJoursCentiemes={null} />)
     expect(screen.getByText(/dépassé/i)).toBeDefined()
   })
+
+  // Constat revue C.2 — objectif 10 000 €, réalisé 9 000 € (90 %), prévu
+  // 3 000 € (30 %) : la somme des deux segments (120 %) ne doit jamais
+  // dépasser 100 % de largeur, sous peine de laisser le flexbox comprimer
+  // les deux barres et fausser le rapport visuel réalisé/prévu.
+  it('ne laisse jamais la somme des segments dépasser 100 % de largeur', () => {
+    const depassementPrevisionnel = {
+      objectifCents: 1_000_000,
+      realiseCents: 900_000,
+      prevuCents: 300_000,
+      resteAVendreCents: 0,
+      depassementCents: 200_000,
+      tauxCouverture: 1.2,
+    }
+    render(
+      <ExerciceBar
+        label="Exercice 2026-2027"
+        progress={depassementPrevisionnel}
+        resteEnJoursCentiemes={null}
+      />,
+    )
+    const realise = screen.getByTestId('bar-realise') as HTMLElement
+    const prevu = screen.getByTestId('bar-prevu') as HTMLElement
+    const realisePct = parseFloat(realise.style.width)
+    const prevuPct = parseFloat(prevu.style.width)
+
+    expect(realisePct + prevuPct).toBeLessThanOrEqual(100)
+    // Le réalisé est un fait acquis : sa largeur ne doit pas être rabotée
+    // pour faire de la place au prévisionnel.
+    expect(realisePct).toBeCloseTo(90)
+  })
 })

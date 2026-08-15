@@ -13,7 +13,24 @@ function pad(n: number): string {
   return String(n).padStart(2, '0')
 }
 
+/**
+ * `debutMois` est un réglage utilisateur (`Settings.debutExerciceMois`) qui
+ * traverse la validation zod sur le chemin réel de l'application, mais cette
+ * fonction est pure et ne doit pas fabriquer silencieusement des dates
+ * invalides si elle est appelée directement (tests, futurs appelants). On
+ * lève une exception plutôt que de clamper ou normaliser : normaliser
+ * masquerait une erreur d'appel au lieu de la signaler.
+ */
+function assertDebutMoisValide(debutMois: number): void {
+  if (!Number.isInteger(debutMois) || debutMois < 1 || debutMois > 12) {
+    throw new Error(
+      `debutMois invalide : ${debutMois} (doit être un entier entre 1 et 12 inclus)`,
+    )
+  }
+}
+
 export function fiscalYearFromStartYear(startYear: number, debutMois: number): FiscalYear {
+  assertDebutMoisValide(debutMois)
   const endMonth = debutMois === 1 ? 12 : debutMois - 1
   const endYear = debutMois === 1 ? startYear : startYear + 1
   // Jour 0 du mois suivant = dernier jour du mois courant. Gère février bissextile.

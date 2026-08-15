@@ -226,24 +226,29 @@ export async function listPastForecast(
 }
 
 /**
- * Convertit en `REALISE` le prévisionnel échu d'un mois, jamais automatiquement
- * — seulement à la demande explicite de l'utilisateur (voir `validerJoursPasses`).
+ * Partage le prévisionnel échu d'un mois entre ce qui est convertible et ce
+ * que le verrou du CRA retient.
  *
- * Le verrou du CRA porte sur un couple (mission, mois) : un même mois peut
- * mêler une mission verrouillée et une mission ouverte. On traite donc les
- * missions ouvertes et on compte celles qu'on a sautées, plutôt que de tout
- * refuser en bloc dès qu'une mission du mois est verrouillée.
+ * Le verrou porte sur un couple (mission, mois) : un même mois peut mêler une
+ * mission verrouillée et une mission ouverte. Il s'évalue par `isLocked`, et
+ * jamais par une comparaison littérale de statut — c'est la raison d'être de
+ * cette fonction : l'encart de la page de saisie et le bouton qui convertit
+ * lisent le **même** partage, et ne peuvent donc pas diverger le jour où
+ * `isLocked` s'étendra à un statut supplémentaire.
  */
-export async function convertPastForecast(
+async function splitPastForecastByLock(
   userId: string,
   month: string,
   today: string,
-): Promise<{ converted: number; skippedLocked: number }> {
+): Promise<{ candidates: MonthEntry[]; convertibles: MonthEntry[]; lockedCount: number }> {
   const candidates = await listPastForecast(userId, month, today)
-  if (candidates.length === 0) return { converted: 0, skippedLocked: 0 }
+  if (candidates.length === 0) return { candidates, convertibles: [], lockedCount: 0 }
 
   const lines = await prisma.missionLine.findMany({
-    where: { id: { in: [...new Set(candidates.map((e) => e.lineId))] } },
+    where: {
+      id: { in: [...new Set(candidates.map((e) => e.lineId))] },
+      assignments: { some: { userId } },
+    },
     select: { id: true, missionId: true },
   })
   const missionByLine = new Map(lines.map((l) => [l.id, l.missionId]))
@@ -265,6 +270,46 @@ export async function convertPastForecast(
     return missionId !== undefined && !lockedMissions.has(missionId)
   })
 
+  return { candidates, convertibles, lockedCount: candidates.length - convertibles.length }
+}
+
+export interface PastForecastStatus {
+  /** Jours prévisionnels échus du mois, verrouillés compris. */
+  entries: MonthEntry[]
+  /** Combien d'entre eux appartiennent à une mission dont le CRA est verrouillé. */
+  lockedCount: number
+}
+
+/**
+ * Les deux chiffres que l'encart du prévisionnel échu affiche, d'un seul
+ * tenant : les jours échus et le nombre d'entre eux que le verrou retient.
+ *
+ * Purement lecture — la conversion n'est jamais automatique, elle reste à
+ * l'initiative de l'utilisateur (`convertPastForecast`).
+ */
+export async function getPastForecastWithLockStatus(
+  userId: string,
+  month: string,
+  today: string,
+): Promise<PastForecastStatus> {
+  const { candidates, lockedCount } = await splitPastForecastByLock(userId, month, today)
+  return { entries: candidates, lockedCount }
+}
+
+/**
+ * Convertit en `REALISE` le prévisionnel échu d'un mois, jamais automatiquement
+ * — seulement à la demande explicite de l'utilisateur (voir `validerJoursPasses`).
+ *
+ * On traite les missions ouvertes et on compte celles qu'on a sautées, plutôt
+ * que de tout refuser en bloc dès qu'une mission du mois est verrouillée.
+ */
+export async function convertPastForecast(
+  userId: string,
+  month: string,
+  today: string,
+): Promise<{ converted: number; skippedLocked: number }> {
+  const { convertibles, lockedCount } = await splitPastForecastByLock(userId, month, today)
+
   if (convertibles.length > 0) {
     await prisma.timeEntry.updateMany({
       where: { id: { in: convertibles.map((e) => e.id) }, userId },
@@ -272,8 +317,5 @@ export async function convertPastForecast(
     })
   }
 
-  return {
-    converted: convertibles.length,
-    skippedLocked: candidates.length - convertibles.length,
-  }
+  return { converted: convertibles.length, skippedLocked: lockedCount }
 }

@@ -84,3 +84,34 @@ describe('fiscalYearFromStartYear', () => {
     expect(fiscalYearFromStartYear(2025, 4).label).toBe('Exercice 2025-2026')
   })
 })
+
+describe('validation de debutMois', () => {
+  it('rejette debutMois = 0 dans fiscalYearFromStartYear', () => {
+    expect(() => fiscalYearFromStartYear(2026, 0)).toThrow()
+  })
+
+  it('rejette debutMois = 13 dans fiscalYearFromStartYear', () => {
+    expect(() => fiscalYearFromStartYear(2026, 13)).toThrow()
+  })
+
+  it('rejette debutMois négatif dans fiscalYearFromStartYear', () => {
+    expect(() => fiscalYearFromStartYear(2026, -1)).toThrow()
+  })
+
+  it('rejette un debutMois non entier dans fiscalYearFromStartYear', () => {
+    expect(() => fiscalYearFromStartYear(2026, 4.5)).toThrow()
+  })
+
+  it('rejette debutMois = 0 dans fiscalYearBounds', () => {
+    expect(() => fiscalYearBounds('2026-08-15', 0)).toThrow()
+  })
+
+  it('rejette debutMois = 13 dans fiscalYearBounds', () => {
+    expect(() => fiscalYearBounds('2026-08-15', 13)).toThrow()
+  })
+
+  it('accepte encore les bornes valides 1 et 12', () => {
+    expect(() => fiscalYearFromStartYear(2026, 1)).not.toThrow()
+    expect(() => fiscalYearFromStartYear(2026, 12)).not.toThrow()
+  })
+})

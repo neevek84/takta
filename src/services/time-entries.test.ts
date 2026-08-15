@@ -4,12 +4,18 @@ import { updateSettings } from './settings'
 import { createClient } from './clients'
 import { createMission, createLine } from './missions'
 import { saveEntry, getMonthEntries, getLineEngagementTotals } from './time-entries'
-import { listPastForecast, convertPastForecast } from './time-entries'
+import {
+  listPastForecast,
+  convertPastForecast,
+  getPastForecastWithLockStatus,
+} from './time-entries'
 
 let userId = ''
 let intrusId = ''
 let lineA = ''
 let lineB = ''
+/** Sur une **seconde** mission : le verrou porte sur un couple (mission, mois). */
+let lineC = ''
 
 beforeAll(async () => {
   const u = await prisma.user.create({
@@ -27,6 +33,9 @@ beforeAll(async () => {
   const m = await createMission({ clientId: c.id, label: 'M' })
   lineA = (await createLine({ missionId: m.id, userId, label: 'A', soldCentiemes: 3000, tjmCents: 0 })).id
   lineB = (await createLine({ missionId: m.id, userId, label: 'B', soldCentiemes: 3000, tjmCents: 0 })).id
+
+  const m2 = await createMission({ clientId: c.id, label: 'M2' })
+  lineC = (await createLine({ missionId: m2.id, userId, label: 'C', soldCentiemes: 3000, tjmCents: 0 })).id
 })
 
 beforeEach(async () => {
@@ -267,5 +276,75 @@ describe('conversion du prévisionnel échu', () => {
     expect(restant!.kind).toBe('PREVISIONNEL')
 
     await prisma.user.delete({ where: { id: autre.id } })
+  })
+})
+
+/**
+ * Les deux chiffres de l'encart de la page de saisie — jours prévisionnels
+ * échus et nombre d'entre eux verrouillés — viennent d'ici, et non d'un calcul
+ * refait dans la page à partir de `prisma` et d'un `status: 'VALIDE'` en dur.
+ */
+describe('getPastForecastWithLockStatus', () => {
+  it('rend le prévisionnel échu du mois, sans le futur ni le réalisé', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-10', minutes: 480, kind: 'PREVISIONNEL' })
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-20', minutes: 480, kind: 'PREVISIONNEL' })
+    await saveEntry({ userId, lineId: lineB, date: '2026-03-05', minutes: 240, kind: 'REALISE' })
+
+    const status = await getPastForecastWithLockStatus(userId, '2026-03', '2026-03-15')
+    expect(status.entries.map((e) => e.date)).toEqual(['2026-03-10'])
+    expect(status.lockedCount).toBe(0)
+  })
+
+  it('compte les jours dont la mission est verrouillée, sans compter les autres', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-10', minutes: 240, kind: 'PREVISIONNEL' })
+    await saveEntry({ userId, lineId: lineC, date: '2026-03-11', minutes: 240, kind: 'PREVISIONNEL' })
+
+    const line = await prisma.missionLine.findUniqueOrThrow({ where: { id: lineA } })
+    await prisma.cra.create({
+      data: {
+        missionId: line.missionId,
+        userId,
+        month: new Date('2026-03-01T00:00:00Z'),
+        status: 'VALIDE',
+      },
+    })
+
+    const status = await getPastForecastWithLockStatus(userId, '2026-03', '2026-03-15')
+    expect(status.entries).toHaveLength(2)
+    expect(status.lockedCount).toBe(1)
+
+    await prisma.cra.deleteMany({ where: { userId } })
+  })
+
+  // Le compteur de l'encart et le comportement du bouton doivent rester
+  // solidaires : ils s'évaluent tous deux par `isLocked`, sur le même partage.
+  it("annonce exactement ce que la conversion réalise", async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-10', minutes: 240, kind: 'PREVISIONNEL' })
+    await saveEntry({ userId, lineId: lineC, date: '2026-03-11', minutes: 240, kind: 'PREVISIONNEL' })
+
+    const line = await prisma.missionLine.findUniqueOrThrow({ where: { id: lineA } })
+    await prisma.cra.create({
+      data: {
+        missionId: line.missionId,
+        userId,
+        month: new Date('2026-03-01T00:00:00Z'),
+        status: 'VALIDE',
+      },
+    })
+
+    const status = await getPastForecastWithLockStatus(userId, '2026-03', '2026-03-15')
+    const conversion = await convertPastForecast(userId, '2026-03', '2026-03-15')
+
+    expect(conversion.converted).toBe(status.entries.length - status.lockedCount)
+    expect(conversion.skippedLocked).toBe(status.lockedCount)
+
+    await prisma.cra.deleteMany({ where: { userId } })
+  })
+
+  it('scope par utilisateur', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-10', minutes: 240, kind: 'PREVISIONNEL' })
+
+    const status = await getPastForecastWithLockStatus(intrusId, '2026-03', '2026-03-15')
+    expect(status).toEqual({ entries: [], lockedCount: 0 })
   })
 })
