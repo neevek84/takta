@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/db/client'
 import { createClient, listClients } from './clients'
-import { createMission, createLine, listActiveLines } from './missions'
+import { createMission, createLine, listActiveLines, listMissionsForUser } from './missions'
 
 let userId = ''
 
@@ -13,7 +13,19 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await prisma.user.deleteMany({ where: { email: 'missions@test.local' } })
+  await prisma.user.deleteMany({
+    where: {
+      email: {
+        in: [
+          'missions@test.local',
+          'autre@test.local',
+          'isolation-missions@test.local',
+          'isolation-clients@test.local',
+          'bootstrap@test.local',
+        ],
+      },
+    },
+  })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'ACME' } } })
   await prisma.$disconnect()
 })
@@ -22,7 +34,7 @@ describe('clients et missions', () => {
   it('crée un client et le retrouve', async () => {
     const c = await createClient('ACME 38')
     expect(c.id).toBeTruthy()
-    expect((await listClients()).some((x) => x.id === c.id)).toBe(true)
+    expect((await listClients(userId)).some((x) => x.id === c.id)).toBe(true)
   })
 
   it('crée une ligne et son affectation automatiquement', async () => {
@@ -85,6 +97,53 @@ describe('clients et missions', () => {
     })
     const lines = await listActiveLines(autre.id)
     expect(lines).toHaveLength(0)
+    await prisma.user.delete({ where: { id: autre.id } })
+  })
+
+  it('ne montre une mission revendiquée qu à l utilisateur affecté, jamais à un autre', async () => {
+    const c = await createClient('ACME isolation missions')
+    const m = await createMission({ clientId: c.id, label: 'Isolation missions' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const autre = await prisma.user.create({
+      data: { email: 'isolation-missions@test.local', name: 'I', passwordHash: 'x' },
+    })
+
+    const pourProprietaire = await listMissionsForUser(userId)
+    expect(pourProprietaire.some((x) => x.id === m.id)).toBe(true)
+
+    const pourAutre = await listMissionsForUser(autre.id)
+    expect(pourAutre.some((x) => x.id === m.id)).toBe(false)
+
+    await prisma.user.delete({ where: { id: autre.id } })
+  })
+
+  it('cache un client dont toutes les missions sont affectées à un autre utilisateur', async () => {
+    const c = await createClient('ACME isolation clients')
+    const m = await createMission({ clientId: c.id, label: 'Isolation clients' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const autre = await prisma.user.create({
+      data: { email: 'isolation-clients@test.local', name: 'I', passwordHash: 'x' },
+    })
+
+    expect((await listClients(userId)).some((x) => x.id === c.id)).toBe(true)
+    expect((await listClients(autre.id)).some((x) => x.id === c.id)).toBe(false)
+
+    await prisma.user.delete({ where: { id: autre.id } })
+  })
+
+  it('garde un client et une mission fraîchement créés visibles avant toute affectation (base à froid)', async () => {
+    const c = await createClient('ACME bootstrap')
+    const m = await createMission({ clientId: c.id, label: 'Bootstrap' })
+
+    const autre = await prisma.user.create({
+      data: { email: 'bootstrap@test.local', name: 'B', passwordHash: 'x' },
+    })
+
+    expect((await listClients(autre.id)).some((x) => x.id === c.id)).toBe(true)
+    expect((await listMissionsForUser(autre.id)).some((x) => x.id === m.id)).toBe(true)
+
     await prisma.user.delete({ where: { id: autre.id } })
   })
 })

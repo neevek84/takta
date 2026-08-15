@@ -2,18 +2,28 @@
 
 import { computeEngagement } from '@/core/engagement/compute'
 import type { LineForGrid } from '@/services/missions'
-import type { MonthEntry } from '@/services/time-entries'
+import type { LineEngagementTotals } from '@/services/time-entries'
 
+/**
+ * Bandeau d'engagement d'une ligne de prestation.
+ *
+ * `totals` est un cumul **sur toute la durée de la ligne**, jamais les saisies
+ * du seul mois affiché : l'engagement se consomme d'un mois sur l'autre, et le
+ * comparer aux jours vendus du contrat entier n'a de sens qu'à ce prix.
+ */
 export function EngagementBar({
   line,
-  entries,
+  totals,
 }: {
   line: LineForGrid
-  entries: MonthEntry[]
+  totals: LineEngagementTotals
 }) {
   const e = computeEngagement({
     venduCentiemes: line.soldCentiemes,
-    entries: entries.filter((x) => x.lineId === line.id),
+    entries: [
+      { kind: 'REALISE', minutes: totals.realiseMinutes },
+      { kind: 'PREVISIONNEL', minutes: totals.prevuMinutes },
+    ],
     minutesParJour: line.minutesParJour,
   })
 

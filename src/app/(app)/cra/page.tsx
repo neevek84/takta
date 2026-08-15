@@ -1,6 +1,6 @@
 import { requireUser } from '@/auth'
-import { prisma } from '@/db/client'
 import { listCras } from '@/services/cra'
+import { listMissionsForUser } from '@/services/missions'
 import { canTransition, type CraTransition } from '@/core/cra/state-machine'
 import { openCra, moveCra, saveTracking } from './actions'
 
@@ -23,11 +23,7 @@ export default async function CraPage({
   const month = raw ?? new Date().toISOString().slice(0, 7)
 
   const cras = await listCras(user.id, month)
-  const missions = await prisma.mission.findMany({
-    where: { archived: false },
-    include: { client: true },
-    orderBy: { createdAt: 'desc' },
-  })
+  const missions = await listMissionsForUser(user.id)
 
   return (
     <main className="mx-auto max-w-4xl p-6">
@@ -38,7 +34,7 @@ export default async function CraPage({
         <select name="missionId" required className="rounded border px-2 py-1">
           {missions.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.client.name} · {m.label}
+              {m.clientName} · {m.label}
             </option>
           ))}
         </select>

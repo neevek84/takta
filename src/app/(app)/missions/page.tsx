@@ -1,16 +1,12 @@
 import { requireUser } from '@/auth'
-import { prisma } from '@/db/client'
 import { listClients } from '@/services/clients'
+import { listMissionsForUser } from '@/services/missions'
 import { addClient, addMission, addLine } from './actions'
 
 export default async function MissionsPage() {
-  await requireUser()
-  const clients = await listClients()
-  const missions = await prisma.mission.findMany({
-    where: { archived: false },
-    include: { client: true, lines: { where: { archived: false } } },
-    orderBy: { createdAt: 'desc' },
-  })
+  const user = await requireUser()
+  const clients = await listClients(user.id)
+  const missions = await listMissionsForUser(user.id)
 
   return (
     <main className="mx-auto max-w-4xl p-6">
@@ -44,7 +40,7 @@ export default async function MissionsPage() {
       {missions.map((m) => (
         <section key={m.id} className="mb-8 rounded border p-4">
           <h2 className="mb-3 font-medium">
-            {m.client.name} · {m.label}
+            {m.clientName} · {m.label}
           </h2>
 
           <ul className="mb-4 text-sm">

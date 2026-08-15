@@ -56,6 +56,55 @@ export async function createLine(args: {
   return { id: line.id }
 }
 
+export interface MissionForUser {
+  id: string
+  label: string
+  clientName: string
+  lines: Array<{
+    id: string
+    label: string
+    soldCentiemes: number
+    tjmCents: number
+    displayUnit: DisplayUnit
+  }>
+}
+
+/**
+ * Une mission est visible pour un utilisateur si elle n'a encore aucune
+ * ligne (fraîchement créée, pas encore revendiquée — sinon la création
+ * d'une première ligne serait impossible sur une base vide), ou si
+ * l'utilisateur a une affectation sur au moins une de ses lignes. Les
+ * lignes renvoyées sont filtrées de la même façon : seules celles
+ * affectées à l'utilisateur apparaissent (une mission partagée par
+ * plusieurs consultants ne fuit pas les lignes des autres).
+ */
+export async function listMissionsForUser(userId: string): Promise<MissionForUser[]> {
+  const missions = await prisma.mission.findMany({
+    where: {
+      archived: false,
+      OR: [{ lines: { none: {} } }, { lines: { some: { assignments: { some: { userId } } } } }],
+    },
+    include: {
+      client: true,
+      lines: { where: { archived: false, assignments: { some: { userId } } } },
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  return missions.map((m) => ({
+    id: m.id,
+    label: m.label,
+    clientName: m.client.name,
+    lines: m.lines.map((l) => ({
+      id: l.id,
+      label: l.label,
+      soldCentiemes: l.soldCentiemes,
+      tjmCents: l.tjmCents,
+      displayUnit: l.displayUnit as DisplayUnit,
+    })),
+  }))
+}
+
 export async function listActiveLines(userId: string): Promise<LineForGrid[]> {
   const settings = await getSettings()
 
