@@ -10,7 +10,7 @@
 
 Cesser la double saisie. Les tiers, les projets et les engagements vivent déjà dans Dolibarr ; les temps consommés doivent y retourner sans qu'on les retape.
 
-**C'est Dolibarr qui facture.** Ce lot pousse les temps réalisés, et peut proposer d'y créer un **brouillon** de facture — jamais de la valider, de la numéroter ni de l'émettre (voir §8 bis). La réglementation française sur la facturation électronique reste entièrement du côté de Dolibarr, dont c'est le métier.
+**Dolibarr facture, pas le CRA.** Ce lot pousse les temps réalisés, et peut demander à Dolibarr de créer la facture correspondante (voir §8 bis). Demander à un outil de faire son métier n'est pas le faire soi-même : numérotation, TVA, émission et conservation restent entièrement chez lui, avec toute la charge réglementaire qu'elles portent.
 
 ### Le connecteur est additif, jamais exclusif
 
@@ -30,10 +30,11 @@ Toute référence externe est nullable, à tout moment, pour toute entité. C'es
 | Projets | `GET /projects`, filtrés sur `usage_bill_time = 1` | — |
 | Engagements | lignes de `GET /proposals/{id}` | — |
 | Temps réalisé | — | `POST /tasks/{id}/addtimespent` |
+| Facture | — | `POST /invoices` — sur proposition acceptée, voir §8 bis |
 
 **Jamais de prévisionnel vers Dolibarr.** Du temps prévu n'est pas du temps consommé et n'a rien à faire dans une facture. Cette règle ne vaut que pour Dolibarr : vers l'agenda, le prévisionnel est au contraire le cas d'usage principal.
 
-**Un seul appel touche la facturation**, et il est encadré : sur proposition acceptée, la création d'un brouillon de facture dans Dolibarr (voir §8 bis). Aucune validation, aucune numérotation, aucune TVA.
+**La création de facture est une demande adressée à Dolibarr**, sur proposition acceptée par l'utilisateur (voir §8 bis). L'application transmet des données ; elle ne numérote rien, ne calcule aucune TVA et n'émet aucun document.
 
 ---
 
