@@ -6159,3 +6159,20 @@ qui appartiennent au lot 1b.
 
 
 
+
+---
+
+## Arbitrage — propriété des tables de synchronisation
+
+Les plans des lots **1b** et **2** décrivent tous deux la création de `SyncOutbox` et `ProviderCredential`. C'est voulu : les deux specs disent « celui qui arrive le premier les pose ». Elles doivent n'être créées **qu'une fois**.
+
+**Décision : le lot 1b les porte**, conformément à l'ordre de construction retenu (1e → 1c → 1b → 2). Quand le lot 2 sera implémenté, ses tâches de création de schéma deviennent des tâches de consommation. Si l'ordre change, les rôles s'échangent — les tables sont conçues indépendantes du fournisseur exactement pour cela.
+
+**Contradiction résolue sur le scope de `ProviderCredential`.** Le plan 1b y ajoutait un `userId` au nom de la règle de scoping du projet ; le plan 2 le refusait, y voyant un réglage d'instance. Les deux ont raison pour leur fournisseur :
+
+- une **clé d'API Dolibarr** appartient à l'instance — il y en a une pour l'organisation ;
+- un **jeton Google Calendar est personnel** — le jour où plusieurs consultants travaillent, chacun connecte son propre agenda, sinon on bloque les journées d'un autre.
+
+`ProviderCredential.userId` est donc **nullable**, avec unicité sur `(provider, userId)`. Nul signifie identifiant d'instance, renseigné signifie identifiant personnel.
+
+`SyncOutbox` reste scopée par utilisateur : ses lignes désignent des saisies et des CRA, qui le sont.
