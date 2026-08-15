@@ -36,16 +36,17 @@ Extraite des styles réellement appliqués sur `kreativpm.fr`, et non d'une inte
 
 ## 3. Le problème que pose cette palette, et sa résolution
 
-**`#D4943F` sur `#FAF5ED` donne un contraste d'environ 2,4:1.** Le minimum lisible pour du texte est 4,5:1.
+**`#D4943F` sur `#FAF5ED` donne un contraste de 2,38:1.** Le minimum lisible pour du texte est 4,5:1.
 
 Cet or fonctionne sur un site vitrine, en très gros titres. Il **ne peut pas servir de couleur de texte** dans une application où l'on lit des chiffres dans des cellules de trente pixels. Le reprendre tel quel produirait une interface jolie en capture d'écran et illisible à l'usage.
 
 La résolution :
 
-- **L'encre est le brun `#342820`** — 11:1 sur le crème, confortable sur de longues sessions.
+- **L'encre est le brun `#342820`** — **13,15:1** sur le crème, confortable sur de longues sessions.
 - **L'or est réservé aux aplats** : boutons pleins, cellules remplies, barres de progression, où il porte du blanc ou du brun profond.
-- **`#B57730` sert au texte interactif** — liens, libellés d'action — à 3,3:1, donc uniquement en corps 16 px et plus, jamais en petit.
-- **Tout jeton est vérifié par calcul de contraste**, pas à l'œil.
+- **Le texte interactif est `#8C5A23`**, un or assombri à **5,37:1**. `#B57730`, la couleur de survol du site, ne donne que **3,42:1** : elle échouerait à la règle des 4,5:1 posée juste en dessous. Elle reste utilisable pour les bordures et l'anneau de focus, où le seuil est de 3:1.
+- **Le survol d'un bouton plein inverse ses couleurs au lieu de les assombrir.** Un or assombri ne porte plus son encre qu'à 4,24:1 ; l'inversion tient à 14,53:1.
+- **Tout jeton est vérifié par calcul de contraste**, pas à l'œil. Les valeurs ci-dessus sont calculées, non estimées.
 
 ---
 
