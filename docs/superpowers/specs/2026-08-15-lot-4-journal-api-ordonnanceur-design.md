@@ -32,7 +32,7 @@ Ces trois besoins se servent de la même chose : **un journal en ajout seul**. C
 | `seq` | numéro d'ordre, strictement croissant |
 | `occurredAt` | horodatage |
 | `actorId`, `actorLabel` | l'auteur ; `SYSTEME` pour un traitement de fond |
-| `action` | `SAISIE_CREEE` · `CRA_VALIDE` · `CRA_ROUVERT` · `TEMPS_POUSSES` · `REGLAGE_MODIFIE` … |
+| `action` | une valeur du catalogue (§3) |
 | `entityType`, `entityId` | la cible |
 | `payloadJson` | ce qui a changé, en résumé |
 | `prevHash`, `hash` | le chaînage |
@@ -51,33 +51,83 @@ Tout ce qui engage : création, modification et suppression d'une saisie ; toute
 
 ---
 
-## 3. L'API d'événements
+## 3. Le catalogue d'événements
 
-**L'application expose, elle n'appelle personne.** C'est l'inversion qui rend l'outil intégrable par n8n, par un script, ou par ce qui remplacera n8n.
+**Le catalogue est exactement la liste des actes consignés au journal.** Un seul vocabulaire pour la preuve, pour l'API et pour les rappels sortants — trois usages, une nomenclature, aucune divergence possible.
+
+| Domaine | Événements |
+|---|---|
+| Saisie | `saisie.creee` · `saisie.modifiee` · `saisie.supprimee` · `previsionnel.converti` |
+| CRA | `cra.ouvert` · `cra.envoye` · `cra.valide` · `cra.refuse` · `cra.rouvert` |
+| Référentiel | `client.cree` · `mission.creee` · `prestation.creee` |
+| Dolibarr | `temps.pousses` · `facture.demandee` |
+| Agenda | `agenda.bloc.pousse` · `agenda.conflit.detecte` |
+| Signature | `signature.envoyee` · `signature.recue` · `signature.refusee` |
+| Alertes | `engagement.depasse` · `capacite.depassee` |
+| Exploitation | `reglage.modifie` · `reetalonnage.effectue` · `synchro.echec` · `travail.echoue` |
+
+Les noms sont en minuscules pointées : c'est un contrat public, lisible par un humain qui configure un flux, et stable dans le temps.
+
+**Ajouter un événement au catalogue est une décision de conception**, pas un effet de bord. Un catalogue qui grossit sans discipline devient inutilisable pour celui qui doit choisir à quoi s'abonner.
+
+---
+
+## 4. L'API d'événements
+
+**L'application expose, elle n'appelle personne.** C'est l'inversion qui la rend intégrable par n8n, par un script, ou par ce qui remplacera n8n.
 
 ### Lecture — le rattrapage
 
 ```
-GET /api/events?since=<seq>&limit=<n>
+GET /api/events?since=<seq>&limit=<n>&event=<nom>
 ```
 
-Renvoie les entrées du journal postérieures à `seq`, dans l'ordre. Un consommateur mémorise le dernier `seq` traité et reprend où il s'était arrêté. **Aucun événement ne se perd**, même après une panne du consommateur de plusieurs jours — c'est l'avantage décisif du modèle par tirage sur une notification poussée.
+Renvoie les entrées du journal postérieures à `seq`, dans l'ordre. Un consommateur mémorise le dernier `seq` traité et reprend où il s'était arrêté. **Aucun événement ne se perd**, même après une panne du consommateur de plusieurs jours — c'est l'avantage décisif du tirage sur la poussée.
 
 Protégée par un jeton dédié, distinct de la session utilisateur.
 
-### Poussée — l'immédiateté
+---
 
-Des URL de rappel configurables reçoivent chaque événement en `POST`, **signé** par empreinte de la charge utile. Filtrables par type d'action.
+## 5. Les rappels sortants
 
-Un échec est réessayé avec recul progressif puis abandonné : **la poussée est un confort, la lecture est la garantie.** Un consommateur qui a raté une poussée la retrouve toujours par `since`.
+L'utilisateur enregistre des URL à appeler, comme il le ferait dans Dolibarr ou dans Twenty. C'est ce qui permet de déclencher un envoi de courriel, un message d'équipe, ou n'importe quel enchaînement — **sans que l'application ait à savoir ce qu'il y a au bout**.
 
-### Ce que cela permet, sans que l'application ait à le savoir
+### L'abonnement
 
-Envoyer un courriel avec ton compte Google, publier dans un canal d'équipe, alimenter un tableau de bord, enchaîner vers un outil tiers. **Ces flux vivent chez le consommateur, pas dans l'application** — c'est la frontière qui l'empêche de devenir une plateforme d'intégration.
+`Webhook` porte : l'URL, un libellé, un secret de signature, la liste des événements souscrits, et un état actif ou suspendu.
+
+La liste est une **chaîne de noms séparés par des virgules**, jamais un tableau — la portabilité SQLite/Postgres l'impose, comme partout ailleurs dans ce produit. Une valeur vide signifie « tous les événements ».
+
+Un écran d'administration les gère : création, modification, suspension, et un **bouton d'essai** qui envoie un événement factice pour vérifier que l'URL répond avant d'en dépendre.
+
+### La charge utile
+
+```json
+{
+  "event": "cra.valide",
+  "seq": 1234,
+  "occurredAt": "2026-08-15T09:12:03.000Z",
+  "actor": { "id": "usr_…", "label": "Keveen" },
+  "entity": { "type": "Cra", "id": "cra_…" },
+  "data": { "missionId": "…", "month": "2026-07" }
+}
+```
+
+Trois en-têtes accompagnent l'appel : le nom de l'événement, le numéro de séquence, et une **signature HMAC-SHA256 du corps brut** avec le secret de l'abonnement. Le consommateur peut ainsi vérifier que l'appel vient bien de l'application — sans quoi n'importe qui connaissant l'URL pourrait déclencher un flux.
+
+### La livraison
+
+Chaque tentative est consignée : abonnement, événement, code de réponse, durée, erreur éventuelle. Cinq tentatives avec recul progressif, puis abandon de **cet** événement.
+
+**Après un nombre configurable d'échecs consécutifs, l'abonnement est suspendu** et remonte dans l'écran de supervision. Une URL morte qui continue d'être appelée toutes les cinq minutes pendant six mois est un défaut, pas une résilience.
+
+Chaque livraison peut être **renvoyée à la main** depuis la supervision.
+
+**Et surtout : la lecture par `since` reste la garantie.** Un abonnement suspendu ne fait perdre aucun événement — ils sont tous dans le journal, et le consommateur les rattrape quand il revient. La poussée n'est qu'un raccourci vers l'immédiateté.
 
 ---
 
-## 4. L'ordonnanceur
+## 6. L'ordonnanceur
 
 Une table `ScheduledJob` déclare les traitements récurrents : nom, récurrence, dernière exécution, prochaine échéance, état.
 
@@ -103,7 +153,7 @@ Un endpoint `POST /api/jobs/tick`, protégé par jeton, réveille l'ordonnanceur
 
 ---
 
-## 5. L'écran de supervision
+## 7. L'écran de supervision
 
 Un seul écran, qui répond à « qu'est-ce qui s'est passé, et qu'est-ce qui ne va pas ».
 
@@ -117,7 +167,7 @@ Les avertissements vivent **dans l'outil**, pas seulement dans un courriel qu'on
 
 ---
 
-## 6. Le courriel
+## 8. Le courriel
 
 **L'envoi de courriel n'est pas le métier de cette application.** Avec l'API d'événements, un consommateur s'en charge bien mieux : n8n dispose de gabarits, de relances, et de ton compte Google déjà autorisé.
 
@@ -131,20 +181,23 @@ Un **envoi SMTP minimal reste intégré** pour l'autoportance : sans aucun outil
 
 ---
 
-## 7. Règles métier
+## 9. Règles métier
 
 - **Le journal est en ajout seul et chaîné.** Aucune écriture ne le modifie, aucune suppression ne l'ampute.
 - **Les consultations ne sont pas consignées.**
 - **Aucun automatisme ne convertit du prévisionnel en réalisé.**
 - **Aucun automatisme ne valide un CRA.** Seuls un geste humain ou un retour de signature le font.
 - **Chaque travail est déclenchable à la main**, et un échec n'en bloque aucun autre.
-- **La lecture des événements est la garantie ; la poussée est un confort.**
-- **L'application n'appelle aucun outil externe pour s'intégrer** : elle expose.
+- **La lecture des événements est la garantie ; la poussée est un confort.** Un abonnement suspendu ne fait perdre aucun événement.
+- **Le catalogue d'événements est unique** : le journal, l'API et les rappels sortants partagent la même nomenclature.
+- **Chaque appel sortant est signé** par HMAC du corps brut, avec le secret propre à l'abonnement.
+- **Un abonnement qui échoue de façon répétée est suspendu et signalé**, jamais rappelé indéfiniment dans le vide.
+- **L'application n'appelle aucun outil externe pour s'intégrer** : elle expose, et n'appelle que les URL que l'utilisateur a lui-même enregistrées.
 - **Pas de notification sans action possible.**
 
 ---
 
-## 8. Hors périmètre
+## 10. Hors périmètre
 
 - **Signature cryptographique du journal par clé asymétrique.** Le chaînage rend la modification détectable ; l'horodatage qualifié relève d'un autre métier.
 - **Purge ou archivage du journal.** Il croît ; à quelques milliers d'entrées par an, ce n'est pas un problème avant longtemps.
@@ -154,14 +207,19 @@ Un **envoi SMTP minimal reste intégré** pour l'autoportance : sans aucun outil
 
 ---
 
-## 9. Tests
+## 11. Tests
 
 - **Le journal est inviolable en écriture** : aucune fonction publique ne permet de modifier ni de supprimer une entrée.
 - **La chaîne se vérifie**, et une modification directe en base est **détectée à la bonne entrée** — c'est le test qui fait du journal une preuve plutôt qu'un historique.
 - **`seq` est strictement croissant**, y compris sous écritures concurrentes.
 - **`GET /api/events?since=` ne perd aucun événement** et n'en rend jamais deux fois le même.
-- **Une charge utile de rappel mal signée est rejetée** par un consommateur de test.
-- **Un rappel en échec est réessayé puis abandonné**, sans jamais bloquer l'ordonnanceur.
+- **La signature est reproductible** : un consommateur de test recalcule le HMAC du corps brut et retrouve l'en-tête. Une charge utile altérée d'un octet ne valide plus.
+- **Le filtrage par abonnement fonctionne** : un abonnement souscrit à `cra.valide` ne reçoit pas `saisie.creee`, et un abonnement à liste vide reçoit tout.
+- **Un rappel en échec est réessayé puis abandonné**, sans jamais bloquer l'ordonnanceur ni les autres abonnements.
+- **Un abonnement est suspendu après N échecs consécutifs**, et un envoi réussi remet le compteur à zéro.
+- **Une livraison peut être renvoyée** et produit le même corps et la même signature.
+- **Un abonnement suspendu ne fait perdre aucun événement** : ils restent tous accessibles par `since` — c'est le test qui protège la promesse centrale du modèle.
+- **Le bouton d'essai** envoie un événement factice sans rien écrire au journal.
 - **L'ordonnanceur** : un travail échu s'exécute, un travail non échu ne s'exécute pas, un travail en échec n'empêche pas les suivants, deux réveils rapprochés n'exécutent pas deux fois le même travail.
 - **Aucun travail ne modifie une saisie ni un statut de CRA** — à couvrir travail par travail, c'est la règle centrale du produit.
 - **Sans configuration SMTP**, l'ordonnanceur tourne et consigne au lieu d'échouer.
@@ -169,7 +227,7 @@ Un **envoi SMTP minimal reste intégré** pour l'autoportance : sans aucun outil
 
 ---
 
-## 10. Décisions prises sans arbitrage du porteur
+## 12. Décisions prises sans arbitrage du porteur
 
 À contester si elles ne conviennent pas :
 
