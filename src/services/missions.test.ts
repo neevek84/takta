@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/db/client'
 import { createClient, listClients } from './clients'
 import { createMission, createLine, listActiveLines, listMissionsForUser } from './missions'
+import { updateSettings } from './settings'
 
 let userId = ''
 
@@ -27,6 +28,7 @@ afterAll(async () => {
     },
   })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'ACME' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'SURCHARGE' } } })
   await prisma.$disconnect()
 })
 
@@ -53,6 +55,27 @@ describe('clients et missions', () => {
     })
     expect(assignment).not.toBeNull()
     expect(assignment!.soldCentiemes).toBe(3000)
+  })
+
+  // Défaut observé en usage réel : la ligne était créée, puis l'affectation
+  // échouait (`Foreign key constraint violated`), laissant une ligne orpheline
+  // — invisible dans l'interface, puisque `listActiveLines` exige une
+  // affectation, et impossible à supprimer.
+  it("ne laisse aucune ligne orpheline quand l'affectation échoue", async () => {
+    const c = await createClient('ACME transaction')
+    const m = await createMission({ clientId: c.id, label: 'Transaction' })
+
+    await expect(
+      createLine({
+        missionId: m.id,
+        userId: 'utilisateur-inexistant',
+        label: 'Orpheline',
+        soldCentiemes: 100,
+        tjmCents: 0,
+      }),
+    ).rejects.toThrow()
+
+    expect(await prisma.missionLine.count({ where: { missionId: m.id } })).toBe(0)
   })
 
   it('porte deux lignes tarifées différemment sous une même mission', async () => {
@@ -145,5 +168,49 @@ describe('clients et missions', () => {
     expect((await listMissionsForUser(autre.id)).some((x) => x.id === m.id)).toBe(true)
 
     await prisma.user.delete({ where: { id: autre.id } })
+  })
+})
+
+describe('surcharges de durée de journée', () => {
+  it('crée un client avec sa surcharge', async () => {
+    const c = await createClient('SURCHARGE client', 420)
+    const relu = await prisma.client.findUniqueOrThrow({ where: { id: c.id } })
+    expect(relu.minutesParJour).toBe(420)
+  })
+
+  it('crée un client sans surcharge par défaut', async () => {
+    const c = await createClient('SURCHARGE sans')
+    const relu = await prisma.client.findUniqueOrThrow({ where: { id: c.id } })
+    expect(relu.minutesParJour).toBeNull()
+  })
+
+  it('crée une mission avec sa surcharge', async () => {
+    const c = await createClient('SURCHARGE mission')
+    const m = await createMission({ clientId: c.id, label: 'M', minutesParJour: 450 })
+    const relu = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect(relu.minutesParJour).toBe(450)
+  })
+
+  it('expose la valeur effective et la surcharge propre de la mission', async () => {
+    await updateSettings({ minutesParJour: 480 })
+    const c = await createClient('SURCHARGE effectif', 420)
+    const m = await createMission({ clientId: c.id, label: 'ME' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.label === 'ME')
+    // Héritée du client, pas surchargée sur la mission.
+    expect(mission!.minutesParJourEffectif).toBe(420)
+    expect(mission!.minutesParJourSurcharge).toBeNull()
+  })
+
+  it('la surcharge de mission l emporte sur celle du client', async () => {
+    await updateSettings({ minutesParJour: 480 })
+    const c = await createClient('SURCHARGE priorite', 420)
+    const m = await createMission({ clientId: c.id, label: 'MP', minutesParJour: 450 })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.label === 'MP')
+    expect(mission!.minutesParJourEffectif).toBe(450)
+    expect(mission!.minutesParJourSurcharge).toBe(450)
   })
 })

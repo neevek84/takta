@@ -3,6 +3,7 @@ import type { CraStatus, TimeEntryKind } from '@/core/types'
 import { checkCapacity } from '@/core/capacity/check'
 import { isLocked } from '@/core/cra/state-machine'
 import { centiemesToMinutes } from '@/core/time/units'
+import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { getSettings } from './settings'
 
 export interface MonthEntry {
@@ -14,6 +15,8 @@ export interface MonthEntry {
   kind: TimeEntryKind
   /** chaîne vide = journée entière */
   slotId: string
+  /** durée d'une journée figée à l'écriture, en minutes */
+  minutesParJour: number
 }
 
 function monthBounds(month: string): { start: Date; end: Date } {
@@ -43,13 +46,28 @@ export async function getMonthEntries(userId: string, month: string): Promise<Mo
     minutes: r.minutes,
     kind: r.kind as TimeEntryKind,
     slotId: r.slotId,
+    minutesParJour: r.minutesParJour,
   }))
 }
 
-export interface LineEngagementTotals {
-  realiseMinutes: number
-  prevuMinutes: number
+export interface LineEngagementEntry {
+  kind: TimeEntryKind
+  minutes: number
+  /** durée d'une journée figée à l'écriture des saisies regroupées ici */
+  minutesParJour: number
 }
+
+/**
+ * Cumul des minutes d'une ligne, ventilé par facteur de conversion figé à
+ * l'écriture (voir `minutesParJour` sur `TimeEntry`).
+ *
+ * Volontairement *pas* un total déjà converti : deux saisies écrites sous des
+ * facteurs différents (avant/après un changement de réglage ou de cascade) ne
+ * s'additionnent pas en minutes brutes sans réinterpréter l'historique. C'est
+ * `computeEngagement` — jamais ce module ni ses appelants — qui sait convertir
+ * chaque groupe séparément avant de sommer les centièmes.
+ */
+export type LineEngagementTotals = LineEngagementEntry[]
 
 /**
  * Totaux d'une ligne de prestation, **toutes périodes confondues**.
@@ -58,19 +76,23 @@ export interface LineEngagementTotals {
  * affiché, comme le fait `getMonthEntries`, donne un reste à consommer faux dès
  * le deuxième mois de la mission.
  *
- * Renvoie une entrée pour chaque `lineId` demandé, à zéro quand la ligne n'a
- * aucune saisie. Scopé par `userId` comme toute fonction de service.
+ * Renvoie une entrée pour chaque `lineId` demandé, à zéro (tableau vide) quand
+ * la ligne n'a aucune saisie. Scopé par `userId` comme toute fonction de
+ * service.
  */
 export async function getLineEngagementTotals(
   userId: string,
   lineIds: string[],
 ): Promise<Record<string, LineEngagementTotals>> {
   const totals: Record<string, LineEngagementTotals> = {}
-  for (const id of lineIds) totals[id] = { realiseMinutes: 0, prevuMinutes: 0 }
+  for (const id of lineIds) totals[id] = []
   if (lineIds.length === 0) return totals
 
+  // Groupé par facteur en plus de la ligne et du type : additionner des
+  // minutes converties à des facteurs différents n'a aucun sens (voir
+  // `LineEngagementTotals`).
   const rows = await prisma.timeEntry.groupBy({
-    by: ['lineId', 'kind'],
+    by: ['lineId', 'kind', 'minutesParJour'],
     where: { userId, lineId: { in: lineIds } },
     _sum: { minutes: true },
   })
@@ -79,8 +101,8 @@ export async function getLineEngagementTotals(
     const bucket = totals[row.lineId]
     if (bucket === undefined) continue
     const minutes = row._sum.minutes ?? 0
-    if ((row.kind as TimeEntryKind) === 'REALISE') bucket.realiseMinutes += minutes
-    else bucket.prevuMinutes += minutes
+    if (minutes === 0) continue
+    bucket.push({ kind: row.kind as TimeEntryKind, minutes, minutesParJour: row.minutesParJour })
   }
 
   return totals
@@ -100,6 +122,26 @@ export type SaveResult =
 
 function monthStartOf(isoDate: string): Date {
   return new Date(`${isoDate.slice(0, 7)}-01T00:00:00.000Z`)
+}
+
+/** Résout le facteur effectif d'une prestation en remontant la cascade. */
+async function facteurDeLaLigne(lineId: string, globalMinutesParJour: number): Promise<number> {
+  const line = await prisma.missionLine.findUniqueOrThrow({
+    where: { id: lineId },
+    select: {
+      minutesParJour: true,
+      mission: {
+        select: { minutesParJour: true, client: { select: { minutesParJour: true } } },
+      },
+    },
+  })
+
+  return resolveMinutesParJour({
+    line: line.minutesParJour,
+    mission: line.mission.minutesParJour,
+    client: line.mission.client.minutesParJour,
+    global: globalMinutesParJour,
+  })
 }
 
 /**
@@ -190,6 +232,11 @@ export async function saveEntry(args: {
       ? { totalMinutes: verdict.totalMinutes, capacityMinutes: verdict.capacityMinutes }
       : null
 
+  // Le facteur de conversion est figé au moment de l'écriture : le rejouer au
+  // moment de la lecture réinterpréterait tout l'historique dès que le
+  // réglage change.
+  const minutesParJour = await facteurDeLaLigne(args.lineId, settings.minutesParJour)
+
   await prisma.timeEntry.upsert({
     where: {
       lineId_userId_date_slotId: { lineId: args.lineId, userId: args.userId, date, slotId },
@@ -201,11 +248,122 @@ export async function saveEntry(args: {
       slotId,
       minutes: args.minutes,
       kind: args.kind,
+      minutesParJour,
     },
-    update: { minutes: args.minutes, kind: args.kind },
+    update: { minutes: args.minutes, kind: args.kind, minutesParJour },
   })
 
   return warning === null
     ? { ok: true, minutes: args.minutes }
     : { ok: true, minutes: args.minutes, warning }
+}
+
+/**
+ * Prévisionnel strictement antérieur à `today`, pour le mois donné.
+ *
+ * `today` est un paramètre (jamais lu de l'horloge ici) afin que la fonction
+ * reste testable sans geler le temps.
+ */
+export async function listPastForecast(
+  userId: string,
+  month: string,
+  today: string,
+): Promise<MonthEntry[]> {
+  const entries = await getMonthEntries(userId, month)
+  return entries.filter((e) => e.kind === 'PREVISIONNEL' && e.date < today)
+}
+
+/**
+ * Partage le prévisionnel échu d'un mois entre ce qui est convertible et ce
+ * que le verrou du CRA retient.
+ *
+ * Le verrou porte sur un couple (mission, mois) : un même mois peut mêler une
+ * mission verrouillée et une mission ouverte. Il s'évalue par `isLocked`, et
+ * jamais par une comparaison littérale de statut — c'est la raison d'être de
+ * cette fonction : l'encart de la page de saisie et le bouton qui convertit
+ * lisent le **même** partage, et ne peuvent donc pas diverger le jour où
+ * `isLocked` s'étendra à un statut supplémentaire.
+ */
+async function splitPastForecastByLock(
+  userId: string,
+  month: string,
+  today: string,
+): Promise<{ candidates: MonthEntry[]; convertibles: MonthEntry[]; lockedCount: number }> {
+  const candidates = await listPastForecast(userId, month, today)
+  if (candidates.length === 0) return { candidates, convertibles: [], lockedCount: 0 }
+
+  const lines = await prisma.missionLine.findMany({
+    where: {
+      id: { in: [...new Set(candidates.map((e) => e.lineId))] },
+      assignments: { some: { userId } },
+    },
+    select: { id: true, missionId: true },
+  })
+  const missionByLine = new Map(lines.map((l) => [l.id, l.missionId]))
+
+  const cras = await prisma.cra.findMany({
+    where: {
+      userId,
+      month: new Date(`${month}-01T00:00:00.000Z`),
+      missionId: { in: [...new Set(lines.map((l) => l.missionId))] },
+    },
+    select: { missionId: true, status: true },
+  })
+  const lockedMissions = new Set(
+    cras.filter((c) => isLocked(c.status as CraStatus)).map((c) => c.missionId),
+  )
+
+  const convertibles = candidates.filter((e) => {
+    const missionId = missionByLine.get(e.lineId)
+    return missionId !== undefined && !lockedMissions.has(missionId)
+  })
+
+  return { candidates, convertibles, lockedCount: candidates.length - convertibles.length }
+}
+
+export interface PastForecastStatus {
+  /** Jours prévisionnels échus du mois, verrouillés compris. */
+  entries: MonthEntry[]
+  /** Combien d'entre eux appartiennent à une mission dont le CRA est verrouillé. */
+  lockedCount: number
+}
+
+/**
+ * Les deux chiffres que l'encart du prévisionnel échu affiche, d'un seul
+ * tenant : les jours échus et le nombre d'entre eux que le verrou retient.
+ *
+ * Purement lecture — la conversion n'est jamais automatique, elle reste à
+ * l'initiative de l'utilisateur (`convertPastForecast`).
+ */
+export async function getPastForecastWithLockStatus(
+  userId: string,
+  month: string,
+  today: string,
+): Promise<PastForecastStatus> {
+  const { candidates, lockedCount } = await splitPastForecastByLock(userId, month, today)
+  return { entries: candidates, lockedCount }
+}
+
+/**
+ * Convertit en `REALISE` le prévisionnel échu d'un mois, jamais automatiquement
+ * — seulement à la demande explicite de l'utilisateur (voir `validerJoursPasses`).
+ *
+ * On traite les missions ouvertes et on compte celles qu'on a sautées, plutôt
+ * que de tout refuser en bloc dès qu'une mission du mois est verrouillée.
+ */
+export async function convertPastForecast(
+  userId: string,
+  month: string,
+  today: string,
+): Promise<{ converted: number; skippedLocked: number }> {
+  const { convertibles, lockedCount } = await splitPastForecastByLock(userId, month, today)
+
+  if (convertibles.length > 0) {
+    await prisma.timeEntry.updateMany({
+      where: { id: { in: convertibles.map((e) => e.id) }, userId },
+      data: { kind: 'REALISE' },
+    })
+  }
+
+  return { converted: convertibles.length, skippedLocked: lockedCount }
 }

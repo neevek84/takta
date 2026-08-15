@@ -15,7 +15,8 @@
     "db:pg": "node scripts/set-db-provider.mjs postgresql && prisma generate",
     "db:sqlite": "node scripts/set-db-provider.mjs sqlite && prisma db push && prisma generate",
     "db:migrate": "prisma migrate dev",
-    "setup:local": "node scripts/set-db-provider.mjs sqlite && prisma db push && prisma generate"
+    "setup:local": "node scripts/set-db-provider.mjs sqlite && prisma db push && prisma generate",
+    "backfill:rates": "node scripts/backfill-minutes-par-jour.mjs"
   },
   "keywords": [],
   "author": "",

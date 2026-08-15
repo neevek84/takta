@@ -1,12 +1,14 @@
 import { requireUser } from '@/auth'
 import { listClients } from '@/services/clients'
 import { listMissionsForUser } from '@/services/missions'
+import { getSettings } from '@/services/settings'
 import { addClient, addMission, addLine } from './actions'
 
 export default async function MissionsPage() {
   const user = await requireUser()
   const clients = await listClients(user.id)
   const missions = await listMissionsForUser(user.id)
+  const settings = await getSettings()
 
   return (
     <main className="mx-auto max-w-4xl p-6">
@@ -17,6 +19,21 @@ export default async function MissionsPage() {
           <label className="flex flex-col text-sm">
             Nouveau client
             <input name="name" required className="rounded border px-2 py-1" />
+          </label>
+          <label className="flex flex-col text-sm">
+            Durée d’une journée (h)
+            <input
+              name="heuresParJour"
+              type="number"
+              step="0.25"
+              min="0.25"
+              max="24"
+              placeholder={String(settings.minutesParJour / 60)}
+              className="w-36 rounded border px-2 py-1"
+            />
+            <span className="mt-1 text-xs text-slate-500">
+              Vide = hérité ({settings.minutesParJour / 60} h)
+            </span>
           </label>
           <button className="rounded bg-slate-900 px-3 py-1 text-white">Créer</button>
         </form>
@@ -33,6 +50,21 @@ export default async function MissionsPage() {
               </option>
             ))}
           </select>
+          <label className="flex flex-col text-sm">
+            Durée d’une journée (h)
+            <input
+              name="heuresParJour"
+              type="number"
+              step="0.25"
+              min="0.25"
+              max="24"
+              placeholder={String(settings.minutesParJour / 60)}
+              className="w-36 rounded border px-2 py-1"
+            />
+            <span className="mt-1 text-xs text-slate-500">
+              Vide = hérité ({settings.minutesParJour / 60} h)
+            </span>
+          </label>
           <button className="rounded bg-slate-900 px-3 py-1 text-white">Créer</button>
         </form>
       </section>
@@ -40,7 +72,10 @@ export default async function MissionsPage() {
       {missions.map((m) => (
         <section key={m.id} className="mb-8 rounded border p-4">
           <h2 className="mb-3 font-medium">
-            {m.clientName} · {m.label}
+            {m.clientName} · {m.label}{' '}
+            <span className="text-xs font-normal text-slate-500">
+              {m.minutesParJourEffectif / 60} h{m.minutesParJourSurcharge === null ? ' (hérité)' : ''}
+            </span>
           </h2>
 
           <ul className="mb-4 text-sm">

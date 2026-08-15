@@ -1,17 +1,19 @@
 import { requireUser } from '@/auth'
 import { getSettings } from '@/services/settings'
+import { previewRecalibration } from '@/services/rates'
 import { reloadHolidays } from './actions'
 import { SettingsForm } from './SettingsForm'
 
 export default async function AdminSaisiePage() {
-  await requireUser()
+  const user = await requireUser()
   const s = await getSettings()
+  const preview = await previewRecalibration(user.id)
 
   return (
     <main className="mx-auto max-w-2xl p-6">
       <h1 className="mb-6 text-xl font-semibold">Administration · Saisie</h1>
 
-      <SettingsForm settings={s} />
+      <SettingsForm settings={s} preview={preview} />
 
       <section className="mt-8 border-t pt-4">
         <h2 className="mb-2 font-medium">Jours fériés</h2>

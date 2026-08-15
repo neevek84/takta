@@ -44,3 +44,19 @@ export function dailyTotals(
   }
   return totals
 }
+
+function padYear(n: number): string {
+  return n < 0 ? `-${String(-n).padStart(4, '0')}` : String(n).padStart(4, '0')
+}
+
+/** Décale un mois 'YYYY-MM' de `delta` mois, positif ou négatif. */
+export function shiftMonth(month: string, delta: number): string {
+  const year = Number(month.slice(0, 4))
+  const m = Number(month.slice(5, 7))
+  const offset = year * 12 + (m - 1) + delta
+  const outYear = Math.floor(offset / 12)
+  // Modulo positif : le '%' de JS rend un reste négatif quand `offset` l'est
+  // (ex. -1 % 12 === -1), ce qui produirait un mois hors de [1,12].
+  const outMonth = (((offset % 12) + 12) % 12) + 1
+  return `${padYear(outYear)}-${String(outMonth).padStart(2, '0')}`
+}

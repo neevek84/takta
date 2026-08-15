@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildMonthDays, dailyTotals } from './build'
+import { buildMonthDays, dailyTotals, shiftMonth } from './build'
 
 describe('buildMonthDays', () => {
   it('produit le bon nombre de jours', () => {
@@ -45,5 +45,47 @@ describe('dailyTotals', () => {
 
   it('renvoie une table vide sans saisie', () => {
     expect(dailyTotals([]).size).toBe(0)
+  })
+})
+
+describe('shiftMonth', () => {
+  it('avance d un mois', () => {
+    expect(shiftMonth('2026-08', 1)).toBe('2026-09')
+  })
+
+  it('recule d un mois', () => {
+    expect(shiftMonth('2026-08', -1)).toBe('2026-07')
+  })
+
+  it('franchit décembre vers janvier', () => {
+    expect(shiftMonth('2026-12', 1)).toBe('2027-01')
+  })
+
+  it('franchit janvier vers décembre', () => {
+    expect(shiftMonth('2026-01', -1)).toBe('2025-12')
+  })
+
+  it('accepte un décalage de plusieurs mois', () => {
+    expect(shiftMonth('2026-08', 12)).toBe('2027-08')
+    expect(shiftMonth('2026-08', -12)).toBe('2025-08')
+    expect(shiftMonth('2026-02', -14)).toBe('2024-12')
+  })
+
+  it('renvoie le mois inchangé pour un décalage nul', () => {
+    expect(shiftMonth('2026-08', 0)).toBe('2026-08')
+  })
+
+  it('gère un décalage négatif qui fait passer le total sous zéro', () => {
+    // year*12 + (m-1) + delta devient négatif : le '%' de JS rendrait un
+    // reste négatif ('-1-00') sans le correctif du modulo positif.
+    expect(shiftMonth('2000-01', -24001)).toBe('-0001-12')
+  })
+
+  it('zero-pade l année de sortie même quand elle devient nulle ou négative', () => {
+    expect(shiftMonth('0001-01', -1)).toBe('0000-12')
+  })
+
+  it('reste correct sur un grand décalage négatif qui ne descend pas sous l an zéro', () => {
+    expect(shiftMonth('2026-01', -25)).toBe('2023-12')
   })
 })

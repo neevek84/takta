@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser } from '@/auth'
 import { updateSettings, loadFrenchHolidays, SettingsValidationError } from '@/services/settings'
+import { recalibrateOpenMonths } from '@/services/rates'
 import type { CapacityMode, DisplayUnit, EngagementSource } from '@/core/types'
 import type { Slot } from '@/core/time/slots'
 
@@ -55,6 +56,8 @@ export async function saveSettings(
       slots,
       defaultDisplayUnit: String(formData.get('defaultDisplayUnit')) as DisplayUnit,
       defaultEngagementSource: String(formData.get('defaultEngagementSource')) as EngagementSource,
+      objectifCaExerciceCents: Math.round(Number(formData.get('objectifCaEuros')) * 100),
+      debutExerciceMois: Number(formData.get('debutExerciceMois')),
     })
   } catch (err) {
     if (err instanceof SettingsValidationError) {
@@ -72,4 +75,11 @@ export async function reloadHolidays() {
   const y = new Date().getUTCFullYear()
   await loadFrenchHolidays(y - 1, y + 2)
   revalidatePath('/admin/saisie')
+}
+
+export async function lancerReetalonnage() {
+  const user = await requireUser()
+  const r = await recalibrateOpenMonths(user.id)
+  revalidatePath('/admin/saisie')
+  return r
 }

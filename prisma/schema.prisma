@@ -24,6 +24,8 @@ model Client {
   id        String    @id @default(cuid())
   name      String
   createdAt DateTime  @default(now())
+  /// surcharge de la durée d'une journée, en minutes. null = hérite du global.
+  minutesParJour Int?
   missions  Mission[]
 }
 
@@ -35,6 +37,8 @@ model Mission {
   endDate   DateTime?
   archived  Boolean       @default(false)
   createdAt DateTime      @default(now())
+  /// surcharge de la durée d'une journée, en minutes. null = hérite du client.
+  minutesParJour Int?
 
   client Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
   lines  MissionLine[]
@@ -99,6 +103,10 @@ model TimeEntry {
   /// unique, la contrainte ci-dessous ne protégerait donc rien.
   slotId    String   @default("")
   comment   String   @default("")
+  /// durée d'une journée au moment de l'écriture, en minutes.
+  /// Le défaut n'existe que pour permettre la migration d'une table peuplée :
+  /// le chemin d'écriture renseigne TOUJOURS cette colonne explicitement.
+  minutesParJour Int @default(480)
   updatedAt DateTime @updatedAt
 
   line MissionLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
@@ -161,4 +169,9 @@ model Settings {
   holidaysJson   String @default("[]")
   defaultDisplayUnit      String @default("JOUR")
   defaultEngagementSource String @default("MANUEL")
+
+  /// objectif de CA sur l'exercice, en centimes. 0 = non défini.
+  objectifCaExerciceCents Int @default(0)
+  /// mois de début d'exercice, 1-12
+  debutExerciceMois       Int @default(1)
 }

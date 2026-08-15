@@ -1,3 +1,4 @@
+import { cache } from 'react'
 import NextAuth from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
 import { z } from 'zod'
@@ -32,8 +33,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
 })
 
+/**
+ * Lecture de l'utilisateur porté par le jeton, mémoïsée **par requête**.
+ *
+ * `requireUser()` est appelé par chaque page, chaque layout et chaque server
+ * action : sans mémoïsation, un même rendu ferait autant de requêtes qu'il y a
+ * d'appels. `cache()` de React les ramène à une seule par requête (et se
+ * comporte comme un simple passe-plat hors contexte de rendu, tests compris).
+ * Le coût résiduel — une lecture par clé primaire, sur une connexion déjà
+ * ouverte — est le prix d'une session qui dit vrai.
+ */
+const loadSessionUser = cache(async (id: string) =>
+  prisma.user.findUnique({ where: { id }, select: { id: true, role: true } }),
+)
+
+/**
+ * Un jeton valide ne prouve que sa propre signature, pas l'existence de son
+ * porteur : après suppression (ou recréation) de la table `User`, la session
+ * reste « valide » et l'application ne casse qu'au premier appel touchant une
+ * clé étrangère. On confronte donc systématiquement l'identifiant à la base ;
+ * supprimer un compte révoque du même coup ses sessions. Le rôle est lui aussi
+ * relu en base, le jeton pouvant porter un rôle périmé.
+ */
 export async function requireUser(): Promise<{ id: string; role: Role }> {
   const session = await auth()
-  if (!session?.user?.id) throw new Error('Non authentifié')
-  return { id: session.user.id, role: session.user.role }
+  const id = session?.user?.id
+  if (!id) throw new Error('Non authentifié')
+
+  const user = await loadSessionUser(id)
+  if (user === null) throw new Error('Non authentifié')
+
+  return { id: user.id, role: user.role as Role }
 }

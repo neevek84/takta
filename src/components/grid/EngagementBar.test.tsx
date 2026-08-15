@@ -26,7 +26,13 @@ describe('EngagementBar', () => {
   // cumul déjà agrégé, jamais les seules saisies du mois affiché.
   it('déduit le reste du cumul réalisé et prévisionnel', () => {
     render(
-      <EngagementBar line={line} totals={{ realiseMinutes: 480 * 18, prevuMinutes: 480 * 7 }} />,
+      <EngagementBar
+        line={line}
+        totals={[
+          { kind: 'REALISE', minutes: 480 * 18, minutesParJour: 480 },
+          { kind: 'PREVISIONNEL', minutes: 480 * 7, minutesParJour: 480 },
+        ]}
+      />,
     )
     expect(texte()).toContain('30 vendus')
     expect(texte()).toContain('18 réalisés')
@@ -35,23 +41,63 @@ describe('EngagementBar', () => {
   })
 
   it('affiche le vendu intégral quand la ligne n a aucune saisie', () => {
-    render(<EngagementBar line={line} totals={{ realiseMinutes: 0, prevuMinutes: 0 }} />)
+    render(<EngagementBar line={line} totals={[]} />)
     expect(texte()).toContain('30 restants')
   })
 
   it('signale le dépassement accumulé sur plusieurs mois', () => {
-    render(<EngagementBar line={line} totals={{ realiseMinutes: 480 * 32, prevuMinutes: 0 }} />)
+    render(
+      <EngagementBar
+        line={line}
+        totals={[{ kind: 'REALISE', minutes: 480 * 32, minutesParJour: 480 }]}
+      />,
+    )
     expect(texte()).toContain('0 restants')
     expect(texte()).toContain('dépassement de 2 j')
   })
 
-  it('respecte le minutesParJour de la ligne', () => {
+  // Le facteur qui compte est celui porté par chaque groupe de `totals`,
+  // jamais `line.minutesParJour` — voir le test de gel ci-dessous.
+  it('convertit chaque groupe avec le facteur figé sur ses saisies', () => {
     render(
       <EngagementBar
-        line={{ ...line, minutesParJour: 432 }}
-        totals={{ realiseMinutes: 432 * 10, prevuMinutes: 0 }}
+        line={{ ...line, minutesParJour: 480 }}
+        totals={[{ kind: 'REALISE', minutes: 432 * 10, minutesParJour: 432 }]}
       />,
     )
     expect(texte()).toContain('10 réalisés')
+  })
+
+  it('cumule sans réinterpréter deux groupes écrits à des facteurs différents', () => {
+    render(
+      <EngagementBar
+        line={line}
+        totals={[
+          { kind: 'REALISE', minutes: 480 * 10, minutesParJour: 480 }, // 10 j
+          { kind: 'REALISE', minutes: 420 * 5, minutesParJour: 420 }, // 5 j
+        ]}
+      />,
+    )
+    expect(texte()).toContain('15 réalisés')
+  })
+
+  // TROU (lot 1d) — comblé : le gel du facteur de conversion à l'écriture est
+  // effectif dans computeEngagement et charge.ts, mais ne l'était pas ici. Le
+  // bandeau reconvertissait des minutes brutes avec le facteur *courant* de la
+  // ligne, si bien qu'un changement de réglage (donc du facteur courant, via
+  // la cascade) réinterprétait le réalisé/prévisionnel déjà affiché —
+  // exactement ce que ce lot interdit partout ailleurs. `totals` porte
+  // désormais le facteur figé par groupe : faire varier `line.minutesParJour`
+  // seul ne doit plus rien changer à l'affichage.
+  it("ne réinterprète pas l'historique quand le facteur courant de la ligne change", () => {
+    const totals = [{ kind: 'REALISE' as const, minutes: 480 * 18, minutesParJour: 480 }]
+    const { rerender } = render(<EngagementBar line={line} totals={totals} />)
+    expect(texte()).toContain('18 réalisés')
+
+    // Simule un changement de réglage global qui fait passer le facteur
+    // courant de la ligne de 480 à 420 (cascade Settings → client → mission →
+    // ligne), sans toucher aux saisies déjà écrites (`totals` inchangé).
+    rerender(<EngagementBar line={{ ...line, minutesParJour: 420 }} totals={totals} />)
+    expect(texte()).toContain('18 réalisés')
   })
 })

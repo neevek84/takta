@@ -111,6 +111,15 @@ const settingsPatchSchema = z
     defaultEngagementSource: z.enum(ENGAGEMENT_SOURCES as [EngagementSource, ...EngagementSource[]], {
       message: "La source d'engagement par défaut est invalide.",
     }),
+    objectifCaExerciceCents: z
+      .number()
+      .int("L'objectif de chiffre d'affaires doit être un entier de centimes.")
+      .min(0, "L'objectif de chiffre d'affaires ne peut pas être négatif."),
+    debutExerciceMois: z
+      .number()
+      .int('Le mois de début d’exercice doit être un entier.')
+      .min(1, 'Le mois de début d’exercice doit être compris entre 1 et 12.')
+      .max(12, 'Le mois de début d’exercice doit être compris entre 1 et 12.'),
   })
   .partial()
 
@@ -139,6 +148,10 @@ export interface AppSettings {
   holidays: string[]
   defaultDisplayUnit: DisplayUnit
   defaultEngagementSource: EngagementSource
+  /** objectif de CA sur l'exercice, en centimes. 0 = non défini. */
+  objectifCaExerciceCents: number
+  /** mois de début d'exercice, 1-12 */
+  debutExerciceMois: number
 }
 
 function parseDays(raw: string): number[] {
@@ -161,6 +174,8 @@ function toAppSettings(row: Row): AppSettings {
     holidays: JSON.parse(row.holidaysJson) as string[],
     defaultDisplayUnit: row.defaultDisplayUnit as DisplayUnit,
     defaultEngagementSource: row.defaultEngagementSource as EngagementSource,
+    objectifCaExerciceCents: row.objectifCaExerciceCents,
+    debutExerciceMois: row.debutExerciceMois,
   }
 }
 
@@ -208,6 +223,10 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
       ...(patch.defaultEngagementSource !== undefined && {
         defaultEngagementSource: patch.defaultEngagementSource,
       }),
+      ...(patch.objectifCaExerciceCents !== undefined && {
+        objectifCaExerciceCents: patch.objectifCaExerciceCents,
+      }),
+      ...(patch.debutExerciceMois !== undefined && { debutExerciceMois: patch.debutExerciceMois }),
     },
   })
   return toAppSettings(row)
