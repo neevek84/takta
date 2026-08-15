@@ -71,7 +71,9 @@ interface SignatureConnector {
 
 ## 6. Le destinataire
 
-Un contact par client : nom et adresse électronique, saisis dans l'application. Pas de synchronisation d'annuaire, pas de gestion de contacts multiples.
+**Un contact signataire par mission** : nom et adresse électronique, saisis dans l'application. Pas de synchronisation d'annuaire, pas de gestion de contacts multiples.
+
+Le niveau mission est le bon, et il aligne le destinataire sur le document : un CRA est déjà produit par couple *(mission, mois)*. Un même client peut porter plusieurs missions avec des interlocuteurs différents — un chef de projet pour l'une, un responsable de service pour l'autre — et rattacher le signataire au client obligerait à ressaisir ou à se tromper.
 
 Le lot 2, s'il est présent, peut proposer les contacts du tiers Dolibarr à la reprise — sans l'imposer.
 
@@ -124,6 +126,6 @@ Trois relances maximum. Au-delà, le CRA reste `ENVOYÉ` et remonte dans une lis
 
 - **Aucun montant sur le CRA**, même en pied de page.
 - **Un CRA par couple mission-mois**, jamais un document consolidé par client. Un client portant quatre missions reçoit quatre documents.
-- **Un seul contact signataire par client.**
+- **Un seul contact signataire par mission**, et non par client.
 - **Trois relances puis abandon.**
 - **Documenso en première implémentation**, l'interface restant le vrai livrable.
