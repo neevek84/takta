@@ -984,7 +984,10 @@ model TimeEntry {
   minutes   Int
   /// 'REALISE' | 'PREVISIONNEL'
   kind      String
-  slotId    String?
+  /// id du créneau ; chaîne vide = journée entière.
+  /// NON nullable : un NULL n'est jamais égal à lui-même dans un index
+  /// unique, la contrainte ci-dessous ne protégerait donc rien.
+  slotId    String   @default("")
   comment   String   @default("")
   updatedAt DateTime @updatedAt
 
@@ -1157,17 +1160,32 @@ describe('schéma', () => {
     expect(Number.isInteger(entry.minutes)).toBe(true)
   })
 
-  it('refuse un doublon sur (ligne, utilisateur, date, créneau)', async () => {
+  it('refuse un doublon à la journée, le cas réellement utilisé', async () => {
+    // slotId omis -> défaut '' : c'est 100 % des lignes du lot 0.
+    // Avec une colonne nullable, ce test passerait à tort (NULL n'est jamais
+    // égal à NULL dans un index unique) — d'où la sentinelle.
     const data = {
       lineId,
       userId,
       date: new Date('2026-03-13T00:00:00Z'),
       minutes: 480,
       kind: 'REALISE',
-      slotId: null,
     }
     await prisma.timeEntry.create({ data })
     await expect(prisma.timeEntry.create({ data })).rejects.toThrow()
+  })
+
+  it('autorise deux créneaux distincts le même jour sur la même ligne', async () => {
+    const base = {
+      lineId,
+      userId,
+      date: new Date('2026-03-14T00:00:00Z'),
+      minutes: 240,
+      kind: 'REALISE',
+    }
+    await prisma.timeEntry.create({ data: { ...base, slotId: 'matin' } })
+    const second = await prisma.timeEntry.create({ data: { ...base, slotId: 'apres-midi' } })
+    expect(second.slotId).toBe('apres-midi')
   })
 
   it('crée les réglages en singleton avec les valeurs par défaut', async () => {
@@ -1888,11 +1906,13 @@ describe('clients et missions', () => {
 
   it('porte deux lignes tarifées différemment sous une même mission', async () => {
     const c = await createClient('ACME deux lignes')
-    const m = await createMission({ clientId: c.id, label: 'ITSM' })
+    // Libellé distinct du test précédent : listActiveLines scope par userId,
+    // deux missions homonymes se mélangeraient dans le filtre.
+    const m = await createMission({ clientId: c.id, label: 'ITSM deux lignes' })
     await createLine({ missionId: m.id, userId, label: 'Jour', soldCentiemes: 3000, tjmCents: 80000 })
     await createLine({ missionId: m.id, userId, label: 'Nuit', soldCentiemes: 1000, tjmCents: 120000 })
 
-    const lines = (await listActiveLines(userId)).filter((l) => l.missionLabel === 'ITSM')
+    const lines = (await listActiveLines(userId)).filter((l) => l.missionLabel === 'ITSM deux lignes')
     expect(lines).toHaveLength(2)
     expect(lines.map((l) => l.label).sort()).toEqual(['Jour', 'Nuit'])
   })
@@ -2210,7 +2230,7 @@ git commit -m "feat(missions): clients, missions et lignes de prestation"
   - `interface MonthDay { date: string; dayOfWeek: number; isWorking: boolean; isHoliday: boolean }`
   - `buildMonthDays(month: string, workingDays: number[], holidays: string[]): MonthDay[]` — `month` au format `'YYYY-MM'`
   - `dailyTotals(entries: ReadonlyArray<{ date: string; minutes: number }>): Map<string, number>`
-  - `getMonthEntries(userId: string, month: string): Promise<Array<{ id: string; lineId: string; date: string; minutes: number; kind: TimeEntryKind; slotId: string | null }>>`
+  - `getMonthEntries(userId: string, month: string): Promise<Array<{ id: string; lineId: string; date: string; minutes: number; kind: TimeEntryKind; slotId: string }>>`
 
 `buildMonthDays` est pur et n'accède à rien — c'est la garantie qu'il se teste sans base.
 
@@ -2341,7 +2361,8 @@ export interface MonthEntry {
   date: string
   minutes: number
   kind: TimeEntryKind
-  slotId: string | null
+  /** chaîne vide = journée entière */
+  slotId: string
 }
 
 function monthBounds(month: string): { start: Date; end: Date } {
@@ -2399,7 +2420,7 @@ git commit -m "feat(core): construction du mois et totaux journaliers"
 - Consumes: `checkCapacity`, `isLocked`, `getSettings`, `prisma`
 - Produces:
   - `type SaveResult = { ok: true; minutes: number } | { ok: false; reason: 'CAPACITE'; totalMinutes: number; capacityMinutes: number } | { ok: false; reason: 'VERROUILLE' }`
-  - `saveEntry(args: { userId: string; lineId: string; date: string; minutes: number; kind: TimeEntryKind; slotId?: string | null }): Promise<SaveResult>`
+  - `saveEntry(args: { userId: string; lineId: string; date: string; minutes: number; kind: TimeEntryKind; slotId?: string }): Promise<SaveResult>`
 
 `minutes: 0` supprime la ligne. Le contrôle de capacité exclut la valeur déjà posée sur la même clé — sinon corriger une saisie déclencherait une fausse alerte.
 
@@ -2544,9 +2565,9 @@ export async function saveEntry(args: {
   date: string
   minutes: number
   kind: TimeEntryKind
-  slotId?: string | null
+  slotId?: string
 }): Promise<SaveResult> {
-  const slotId = args.slotId ?? null
+  const slotId = args.slotId ?? ''
   const date = new Date(`${args.date}T00:00:00.000Z`)
   const settings = await getSettings()
 
@@ -2695,7 +2716,7 @@ const lines: LineForGrid[] = [
 ]
 
 const entries: MonthEntry[] = [
-  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: null },
+  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '' },
   { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'nuit' },
 ]
 
@@ -4209,4 +4230,4 @@ git commit -m "feat(calendrier): jours feries francais precharges"
 
 Le champ `TimeEntry.kind` accepte `PREVISIONNEL` dès le lot 0 et la grille affiche déjà ces cellules en italique grisé, mais la planification à venir, la validation des jours passés et le calcul du reste à planifier relèvent du lot 1.
 
-**Une exigence de la spec est sciemment reportée :** les **créneaux autorisés par ligne** (§4 de la spec — la ligne « Nuit » n'accepte que le créneau Nuit). Le champ `allowedSlotIds` est présent en base dès la tâche 6 et exposé dans `LineForGrid` en tâche 9, mais aucun contrôle ne s'applique : la grille du lot 0 saisit à la journée, `slotId` vaut toujours `null`, et il n'y a donc rien à restreindre. Le contrôle arrive avec la saisie par créneau, en lot 1, en même temps que les blocs d'agenda qui en dépendent.
+**Une exigence de la spec est sciemment reportée :** les **créneaux autorisés par ligne** (§4 de la spec — la ligne « Nuit » n'accepte que le créneau Nuit). Le champ `allowedSlotIds` est présent en base dès la tâche 6 et exposé dans `LineForGrid` en tâche 9, mais aucun contrôle ne s'applique : la grille du lot 0 saisit à la journée, `slotId` vaut toujours la sentinelle vide, et il n'y a donc rien à restreindre. Le contrôle arrive avec la saisie par créneau, en lot 1, en même temps que les blocs d'agenda qui en dépendent.

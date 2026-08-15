@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cra
+      POSTGRES_PASSWORD: cra
+      POSTGRES_DB: cra
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cra"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://cra:cra@db:5432/cra
+      AUTH_SECRET: ${AUTH_SECRET:?definir AUTH_SECRET}
+      AUTH_TRUST_HOST: "true"
+    ports:
+      - "3000:3000"
+
+volumes:
+  db-data:
