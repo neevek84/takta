@@ -1,4 +1,5 @@
 import type { ExerciceProgress } from '@/core/fiscal/revenue'
+import { SegmentLegend, SEGMENT_PREVU, SEGMENT_REALISE } from '@/components/ui/SegmentLegend'
 
 function euros(cents: number): string {
   return (cents / 100).toLocaleString('fr-FR', { maximumFractionDigits: 0 })
@@ -32,40 +33,49 @@ export function ExerciceBar({
 
   return (
     <section className="mb-6">
-      <h2 className="mb-2 text-sm font-medium text-slate-600">
+      <h2 className="mb-2 text-sm font-medium text-muted">
         {label} · objectif {euros(progress.objectifCents)} €
       </h2>
 
-      <div className="mb-2 h-3 w-full overflow-hidden rounded bg-slate-200">
+      <div className="mb-2 h-3 w-full overflow-hidden rounded-sm bg-off-strong">
+        {/* Le prévisionnel se hachure : sa teinte plus claire ne suffirait pas
+            à le distinguer du réalisé sans la couleur. Le `title` n'est qu'un
+            complément à la souris — c'est la légende ci-dessous qui nomme. */}
         <div className="flex h-full">
           <div
             data-testid="bar-realise"
-            className="bg-slate-800"
+            data-segment="realise"
+            title="Réalisé"
+            className={SEGMENT_REALISE}
             style={{ width: `${pctRealise}%` }}
           />
           <div
             data-testid="bar-prevu"
-            className="bg-slate-400"
+            data-segment="prevu"
+            title="Prévisionnel"
+            className={SEGMENT_PREVU}
             style={{ width: `${pctPrevu}%` }}
           />
         </div>
       </div>
 
-      <p className="text-sm text-slate-600">
+      <SegmentLegend className="mb-2" />
+
+      <p className="text-sm text-muted">
         {euros(progress.realiseCents)} € réalisés · {euros(progress.prevuCents)} € prévus ·{' '}
         {Math.round(progress.tauxCouverture * 100)} % de couverture
       </p>
 
       <p data-testid="reste-a-vendre" className="mt-1 text-base font-medium">
         {progress.depassementCents > 0 ? (
-          <span className="text-emerald-700">
+          <span className="text-success-ink">
             Objectif dépassé de {euros(progress.depassementCents)} €
           </span>
         ) : (
           <>
             Reste à vendre : {euros(progress.resteAVendreCents)} €
             {resteEnJoursCentiemes !== null && (
-              <span className="text-slate-500">
+              <span className="text-muted">
                 {' '}
                 — environ {jours(resteEnJoursCentiemes)} jours
               </span>

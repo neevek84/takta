@@ -88,14 +88,114 @@ describe('MonthGrid', () => {
     renderGrid()
     // 2026-03-01 est un dimanche
     const header = screen.getByTestId('day-header-2026-03-01')
-    expect(header.className).toContain('bg-slate-100')
+    expect(header.className).toContain('bg-off')
+    expect(header.getAttribute('data-jour')).toBe('weekend')
   })
 
   it('signale le dépassement de capacité sur la ligne de totaux', () => {
     renderGrid()
     // 480 + 240 = 720 > 480
     const total = screen.getByTestId('total-2026-03-12')
-    expect(total.className).toContain('text-red-600')
+    expect(total.className).toContain('text-danger-ink')
+    expect(total.getAttribute('data-depassement')).toBe('true')
+  })
+
+  // Six états sur une même cellule, et aucun porté par la seule couleur.
+  describe('états de la cellule, distinguables sans la couleur', () => {
+    const joursAvecFerie = buildMonthDays('2026-03', [1, 2, 3, 4, 5], ['2026-03-02'])
+
+    it('distingue ouvré, week-end et férié par un attribut et un motif', () => {
+      renderGrid({ days: joursAvecFerie })
+
+      const ouvre = screen.getByTestId('day-header-2026-03-03')
+      const weekend = screen.getByTestId('day-header-2026-03-01')
+      const ferie = screen.getByTestId('day-header-2026-03-02')
+
+      expect(ouvre.getAttribute('data-jour')).toBe('ouvre')
+      expect(weekend.getAttribute('data-jour')).toBe('weekend')
+      expect(ferie.getAttribute('data-jour')).toBe('ferie')
+
+      // Le motif porte l'information là où la teinte ne suffit pas.
+      expect(ouvre.className).not.toMatch(/pattern-/)
+      expect(weekend.className).toContain('pattern-stripes')
+      expect(ferie.className).toContain('pattern-dots')
+    })
+
+    it('nomme le férié et le week-end par une légende visible', () => {
+      // Le `title` posé sur le `<th>` n'existe qu'au survol de la souris : il
+      // ne peut pas être ce qui « nomme » un état de jour. La légende, si.
+      renderGrid({ days: joursAvecFerie })
+      const legende = screen.getByTestId('legende-jours')
+      expect(legende.textContent).toContain('Jour férié')
+      expect(legende.textContent).toContain('Jour non ouvré')
+
+      // Et ses pastilles reprennent l'habillage exact des colonnes.
+      const pastilles = legende.querySelectorAll('[aria-hidden="true"]')
+      expect(pastilles).toHaveLength(2)
+      expect(pastilles[1]!.className).toContain('bg-off-strong pattern-dots')
+      expect(screen.getByTestId('day-header-2026-03-02').className).toContain(
+        'bg-off-strong pattern-dots',
+      )
+    })
+
+    it('distingue réalisé, prévisionnel et vide sur la saisie', () => {
+      renderGrid({
+        entries: [
+          { id: 'r', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
+          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', minutesParJour: 480 },
+        ],
+      })
+
+      const realise = cell('Consultant ITSM', '2026-03-12')
+      const prevu = cell('Consultant ITSM', '2026-03-13')
+      const vide = cell('Consultant ITSM', '2026-03-16')
+
+      expect(realise.getAttribute('data-saisie')).toBe('realise')
+      expect(prevu.getAttribute('data-saisie')).toBe('previsionnel')
+      expect(vide.getAttribute('data-saisie')).toBe('vide')
+
+      // Hachures et italique : le prévisionnel se lit en vision monochrome.
+      expect(prevu.className).toContain('pattern-hatch')
+      expect(prevu.className).toContain('italic')
+      expect(realise.className).not.toContain('pattern-hatch')
+    })
+
+    it('offre des cellules de 44 points', () => {
+      renderGrid()
+      expect(cell('Consultant ITSM', '2026-03-12').className).toContain('touch-target')
+    })
+
+    it('ne supprime pas l anneau de focus', () => {
+      renderGrid()
+      // `outline-none` sans remplacement rendrait la grille inutilisable au clavier.
+      expect(cell('Consultant ITSM', '2026-03-12').className).not.toContain('outline-none')
+    })
+
+    // I4 — l'input occupe exactement toute la cellule (w-11 + touch-target, et
+    // le `<td>` n'a aucun rembourrage). Tout fond opaque posé sur lui recouvre
+    // le fond ET le motif du `<td>`, c'est-à-dire l'état du jour.
+    it('ne recouvre jamais l état du jour d un fond opaque', () => {
+      renderGrid({ days: joursAvecFerie })
+      for (const champ of screen.getAllByLabelText(/^Consultant ITSM 2026-03-/)) {
+        // Aucune classe de fond, dans aucun état (`focus:bg-off` compris), sauf
+        // la transparence qui laisse voir la cellule.
+        expect(champ.className.split(/\s+/).filter((c) => /(^|:)bg-/.test(c))).toEqual([
+          'bg-transparent',
+        ])
+      }
+    })
+
+    it('laisse le férié pris au focus se distinguer encore du week-end', () => {
+      renderGrid({ days: joursAvecFerie })
+      const ferie = cell('Consultant ITSM', '2026-03-02').closest('td')!
+      const weekend = cell('Consultant ITSM', '2026-03-01').closest('td')!
+
+      // 2026-03-02 est férié dans ce jeu, 2026-03-01 est un dimanche : leurs
+      // motifs diffèrent, et rien dans la cellule ne les efface au focus.
+      expect(ferie.className).toContain('pattern-dots')
+      expect(weekend.className).toContain('pattern-stripes')
+      expect(cell('Consultant ITSM', '2026-03-02').className).not.toMatch(/(^|:)bg-off/)
+    })
   })
 
   it('affiche le bandeau d engagement par ligne', () => {
@@ -273,5 +373,27 @@ describe('MonthGrid', () => {
       await waitFor(() => expect(input.value).toBe('1'))
       expect(onSave).not.toHaveBeenCalled()
     })
+
+    // I4 — le signal « par créneaux » était un fond opaque permanent, qui
+    // effaçait l'état du jour sur toutes les journées concernées.
+    it('signale les créneaux par un liseré, pas par un fond qui masque la cellule', () => {
+      renderGrid({ entries: deuxCreneaux })
+      const input = cell('Consultant ITSM', '2026-03-16')
+
+      expect(input.className).not.toContain('bg-warning')
+      expect(input.className).toContain('ring-warning-edge')
+      // Le `<td>` garde son état de jour : le 16 mars 2026 est un lundi ouvré.
+      expect(input.closest('td')!.className).toContain('bg-surface')
+    })
+  })
+
+  // I5 — le seul lien segment → sens des bandeaux d'engagement était un
+  // `title` sur un `<div>` non focalisable : invisible au clavier, invisible
+  // au tactile, non annoncé. La grille nomme ses segments visiblement.
+  it('nomme visiblement les segments des bandeaux d engagement', () => {
+    renderGrid()
+    const legende = screen.getByTestId('legende-segments')
+    expect(legende.textContent).toContain('Réalisé')
+    expect(legende.textContent).toContain('Prévisionnel')
   })
 })

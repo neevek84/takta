@@ -5,6 +5,8 @@ import { buildChargeMatrix } from '@/services/charge'
 import { fiscalYearBounds } from '@/core/fiscal/year'
 import { ExerciceBar } from '@/components/charge/ExerciceBar'
 import { ChargeTable } from '@/components/charge/ChargeTable'
+import { PageShell } from '@/components/ui/PageShell'
+import { Banner } from '@/components/ui/Banner'
 
 export default async function ChargePage({
   searchParams,
@@ -24,17 +26,25 @@ export default async function ChargePage({
   const matrix = await buildChargeMatrix(user.id, startYear)
 
   return (
-    <main className="p-6">
-      <div className="mb-4 flex items-center gap-3">
-        <h1 className="text-xl font-semibold">Plan de charge</h1>
-        <Link href={`/charge?ex=${startYear - 1}`} className="rounded border px-2 py-1 text-sm">
-          ← Exercice précédent
-        </Link>
-        <Link href={`/charge?ex=${startYear + 1}`} className="rounded border px-2 py-1 text-sm">
-          Exercice suivant →
-        </Link>
-      </div>
-
+    <PageShell
+      title="Plan de charge"
+      actions={
+        <>
+          <Link
+            href={`/charge?ex=${startYear - 1}`}
+            className="touch-target inline-flex items-center rounded-md border border-rule px-3 text-sm text-link"
+          >
+            ← Exercice précédent
+          </Link>
+          <Link
+            href={`/charge?ex=${startYear + 1}`}
+            className="touch-target inline-flex items-center rounded-md border border-rule px-3 text-sm text-link"
+          >
+            Exercice suivant →
+          </Link>
+        </>
+      }
+    >
       <ExerciceBar
         label={matrix.fiscalYear.label}
         progress={matrix.progress}
@@ -42,16 +52,18 @@ export default async function ChargePage({
       />
 
       {settings.objectifCaExerciceCents === 0 && (
-        <p className="mb-4 text-sm text-slate-500">
-          Aucun objectif de chiffre d’affaires n’est défini.{' '}
-          <Link href="/admin/saisie" className="underline">
-            En saisir un
-          </Link>{' '}
-          fait apparaître le reste à vendre.
-        </p>
+        <div className="mb-4">
+          <Banner tone="info">
+            Aucun objectif de chiffre d’affaires n’est défini.{' '}
+            <Link href="/admin/saisie" className="underline">
+              En saisir un
+            </Link>{' '}
+            fait apparaître le reste à vendre.
+          </Banner>
+        </div>
       )}
 
       <ChargeTable matrix={matrix} />
-    </main>
+    </PageShell>
   )
 }

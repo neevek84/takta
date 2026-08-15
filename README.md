@@ -62,6 +62,24 @@ base). Au démarrage, le conteneur `app` exécute automatiquement
 `npx prisma migrate deploy` avant de lancer le serveur (voir la `CMD` du
 Dockerfile) : le schéma est donc créé/mis à jour sans étape manuelle.
 
+> **Historique du défaut corrigé :** entre le lot 0 et ce lot, ce fichier de
+> migration n'avait pas suivi le schéma — chaque évolution passait par
+> `npm run db:sqlite` (`prisma db push`), qui ne génère jamais de migration.
+> Quatre changements de schéma (`objectifCaExerciceCents`,
+> `debutExerciceMois`, `themeJson`, et la quasi-totalité des
+> `minutesParJour`) étaient absents de la migration Postgres alors qu'ils
+> existaient dans `schema.prisma` : le chemin `docker compose up` +
+> `migrate deploy` créait donc un schéma incomplet, et l'application
+> plantait (500) sur toute route touchant ces colonnes. La migration a été
+> régénérée pour refléter le schéma actuel (un unique dossier de migration
+> initiale, remplacé en place — Postgres n'a jamais été déployé avec ce
+> dépôt, il n'y a donc aucun historique de migration réel à préserver).
+> Un test (`src/db/schema-migration-sync.test.ts`, dans la suite
+> `npx vitest run`) compare désormais statiquement, à chaque exécution, les
+> champs scalaires de `schema.prisma` aux colonnes produites par
+> `prisma/migrations/**/migration.sql` et échoue en nommant toute colonne
+> manquante — pour empêcher que ce défaut ne se reproduise silencieusement.
+
 ```bash
 export AUTH_SECRET=$(openssl rand -base64 32)
 docker compose up -d --build
@@ -82,7 +100,10 @@ la même façon hors ligne (`prisma migrate diff --from-migrations
 prisma/migrations --to-schema-datamodel prisma/schema.prisma --script`,
 provider basculé en Postgres au moment de la génération) si aucun Postgres
 n'est joignable, ou via `prisma migrate dev` si un serveur de
-développement Postgres est disponible.
+développement Postgres est disponible. Pas de filet de sécurité manuel à
+retenir : `npx vitest run` (donc la CI et tout `npm test`) fait déjà
+échouer `src/db/schema-migration-sync.test.ts`, en nommant la colonne
+manquante, si une évolution de schéma part sans sa migration.
 
 ## Poste local (sans Docker, SQLite)
 
@@ -135,10 +156,15 @@ d'intégration tapent la base SQLite de développement. Rien ne l'exécute
 contre Postgres ; c'est un manque, pas un choix délibéré (voir « État
 vérifié de ce lot » ci-dessous). Faire tourner la suite contre les deux
 moteurs — en CI, par exemple avec une matrice `DATABASE_URL` — est le seul
-moyen de garantir que la portabilité ne se dégrade pas silencieusement au
-fil des migrations ; c'est à inscrire au backlog du prochain lot. En
-attendant, ne pas contourner les règles ci-dessus : elles conditionnent le
-mode local et l'empaquetage à venir.
+moyen de garantir que la portabilité au sens large (types, contraintes,
+comportement réel des requêtes) ne se dégrade pas silencieusement au fil
+des migrations ; c'est à inscrire au backlog du prochain lot. Ce que couvre
+déjà `src/db/schema-migration-sync.test.ts` est plus étroit mais tourne
+sans aucun Postgres joignable : il garantit que chaque colonne déclarée
+dans `schema.prisma` a bien sa contrepartie dans les fichiers de migration
+committés — le défaut précis qui a rendu ce chemin cassé pendant plusieurs
+lots. En attendant la matrice CI, ne pas contourner les règles ci-dessus :
+elles conditionnent le mode local et l'empaquetage à venir.
 
 ## État vérifié de ce lot
 
@@ -167,3 +193,8 @@ mode local et l'empaquetage à venir.
   a été générée hors ligne par diff de schéma (`prisma migrate diff
   --from-empty ...`, sans connexion base) et committée, mais son
   application réelle contre un Postgres vivant n'a jamais été exercée ici.
+  Cette migration avait cessé de suivre `schema.prisma` : elle a été
+  régénérée hors ligne pour refléter le schéma actuel, et
+  `src/db/schema-migration-sync.test.ts` (dans `npx vitest run`) empêche
+  désormais qu'elle se dégrade à nouveau silencieusement — voir la note
+  dans la section Docker Compose ci-dessus.

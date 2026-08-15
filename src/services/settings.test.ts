@@ -229,3 +229,4 @@ describe('réglages d exercice', () => {
     expect(s.objectifCaExerciceCents).toBe(0)
   })
 })
+

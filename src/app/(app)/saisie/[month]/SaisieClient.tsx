@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { MonthGrid } from '@/components/grid/MonthGrid'
+import { Banner } from '@/components/ui/Banner'
 import { saveCell } from './actions'
 import type { MonthDay } from '@/core/month/build'
 import type { LineForGrid } from '@/services/missions'
@@ -55,9 +56,9 @@ export function SaisieClient(props: {
   return (
     <>
       {message && (
-        <p className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {message}
-        </p>
+        <div className="mb-3">
+          <Banner tone="warning">{message}</Banner>
+        </div>
       )}
       <MonthGrid
         days={props.days}

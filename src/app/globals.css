@@ -1,1 +1,119 @@
 @import "tailwindcss";
+
+/* Jetons par défaut — identité KreativPM.
+   Bloc `@theme` classique, jamais en mode « inline » : les utilitaires
+   doivent référencer `var(--color-…)` pour que le thème enregistré, injecté
+   sur <html>, les change sans reconstruction. Voir la décision en tête du
+   plan 1e. */
+@theme {
+  --color-page: #faf5ed;
+  --color-surface: #ffffff;
+  --color-off: #efeae0;
+  --color-off-strong: #e4dccc;
+
+  --color-ink: #342820;
+  --color-ink-deep: #2a211a;
+  --color-muted: #5f5e5a;
+  --color-on-accent: #2a211a;
+  --color-on-dark: #faf5ed;
+
+  --color-accent: #d4943f;
+  --color-accent-dark: #b57730;
+  --color-link: #8c5a23;
+  --color-rule: #d8cfbf;
+  --color-focus: #a86c2b;
+
+  --color-success: #e9f0de;
+  --color-success-ink: #3b5322;
+  --color-success-edge: #b9ce9b;
+  --color-warning: #fbefd8;
+  --color-warning-ink: #6d4a10;
+  --color-warning-edge: #e6c68a;
+  --color-danger: #fae7e0;
+  --color-danger-ink: #8a3418;
+  --color-danger-edge: #edb9a4;
+  --color-info: #efeae0;
+  --color-info-ink: #4f4636;
+  --color-info-edge: #d8cfbf;
+
+  /* Polices embarquées, exposées par next/font/local dans le layout racine. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+
+  /* Échelle typographique resserrée : une grille de saisie a besoin de
+     densité. Le corps courant est à 14 px, pas à 16. */
+  --text-xs: 0.6875rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.125rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.25rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.125rem;
+  --text-xl--line-height: 1.5rem;
+  --text-2xl: 1.375rem;
+  --text-2xl--line-height: 1.75rem;
+
+  --spacing: 0.25rem;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+
+  --shadow-card: 0 1px 2px color-mix(in srgb, var(--color-ink) 10%, transparent);
+  --shadow-float: 0 6px 16px color-mix(in srgb, var(--color-ink) 18%, transparent);
+}
+
+@layer base {
+  body {
+    background-color: var(--color-page);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    font-weight: 800;
+  }
+
+  /* Un focus visible partout, déclaré une fois. Le retirer pour l'esthétique
+     rendrait l'application inutilisable au clavier ; le déclarer ici évite
+     d'avoir à y penser sur chaque composant. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+}
+
+/* Marqueurs non chromatiques : ils portent l'information quand la teinte
+   n'est pas perçue. `color-mix` les garde thématisés. */
+@utility pattern-stripes {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent 0 4px,
+    color-mix(in srgb, var(--color-ink) 10%, transparent) 4px 5px
+  );
+}
+
+@utility pattern-dots {
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--color-ink) 22%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 5px 5px;
+}
+
+@utility pattern-hatch {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0 3px,
+    color-mix(in srgb, var(--color-ink) 14%, transparent) 3px 4px
+  );
+}
+
+/* 44 points : la cible tactile minimale dont le lot 1c dépend. */
+@utility touch-target {
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+}

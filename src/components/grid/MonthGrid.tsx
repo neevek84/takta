@@ -6,6 +6,7 @@ import type { MonthDay } from '@/core/month/build'
 import type { TimeEntryKind } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
+import { SegmentLegend } from '@/components/ui/SegmentLegend'
 import { EngagementBar } from './EngagementBar'
 import { TotalsRow } from './TotalsRow'
 import { useDragSelect } from './useDragSelect'
@@ -25,6 +26,34 @@ interface Cell {
 
 function cellKey(lineId: string, date: string): string {
   return `${lineId}|${date}`
+}
+
+type EtatJour = 'ouvre' | 'weekend' | 'ferie'
+
+function etatJour(d: MonthDay): EtatJour {
+  if (d.isHoliday) return 'ferie'
+  return d.isWorking ? 'ouvre' : 'weekend'
+}
+
+// Fond ET motif : la teinte porte la lecture rapide, le motif porte
+// l'information pour qui ne la distingue pas.
+const FOND_JOUR: Record<EtatJour, string> = {
+  ouvre: 'bg-surface',
+  weekend: 'bg-off pattern-stripes',
+  ferie: 'bg-off-strong pattern-dots',
+}
+
+const TITRE_JOUR: Record<EtatJour, string | undefined> = {
+  ouvre: undefined,
+  weekend: 'Jour non ouvré',
+  ferie: 'Jour férié',
+}
+
+type EtatSaisie = 'vide' | 'realise' | 'previsionnel'
+
+function etatSaisie(cell: Cell | undefined): EtatSaisie {
+  if (cell === undefined) return 'vide'
+  return cell.kind === 'REALISE' ? 'realise' : 'previsionnel'
 }
 
 /**
@@ -137,6 +166,24 @@ export function MonthGrid({
   return (
     <div className="overflow-x-auto">
       <div className="mb-3 flex flex-col gap-1">
+        {/* Les bandeaux dessinent deux segments, et les colonnes trois états
+            de jour ; sans légende, rien ne dit lequel est lequel ailleurs
+            qu'au survol de la souris — donc jamais au clavier ni au tactile. */}
+        <SegmentLegend className="mb-1" />
+        <p
+          data-testid="legende-jours"
+          className="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted"
+        >
+          {(['weekend', 'ferie'] as const).map((etat) => (
+            <span key={etat} className="inline-flex items-center gap-1">
+              <span
+                aria-hidden="true"
+                className={`inline-block h-3 w-4 rounded-sm border border-rule ${FOND_JOUR[etat]}`}
+              />
+              {TITRE_JOUR[etat]}
+            </span>
+          ))}
+        </p>
         {lines.map((l) => (
           <EngagementBar key={l.id} line={l} totals={engagementTotals[l.id] ?? AUCUN_TOTAL} />
         ))}
@@ -145,7 +192,7 @@ export function MonthGrid({
       <table className="border-collapse text-sm">
         <thead>
           <tr>
-            <th scope="col" className="sticky left-0 bg-white px-2 py-1 text-left">
+            <th scope="col" className="sticky left-0 bg-surface px-2 py-1 text-left">
               Ligne
             </th>
             {days.map((d) => (
@@ -153,9 +200,9 @@ export function MonthGrid({
                 key={d.date}
                 scope="col"
                 data-testid={`day-header-${d.date}`}
-                className={`w-9 px-1 py-1 text-center text-xs font-normal ${
-                  d.isWorking && !d.isHoliday ? '' : 'bg-slate-100'
-                }`}
+                data-jour={etatJour(d)}
+                title={TITRE_JOUR[etatJour(d)]}
+                className={`w-11 px-1 py-1 text-center text-xs font-normal text-ink ${FOND_JOUR[etatJour(d)]}`}
               >
                 {Number(d.date.slice(8))}
               </th>
@@ -165,8 +212,8 @@ export function MonthGrid({
 
         <tbody>
           {lines.map((l) => (
-            <tr key={l.id} className="border-t">
-              <th scope="row" className="sticky left-0 bg-white px-2 py-1 text-left font-normal">
+            <tr key={l.id} className="border-t border-rule">
+              <th scope="row" className="sticky left-0 bg-surface px-2 py-1 text-left font-normal">
                 {l.label}
               </th>
               {days.map((d) => {
@@ -176,15 +223,17 @@ export function MonthGrid({
                 return (
                   <td
                     key={d.date}
+                    data-jour={etatJour(d)}
                     onMouseDown={() => drag.handlers.onMouseDown(l.id, d.date)}
                     onMouseEnter={() => drag.handlers.onMouseEnter(l.id, d.date)}
                     onMouseUp={drag.handlers.onMouseUp}
-                    className={`${d.isWorking && !d.isHoliday ? '' : 'bg-slate-50'} ${
-                      drag.isSelected(l.id, d.date) ? 'ring-2 ring-inset ring-blue-400' : ''
+                    className={`${FOND_JOUR[etatJour(d)]} ${
+                      drag.isSelected(l.id, d.date) ? 'ring-2 ring-inset ring-focus' : ''
                     }`}
                   >
                     <input
                       aria-label={`${l.label} ${d.date}`}
+                      data-saisie={etatSaisie(cell)}
                       value={values.get(key) ?? ''}
                       readOnly={parCreneaux}
                       title={parCreneaux ? CELLULE_CRENEAUX : undefined}
@@ -204,9 +253,14 @@ export function MonthGrid({
                         }
                         if (ev.key === 'Escape') drag.clear()
                       }}
-                      className={`h-8 w-9 border-0 bg-transparent text-center text-xs outline-none focus:bg-blue-50 ${
-                        cell?.kind === 'PREVISIONNEL' ? 'text-slate-400 italic' : ''
-                      } ${parCreneaux ? 'bg-amber-50 text-amber-800' : ''}`}
+                      // L'input recouvre exactement toute la cellule (`w-11` +
+                      // `touch-target`, `<td>` sans rembourrage) : tout fond
+                      // opaque posé ici efface le fond ET le motif du jour.
+                      // Le focus se voit par le contour de `globals.css`, et
+                      // les créneaux par un liseré — jamais par un aplat.
+                      className={`touch-target w-11 border-0 bg-transparent text-center text-xs text-ink ${
+                        cell?.kind === 'PREVISIONNEL' ? 'pattern-hatch italic text-muted' : ''
+                      } ${parCreneaux ? 'text-warning-ink ring-1 ring-inset ring-warning-edge' : ''}`}
                     />
                   </td>
                 )

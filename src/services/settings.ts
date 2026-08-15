@@ -179,13 +179,30 @@ function toAppSettings(row: Row): AppSettings {
   }
 }
 
-export async function getSettings(): Promise<AppSettings> {
-  const row = await prisma.settings.upsert({
+/**
+ * Accès unique à la ligne singleton `Settings` — **le seul endroit du dépôt
+ * qui porte ses valeurs de création**.
+ *
+ * Il a existé deux upserts jumeaux, celui-ci et celui du thème, et ils ont
+ * divergé : le second créait la ligne avec `{ id: 'singleton' }` seul, sans
+ * `slotsJson`. Comme le thème est lu par le layout racine, c'est lui qui
+ * gagnait toujours la course à la création, et la base gardait durablement
+ * `slotsJson = "[]"` — masqué à la lecture par le repli de `toAppSettings`,
+ * mais bien présent pour tout lecteur direct de la colonne (script de
+ * reprise, export, futur endpoint). Deux fonctions ne doivent plus jamais
+ * pouvoir décrire différemment la même création : elles passent toutes par
+ * ici, thème compris (`services/theme.ts`).
+ */
+export async function readSettingsRow(): Promise<Row> {
+  return prisma.settings.upsert({
     where: { id: 'singleton' },
     create: { id: 'singleton', slotsJson: JSON.stringify(DEFAULT_SLOTS) },
     update: {},
   })
-  return toAppSettings(row)
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  return toAppSettings(await readSettingsRow())
 }
 
 export class SettingsValidationError extends Error {
@@ -208,7 +225,7 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
     throw new SettingsValidationError(validation.errors)
   }
 
-  await getSettings() // garantit l'existence du singleton
+  await readSettingsRow() // garantit l'existence du singleton
 
   const row = await prisma.settings.update({
     where: { id: 'singleton' },
@@ -240,3 +257,4 @@ export async function loadFrenchHolidays(fromYear: number, toYear: number): Prom
   }
   return updateSettings({ holidays: dates })
 }
+
