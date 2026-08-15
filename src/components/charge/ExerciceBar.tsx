@@ -32,40 +32,44 @@ export function ExerciceBar({
 
   return (
     <section className="mb-6">
-      <h2 className="mb-2 text-sm font-medium text-slate-600">
+      <h2 className="mb-2 text-sm font-medium text-muted">
         {label} · objectif {euros(progress.objectifCents)} €
       </h2>
 
-      <div className="mb-2 h-3 w-full overflow-hidden rounded bg-slate-200">
+      <div className="mb-2 h-3 w-full overflow-hidden rounded-sm bg-off-strong">
+        {/* Le prévisionnel se hachure et se nomme : sa teinte plus claire ne
+            suffirait pas à le distinguer du réalisé sans la couleur. */}
         <div className="flex h-full">
           <div
             data-testid="bar-realise"
-            className="bg-slate-800"
+            title="Réalisé"
+            className="bg-accent"
             style={{ width: `${pctRealise}%` }}
           />
           <div
             data-testid="bar-prevu"
-            className="bg-slate-400"
+            title="Prévisionnel"
+            className="bg-accent/45 pattern-hatch"
             style={{ width: `${pctPrevu}%` }}
           />
         </div>
       </div>
 
-      <p className="text-sm text-slate-600">
+      <p className="text-sm text-muted">
         {euros(progress.realiseCents)} € réalisés · {euros(progress.prevuCents)} € prévus ·{' '}
         {Math.round(progress.tauxCouverture * 100)} % de couverture
       </p>
 
       <p data-testid="reste-a-vendre" className="mt-1 text-base font-medium">
         {progress.depassementCents > 0 ? (
-          <span className="text-emerald-700">
+          <span className="text-success-ink">
             Objectif dépassé de {euros(progress.depassementCents)} €
           </span>
         ) : (
           <>
             Reste à vendre : {euros(progress.resteAVendreCents)} €
             {resteEnJoursCentiemes !== null && (
-              <span className="text-slate-500">
+              <span className="text-muted">
                 {' '}
                 — environ {jours(resteEnJoursCentiemes)} jours
               </span>

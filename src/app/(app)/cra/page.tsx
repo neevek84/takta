@@ -2,6 +2,12 @@ import { requireUser } from '@/auth'
 import { listCras } from '@/services/cra'
 import { listMissionsForUser } from '@/services/missions'
 import { canTransition, type CraTransition } from '@/core/cra/state-machine'
+import { StatusBadge } from '@/components/cra/StatusBadge'
+import { Button } from '@/components/ui/Button'
+import { Card } from '@/components/ui/Card'
+import { Field } from '@/components/ui/Field'
+import { PageShell } from '@/components/ui/PageShell'
+import { Select } from '@/components/ui/Select'
 import { openCra, moveCra, saveTracking } from './actions'
 
 const LABELS: Record<CraTransition, string> = {
@@ -26,77 +32,62 @@ export default async function CraPage({
   const missions = await listMissionsForUser(user.id)
 
   return (
-    <main className="mx-auto max-w-4xl p-6">
-      <h1 className="mb-6 text-xl font-semibold">CRA · {month}</h1>
-
-      <form action={openCra} className="mb-8 flex items-end gap-2">
+    <PageShell title={`CRA · ${month}`}>
+      <form action={openCra} className="mb-8 flex flex-wrap items-end gap-2">
         <input type="hidden" name="month" value={month} />
-        <select name="missionId" required className="rounded border px-2 py-1">
+        <Select label="Mission" name="missionId" required>
           {missions.map((m) => (
             <option key={m.id} value={m.id}>
               {m.clientName} · {m.label}
             </option>
           ))}
-        </select>
-        <button className="rounded bg-slate-900 px-3 py-1 text-white">Ouvrir un CRA</button>
+        </Select>
+        <Button variant="primary">Ouvrir un CRA</Button>
       </form>
 
       {cras.map((cra) => (
-        <section key={cra.id} className="mb-6 rounded border p-4">
-          <div className="mb-3 flex items-center gap-3">
-            <h2 className="font-medium">
+        <Card key={cra.id} className="mb-6">
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <h2 className="text-lg">
               {cra.clientName} · {cra.missionLabel}
             </h2>
-            <span className="rounded bg-slate-100 px-2 py-0.5 text-xs">{cra.status}</span>
+            <StatusBadge status={cra.status} />
           </div>
 
-          <div className="mb-4 flex gap-2">
+          <div className="mb-4 flex flex-wrap gap-2">
             {ALL.filter((t) => canTransition(cra.status, t)).map((t) => (
               <form key={t} action={moveCra}>
                 <input type="hidden" name="craId" value={cra.id} />
                 <input type="hidden" name="transition" value={t} />
-                <button className="rounded border px-3 py-1 text-sm">{LABELS[t]}</button>
+                <Button variant={t === 'REFUSER' ? 'danger' : 'secondary'}>{LABELS[t]}</Button>
               </form>
             ))}
           </div>
 
           <form action={saveTracking} className="flex flex-wrap items-end gap-2">
             <input type="hidden" name="craId" value={cra.id} />
-            <label className="flex flex-col text-sm">
-              N° de facture
-              <input
-                name="invoiceNumber"
-                defaultValue={cra.invoiceNumber ?? ''}
-                className="rounded border px-2 py-1"
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              Facturé le
-              <input
-                name="invoicedAt"
-                type="date"
-                defaultValue={cra.invoicedAt?.toISOString().slice(0, 10) ?? ''}
-                className="rounded border px-2 py-1"
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              Payé le
-              <input
-                name="paidAt"
-                type="date"
-                defaultValue={cra.paidAt?.toISOString().slice(0, 10) ?? ''}
-                className="rounded border px-2 py-1"
-              />
-            </label>
-            <button className="rounded border px-3 py-1 text-sm">Enregistrer le suivi</button>
+            <Field label="N° de facture" name="invoiceNumber" defaultValue={cra.invoiceNumber ?? ''} />
+            <Field
+              label="Facturé le"
+              name="invoicedAt"
+              type="date"
+              defaultValue={cra.invoicedAt?.toISOString().slice(0, 10) ?? ''}
+            />
+            <Field
+              label="Payé le"
+              name="paidAt"
+              type="date"
+              defaultValue={cra.paidAt?.toISOString().slice(0, 10) ?? ''}
+            />
+            <Button>Enregistrer le suivi</Button>
           </form>
-          <p className="mt-2 text-xs text-slate-500">
+          <p className="mt-2 text-xs text-muted">
             Champs de suivi uniquement — l’application ne produit aucune facture.
           </p>
-        </section>
+        </Card>
       ))}
 
-      {cras.length === 0 && <p className="text-slate-500">Aucun CRA ouvert sur ce mois.</p>}
-    </main>
+      {cras.length === 0 && <p className="text-muted">Aucun CRA ouvert sur ce mois.</p>}
+    </PageShell>
   )
 }

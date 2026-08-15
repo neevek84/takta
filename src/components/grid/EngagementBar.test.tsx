@@ -81,6 +81,28 @@ describe('EngagementBar', () => {
     expect(texte()).toContain('15 réalisés')
   })
 
+  // Réalisé et prévisionnel se lisent en vision monochrome : le prévisionnel
+  // porte une hachure et un intitulé, pas seulement une teinte plus claire.
+  it('distingue le segment prévisionnel du réalisé sans la couleur', () => {
+    render(
+      <EngagementBar
+        line={line}
+        totals={[
+          { kind: 'REALISE', minutes: 480 * 18, minutesParJour: 480 },
+          { kind: 'PREVISIONNEL', minutes: 480 * 7, minutesParJour: 480 },
+        ]}
+      />,
+    )
+    const bandeau = screen.getByTestId('engagement-l1')
+    const prevu = bandeau.querySelector('[title="Prévisionnel"]')
+    const realise = bandeau.querySelector('[title="Réalisé"]')
+
+    expect(realise).not.toBeNull()
+    expect(prevu).not.toBeNull()
+    expect(prevu!.className).toContain('pattern-hatch')
+    expect(realise!.className).not.toContain('pattern-hatch')
+  })
+
   // TROU (lot 1d) — comblé : le gel du facteur de conversion à l'écriture est
   // effectif dans computeEngagement et charge.ts, mais ne l'était pas ici. Le
   // bandeau reconvertissait des minutes brutes avec le facteur *courant* de la

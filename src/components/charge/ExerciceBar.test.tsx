@@ -50,6 +50,19 @@ describe('ExerciceBar', () => {
     expect(screen.getByText(/dépassé/i)).toBeDefined()
   })
 
+  // La barre d'exercice porte la même distinction que le reste : le
+  // prévisionnel se hachure, il ne se contente pas d'être plus clair.
+  it('distingue le segment prévisionnel du réalisé sans la couleur', () => {
+    render(<ExerciceBar label="Exercice 2026-2027" progress={base} resteEnJoursCentiemes={null} />)
+    const realise = screen.getByTestId('bar-realise')
+    const prevu = screen.getByTestId('bar-prevu')
+
+    expect(prevu.className).toContain('pattern-hatch')
+    expect(realise.className).not.toContain('pattern-hatch')
+    expect(prevu.getAttribute('title')).toContain('révisionnel')
+    expect(realise.getAttribute('title')).toContain('éalisé')
+  })
+
   // Constat revue C.2 — objectif 10 000 €, réalisé 9 000 € (90 %), prévu
   // 3 000 € (30 %) : la somme des deux segments (120 %) ne doit jamais
   // dépasser 100 % de largeur, sous peine de laisser le flexbox comprimer

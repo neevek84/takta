@@ -6,6 +6,13 @@ import type { AppSettings } from '@/services/settings'
 import { ENGAGEMENT_SOURCES } from '@/services/settings'
 import { crossesMidnight, slotDurationMinutes, type Slot } from '@/core/time/slots'
 import { DISPLAY_UNITS } from '@/core/types'
+import { Card } from '@/components/ui/Card'
+import { Field } from '@/components/ui/Field'
+import { Select } from '@/components/ui/Select'
+import { Checkbox } from '@/components/ui/Checkbox'
+import { Button } from '@/components/ui/Button'
+import { Banner } from '@/components/ui/Banner'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 
 const JOURS = [
   { value: 1, label: 'Lundi' },
@@ -119,260 +126,251 @@ export function SettingsForm({
     <>
     <form action={formAction} className="flex flex-col gap-6">
       {state && !state.ok && (
-        <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <Banner tone="danger">
           <p className="font-medium">Les réglages n’ont pas été enregistrés :</p>
           <ul className="mt-1 list-disc pl-5">
             {state.errors.map((e) => (
               <li key={e}>{e}</li>
             ))}
           </ul>
-        </div>
+        </Banner>
       )}
-      {state?.ok && (
-        <p className="rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-800">
-          Réglages enregistrés.
-        </p>
-      )}
+      {state?.ok && <Banner tone="success">Réglages enregistrés.</Banner>}
 
-      <fieldset>
-        <legend className="mb-2 font-medium">Durée d’une journée</legend>
-        <div className="flex items-center gap-2">
-          <input
-            name="heures"
-            type="number"
-            min={1}
-            max={24}
-            required
-            defaultValue={Math.floor(settings.minutesParJour / 60)}
-            className="w-20 rounded border px-2 py-1"
-          />
-          <span>h</span>
-          <input
-            name="minutes"
-            type="number"
-            min={0}
-            max={59}
-            required
-            defaultValue={settings.minutesParJour % 60}
-            className="w-20 rounded border px-2 py-1"
-          />
-          <span className="text-sm text-slate-500">min</span>
-        </div>
-      </fieldset>
+      <Card>
+        <fieldset>
+          <legend className="mb-2 font-medium">Durée d’une journée</legend>
+          <div className="flex flex-wrap items-end gap-2">
+            <Field
+              label="Heures"
+              name="heures"
+              type="number"
+              min={1}
+              max={24}
+              required
+              defaultValue={Math.floor(settings.minutesParJour / 60)}
+              className="w-20"
+            />
+            <Field
+              label="Minutes"
+              name="minutes"
+              type="number"
+              min={0}
+              max={59}
+              required
+              defaultValue={settings.minutesParJour % 60}
+              className="w-20"
+            />
+          </div>
+        </fieldset>
+      </Card>
 
-      <fieldset>
-        <legend className="mb-2 font-medium">Contrôle de capacité</legend>
-        <select
-          name="capacityMode"
-          defaultValue={settings.capacityMode}
-          className="rounded border px-2 py-1"
-        >
-          <option value="DESACTIVE">Désactivé</option>
-          <option value="AVERTISSEMENT">Avertissement</option>
-          <option value="BLOCAGE">Blocage</option>
-        </select>
-        <label className="ml-4 inline-flex items-center gap-2">
-          <span className="text-sm">Seuil</span>
-          <input
-            name="capaciteJours"
-            type="number"
-            step="0.5"
-            min="0.5"
-            required
-            defaultValue={settings.capacityCentiemes / 100}
-            className="w-20 rounded border px-2 py-1"
-          />
-          <span className="text-sm text-slate-500">jour(s)</span>
-        </label>
-      </fieldset>
+      <Card>
+        <fieldset>
+          <legend className="mb-2 font-medium">Contrôle de capacité</legend>
+          <div className="flex flex-wrap items-end gap-4">
+            <Select label="Mode" name="capacityMode" defaultValue={settings.capacityMode}>
+              <option value="DESACTIVE">Désactivé</option>
+              <option value="AVERTISSEMENT">Avertissement</option>
+              <option value="BLOCAGE">Blocage</option>
+            </Select>
+            <Field
+              label="Seuil (jour(s))"
+              name="capaciteJours"
+              type="number"
+              step="0.5"
+              min="0.5"
+              required
+              defaultValue={settings.capacityCentiemes / 100}
+              className="w-24"
+            />
+          </div>
+        </fieldset>
+      </Card>
 
-      <fieldset>
-        <legend className="mb-2 font-medium">Jours ouvrés</legend>
-        <div className="flex flex-wrap gap-3">
-          {JOURS.map((j) => (
-            <label key={j.value} className="inline-flex items-center gap-1">
-              <input
-                type="checkbox"
+      <Card>
+        <fieldset>
+          <legend className="mb-2 font-medium">Jours ouvrés</legend>
+          <div className="flex flex-wrap gap-3">
+            {JOURS.map((j) => (
+              <Checkbox
+                key={j.value}
                 name="workingDays"
                 value={j.value}
                 defaultChecked={settings.workingDays.includes(j.value)}
+                label={j.label}
               />
-              <span className="text-sm">{j.label}</span>
-            </label>
-          ))}
-        </div>
-        <p className="mt-2 text-sm text-slate-500">
-          Les autres jours restent saisissables ; ils sont seulement grisés.
-        </p>
-      </fieldset>
+            ))}
+          </div>
+          <p className="mt-2 text-sm text-muted">
+            Les autres jours restent saisissables ; ils sont seulement grisés.
+          </p>
+        </fieldset>
+      </Card>
 
-      <fieldset>
-        <legend className="mb-2 font-medium">Créneaux</legend>
-        <p className="mb-2 text-sm text-slate-500">
-          Libellé, plage horaire et valeur (en jours) de chaque créneau. Un créneau peut
-          franchir minuit : indiquez une heure de fin antérieure à l’heure de début (ex. Nuit
-          22:00 → 06:00).
-        </p>
-        <div className="flex flex-col gap-2">
-          {rows.map((row) => {
-            const startMinute = timeInputToMinutes(row.start)
-            const endMinute = timeInputToMinutes(row.end)
-            const parsedSlot: Slot | null =
-              Number.isFinite(startMinute) && Number.isFinite(endMinute)
-                ? { id: row.id, label: row.label, startMinute, endMinute, centiemes: 0 }
-                : null
-            const crosses = parsedSlot ? crossesMidnight(parsedSlot) : false
+      <Card>
+        <fieldset>
+          <legend className="mb-2 font-medium">Créneaux</legend>
+          <p className="mb-2 text-sm text-muted">
+            Libellé, plage horaire et valeur (en jours) de chaque créneau. Un créneau peut
+            franchir minuit : indiquez une heure de fin antérieure à l’heure de début (ex. Nuit
+            22:00 → 06:00).
+          </p>
+          <div className="flex flex-col gap-2">
+            {rows.map((row) => {
+              const startMinute = timeInputToMinutes(row.start)
+              const endMinute = timeInputToMinutes(row.end)
+              const parsedSlot: Slot | null =
+                Number.isFinite(startMinute) && Number.isFinite(endMinute)
+                  ? { id: row.id, label: row.label, startMinute, endMinute, centiemes: 0 }
+                  : null
+              const crosses = parsedSlot ? crossesMidnight(parsedSlot) : false
 
-            return (
-              <div key={row.key} className="flex flex-wrap items-center gap-2 rounded border p-2">
-                <input
-                  type="text"
-                  placeholder="identifiant"
-                  required
-                  value={row.id}
-                  onChange={(e) => updateRow(row.key, { id: e.target.value })}
-                  className="w-28 rounded border px-2 py-1 text-sm"
-                />
-                <input
-                  type="text"
-                  placeholder="libellé"
-                  required
-                  value={row.label}
-                  onChange={(e) => updateRow(row.key, { label: e.target.value })}
-                  className="w-32 rounded border px-2 py-1 text-sm"
-                />
-                <input
-                  type="time"
-                  required
-                  value={row.start}
-                  onChange={(e) => updateRow(row.key, { start: e.target.value })}
-                  className="rounded border px-2 py-1 text-sm"
-                />
-                <span className="text-sm text-slate-500">→</span>
-                <input
-                  type="time"
-                  required
-                  value={row.end}
-                  onChange={(e) => updateRow(row.key, { end: e.target.value })}
-                  className="rounded border px-2 py-1 text-sm"
-                />
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  required
-                  placeholder="valeur"
-                  value={row.value}
-                  onChange={(e) => updateRow(row.key, { value: e.target.value })}
-                  className="w-24 rounded border px-2 py-1 text-sm"
-                />
-                <span className="text-sm text-slate-500">j</span>
-                {crosses && parsedSlot && (
-                  <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                    franchit minuit · {(slotDurationMinutes(parsedSlot) / 60).toFixed(1)} h
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => removeRow(row.key)}
-                  className="ml-auto rounded border px-2 py-1 text-xs text-red-700"
+              return (
+                <div
+                  key={row.key}
+                  className="flex flex-wrap items-end gap-2 rounded-md border border-rule p-2"
                 >
-                  Retirer
-                </button>
-              </div>
-            )
-          })}
-        </div>
-        <button type="button" onClick={addRow} className="mt-2 rounded border px-3 py-1 text-sm">
-          Ajouter un créneau
-        </button>
-        <input type="hidden" name="slotsJson" value={slotsPayload} readOnly />
-      </fieldset>
+                  <Field
+                    label="Identifiant"
+                    required
+                    value={row.id}
+                    onChange={(e) => updateRow(row.key, { id: e.target.value })}
+                    className="w-28"
+                  />
+                  <Field
+                    label="Libellé"
+                    required
+                    value={row.label}
+                    onChange={(e) => updateRow(row.key, { label: e.target.value })}
+                    className="w-32"
+                  />
+                  <Field
+                    label="Début"
+                    type="time"
+                    required
+                    value={row.start}
+                    onChange={(e) => updateRow(row.key, { start: e.target.value })}
+                  />
+                  <span className="self-center text-sm text-muted">→</span>
+                  <Field
+                    label="Fin"
+                    type="time"
+                    required
+                    value={row.end}
+                    onChange={(e) => updateRow(row.key, { end: e.target.value })}
+                  />
+                  <Field
+                    label="Valeur (j)"
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    value={row.value}
+                    onChange={(e) => updateRow(row.key, { value: e.target.value })}
+                    className="w-24"
+                  />
+                  {crosses && parsedSlot && (
+                    <span className="self-center rounded-md bg-off px-2 py-0.5 text-xs text-muted">
+                      franchit minuit · {(slotDurationMinutes(parsedSlot) / 60).toFixed(1)} h
+                    </span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="danger"
+                    onClick={() => removeRow(row.key)}
+                    className="ml-auto"
+                  >
+                    Retirer
+                  </Button>
+                </div>
+              )
+            })}
+          </div>
+          <Button type="button" variant="secondary" onClick={addRow} className="mt-2">
+            Ajouter un créneau
+          </Button>
+          <input type="hidden" name="slotsJson" value={slotsPayload} readOnly />
+        </fieldset>
+      </Card>
 
-      <fieldset>
-        <legend className="mb-2 font-medium">Unité d’affichage par défaut des nouvelles lignes</legend>
-        <select
-          name="defaultDisplayUnit"
-          defaultValue={settings.defaultDisplayUnit}
-          className="rounded border px-2 py-1"
-        >
-          {DISPLAY_UNITS.map((u) => (
-            <option key={u} value={u}>
-              {DISPLAY_UNIT_LABELS[u]}
-            </option>
-          ))}
-        </select>
-      </fieldset>
+      <Card>
+        <fieldset>
+          <legend className="mb-2 font-medium">Unité d’affichage par défaut des nouvelles lignes</legend>
+          <Select label="Unité" name="defaultDisplayUnit" defaultValue={settings.defaultDisplayUnit}>
+            {DISPLAY_UNITS.map((u) => (
+              <option key={u} value={u}>
+                {DISPLAY_UNIT_LABELS[u]}
+              </option>
+            ))}
+          </Select>
+        </fieldset>
+      </Card>
 
-      <fieldset>
-        <legend className="mb-2 font-medium">Source d’engagement par défaut</legend>
-        <select
-          name="defaultEngagementSource"
-          defaultValue={settings.defaultEngagementSource}
-          className="rounded border px-2 py-1"
-        >
-          {ENGAGEMENT_SOURCES.map((s) => (
-            <option key={s} value={s}>
-              {ENGAGEMENT_SOURCE_LABELS[s]}
-            </option>
-          ))}
-        </select>
-        <p className="mt-2 text-sm text-slate-500">
-          Ce réglage ne fixe qu’un défaut ; chaque ligne de prestation peut le surcharger.
-        </p>
-      </fieldset>
-
-      <fieldset className="border-t pt-4">
-        <legend className="mb-2 font-medium">Exercice</legend>
-
-        <label className="mb-3 flex flex-col text-sm">
-          Mois de début d’exercice
-          <select
-            name="debutExerciceMois"
-            defaultValue={String(settings.debutExerciceMois)}
-            className="w-48 rounded border px-2 py-1"
+      <Card>
+        <fieldset>
+          <legend className="mb-2 font-medium">Source d’engagement par défaut</legend>
+          <Select
+            label="Source"
+            name="defaultEngagementSource"
+            defaultValue={settings.defaultEngagementSource}
           >
-            {['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
-              .map((label, i) => (
-                <option key={label} value={i + 1}>{label}</option>
-              ))}
-          </select>
-        </label>
+            {ENGAGEMENT_SOURCES.map((s) => (
+              <option key={s} value={s}>
+                {ENGAGEMENT_SOURCE_LABELS[s]}
+              </option>
+            ))}
+          </Select>
+          <p className="mt-2 text-sm text-muted">
+            Ce réglage ne fixe qu’un défaut ; chaque ligne de prestation peut le surcharger.
+          </p>
+        </fieldset>
+      </Card>
 
-        <label className="flex flex-col text-sm">
-          Objectif de chiffre d’affaires sur l’exercice (€)
-          <input
-            name="objectifCaEuros"
-            type="number"
-            min="0"
-            step="100"
-            defaultValue={settings.objectifCaExerciceCents / 100}
-            className="w-48 rounded border px-2 py-1"
-          />
-          <span className="mt-1 text-xs text-slate-500">
-            0 masque la barre d’exercice sur le plan de charge.
-          </span>
-        </label>
-      </fieldset>
+      <Card>
+        <fieldset>
+          <legend className="mb-2 font-medium">Exercice</legend>
+          <div className="flex flex-wrap gap-4">
+            <Select
+              label="Mois de début d’exercice"
+              name="debutExerciceMois"
+              defaultValue={String(settings.debutExerciceMois)}
+              className="w-48"
+            >
+              {['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
+                .map((label, i) => (
+                  <option key={label} value={i + 1}>{label}</option>
+                ))}
+            </Select>
 
-      <button
-        type="submit"
-        disabled={pending}
-        className="self-start rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-50"
-      >
+            <Field
+              label="Objectif de chiffre d’affaires sur l’exercice (€)"
+              name="objectifCaEuros"
+              type="number"
+              min="0"
+              step="100"
+              defaultValue={settings.objectifCaExerciceCents / 100}
+              hint="0 masque la barre d’exercice sur le plan de charge."
+              className="w-48"
+            />
+          </div>
+        </fieldset>
+      </Card>
+
+      <Button type="submit" variant="primary" disabled={pending} className="self-start">
         {pending ? 'Enregistrement…' : 'Enregistrer'}
-      </button>
+      </Button>
     </form>
 
-    <section className="border-t pt-4">
+    <Card className="mt-8">
       <h2 className="mb-2 font-medium">Réétalonnage</h2>
       {preview.concernees === 0 && preview.verrouillees === 0 ? (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-muted">
           Toutes les saisies utilisent déjà la durée de journée en vigueur.
         </p>
       ) : (
         <>
-          <p className="mb-2 text-sm text-slate-600">
+          <p className="mb-2 text-sm text-muted">
             {preview.concernees} saisie(s) d’un mois ouvert utilisent une durée de journée
             différente de celle en vigueur.
             {preview.verrouillees > 0 && (
@@ -381,19 +379,19 @@ export function SettingsForm({
             )}
           </p>
           {preview.concernees > 0 && (
-            <form
+            <ConfirmDialog
+              trigger={`Réétalonner les ${preview.concernees} saisie(s)`}
+              title="Réétalonner les saisies des mois ouverts"
+              message={`${preview.concernees} saisie(s) vont adopter la durée de journée en vigueur. Les saisies des mois validés ne sont jamais modifiées.`}
+              confirmLabel="Réétalonner"
               action={async () => {
                 await lancerReetalonnage()
               }}
-            >
-              <button className="rounded border px-3 py-1 text-sm">
-                Réétalonner les {preview.concernees} saisie(s)
-              </button>
-            </form>
+            />
           )}
         </>
       )}
-    </section>
+    </Card>
     </>
   )
 }

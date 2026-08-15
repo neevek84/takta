@@ -32,18 +32,28 @@ export function EngagementBar({
 
   return (
     <div data-testid={`engagement-${line.id}`} className="flex items-center gap-3 text-xs">
-      <div className="h-2 w-40 overflow-hidden rounded bg-slate-200">
+      <div className="h-2 w-40 overflow-hidden rounded-sm bg-off-strong">
+        {/* Le prévisionnel se hachure : la teinte plus claire seule ne le
+            distinguerait pas du réalisé en vision monochrome. */}
         <div className="flex h-full">
-          <div className="bg-slate-800" style={{ width: `${pct(e.realiseCentiemes)}%` }} />
-          <div className="bg-slate-400" style={{ width: `${pct(e.prevuCentiemes)}%` }} />
+          <div
+            title="Réalisé"
+            className="bg-accent"
+            style={{ width: `${pct(e.realiseCentiemes)}%` }}
+          />
+          <div
+            title="Prévisionnel"
+            className="bg-accent/45 pattern-hatch"
+            style={{ width: `${pct(e.prevuCentiemes)}%` }}
+          />
         </div>
       </div>
-      <span className="text-slate-600">
+      <span className="text-muted">
         {e.venduCentiemes / 100} vendus · {e.realiseCentiemes / 100} réalisés ·{' '}
         {e.prevuCentiemes / 100} prévus · {e.resteCentiemes / 100} restants
       </span>
       {e.depassementCentiemes > 0 && (
-        <span className="text-amber-600">dépassement de {e.depassementCentiemes / 100} j</span>
+        <span className="text-warning-ink">dépassement de {e.depassementCentiemes / 100} j</span>
       )}
     </div>
   )

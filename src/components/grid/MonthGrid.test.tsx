@@ -88,14 +88,76 @@ describe('MonthGrid', () => {
     renderGrid()
     // 2026-03-01 est un dimanche
     const header = screen.getByTestId('day-header-2026-03-01')
-    expect(header.className).toContain('bg-slate-100')
+    expect(header.className).toContain('bg-off')
+    expect(header.getAttribute('data-jour')).toBe('weekend')
   })
 
   it('signale le dépassement de capacité sur la ligne de totaux', () => {
     renderGrid()
     // 480 + 240 = 720 > 480
     const total = screen.getByTestId('total-2026-03-12')
-    expect(total.className).toContain('text-red-600')
+    expect(total.className).toContain('text-danger-ink')
+    expect(total.getAttribute('data-depassement')).toBe('true')
+  })
+
+  // Six états sur une même cellule, et aucun porté par la seule couleur.
+  describe('états de la cellule, distinguables sans la couleur', () => {
+    const joursAvecFerie = buildMonthDays('2026-03', [1, 2, 3, 4, 5], ['2026-03-02'])
+
+    it('distingue ouvré, week-end et férié par un attribut et un motif', () => {
+      renderGrid({ days: joursAvecFerie })
+
+      const ouvre = screen.getByTestId('day-header-2026-03-03')
+      const weekend = screen.getByTestId('day-header-2026-03-01')
+      const ferie = screen.getByTestId('day-header-2026-03-02')
+
+      expect(ouvre.getAttribute('data-jour')).toBe('ouvre')
+      expect(weekend.getAttribute('data-jour')).toBe('weekend')
+      expect(ferie.getAttribute('data-jour')).toBe('ferie')
+
+      // Le motif porte l'information là où la teinte ne suffit pas.
+      expect(ouvre.className).not.toMatch(/pattern-/)
+      expect(weekend.className).toContain('pattern-stripes')
+      expect(ferie.className).toContain('pattern-dots')
+    })
+
+    it('nomme le férié autrement que par sa teinte', () => {
+      renderGrid({ days: joursAvecFerie })
+      expect(screen.getByTestId('day-header-2026-03-02').getAttribute('title')).toContain('érié')
+    })
+
+    it('distingue réalisé, prévisionnel et vide sur la saisie', () => {
+      renderGrid({
+        entries: [
+          { id: 'r', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
+          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', minutesParJour: 480 },
+        ],
+      })
+
+      const realise = cell('Consultant ITSM', '2026-03-12')
+      const prevu = cell('Consultant ITSM', '2026-03-13')
+      const vide = cell('Consultant ITSM', '2026-03-16')
+
+      expect(realise.getAttribute('data-saisie')).toBe('realise')
+      expect(prevu.getAttribute('data-saisie')).toBe('previsionnel')
+      expect(vide.getAttribute('data-saisie')).toBe('vide')
+
+      // Hachures et italique : le prévisionnel se lit en vision monochrome.
+      expect(prevu.className).toContain('pattern-hatch')
+      expect(prevu.className).toContain('italic')
+      expect(realise.className).not.toContain('pattern-hatch')
+    })
+
+    it('offre des cellules de 44 points', () => {
+      renderGrid()
+      expect(cell('Consultant ITSM', '2026-03-12').className).toContain('touch-target')
+    })
+
+    it('ne supprime pas l anneau de focus', () => {
+      renderGrid()
+      // `outline-none` sans remplacement rendrait la grille inutilisable au clavier.
+      expect(cell('Consultant ITSM', '2026-03-12').className).not.toContain('outline-none')
+    })
   })
 
   it('affiche le bandeau d engagement par ligne', () => {

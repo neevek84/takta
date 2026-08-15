@@ -19,19 +19,26 @@ export function TotalsRow({
   const totals = dailyTotals(entries)
 
   return (
-    <tr className="border-t-2 font-medium">
-      <th scope="row" className="sticky left-0 bg-white px-2 py-1 text-left text-sm">
+    <tr className="border-t-2 border-rule font-medium">
+      <th scope="row" className="sticky left-0 bg-surface px-2 py-1 text-left text-sm">
         Total
       </th>
       {days.map((d) => {
         const minutes = totals.get(d.date) ?? 0
         const over = capacityMinutes > 0 && minutes > capacityMinutes
         return (
+          // Le dépassement porte trois signaux — teinte, graisse soulignée et
+          // glyphe — dont deux survivent à une vision monochrome.
           <td
             key={d.date}
             data-testid={`total-${d.date}`}
-            className={`px-1 py-1 text-center text-xs ${over ? 'text-red-600' : 'text-slate-600'}`}
+            data-depassement={over ? 'true' : 'false'}
+            title={over ? 'Capacité dépassée' : undefined}
+            className={`px-1 py-1 text-center text-xs ${
+              over ? 'font-bold text-danger-ink underline decoration-2' : 'text-muted'
+            }`}
           >
+            {over && <span aria-hidden="true">! </span>}
             {formatQuantity(minutes, 'JOUR', minutesParJour)}
           </td>
         )

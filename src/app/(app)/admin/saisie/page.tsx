@@ -3,6 +3,9 @@ import { getSettings } from '@/services/settings'
 import { previewRecalibration } from '@/services/rates'
 import { reloadHolidays } from './actions'
 import { SettingsForm } from './SettingsForm'
+import { PageShell } from '@/components/ui/PageShell'
+import { Card } from '@/components/ui/Card'
+import { Button } from '@/components/ui/Button'
 
 export default async function AdminSaisiePage() {
   const user = await requireUser()
@@ -10,23 +13,21 @@ export default async function AdminSaisiePage() {
   const preview = await previewRecalibration(user.id)
 
   return (
-    <main className="mx-auto max-w-2xl p-6">
-      <h1 className="mb-6 text-xl font-semibold">Administration · Saisie</h1>
-
+    <PageShell title="Administration · Saisie">
       <SettingsForm settings={s} preview={preview} />
 
-      <section className="mt-8 border-t pt-4">
+      <Card className="mt-8">
         <h2 className="mb-2 font-medium">Jours fériés</h2>
-        <p className="mb-2 text-sm text-slate-600">
+        <p className="mb-2 text-sm text-muted">
           {s.holidays.length} jour(s) férié(s) enregistré(s). Ils sont grisés dans la grille
           mais restent saisissables.
         </p>
         <form action={reloadHolidays}>
-          <button className="rounded border px-3 py-1 text-sm">
+          <Button type="submit" variant="secondary">
             Charger les fériés français (année précédente à N+2)
-          </button>
+          </Button>
         </form>
-      </section>
-    </main>
+      </Card>
+    </PageShell>
   )
 }

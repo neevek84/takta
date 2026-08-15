@@ -70,6 +70,43 @@ describe('ChargeTable', () => {
     expect(emptyCell.textContent).toBe('')
   })
 
+  // Le prévisionnel se distingue du réalisé sans recourir à la teinte — et
+  // sans rien ajouter au texte, que les deux assertions ci-dessus comparent
+  // au caractère près.
+  it('distingue le prévisionnel du réalisé sans la couleur ni le texte', () => {
+    const matrix = buildMatrix({
+      rows: [
+        {
+          lineId: 'l1',
+          label: 'ACME · ITSM · Consultant',
+          tjmCents: 50_000,
+          cells: [
+            { realiseCentiemes: 200, prevuCentiemes: 100 },
+            { realiseCentiemes: 0, prevuCentiemes: 0 },
+          ],
+          engagement: {
+            venduCentiemes: 1000,
+            realiseCentiemes: 200,
+            prevuCentiemes: 100,
+            resteCentiemes: 700,
+            depassementCentiemes: 0,
+          },
+          resteAVendreCents: 350_000,
+        },
+      ],
+    })
+    render(<ChargeTable matrix={matrix} />)
+    const cell = screen.getByTestId('cell-l1-2026-01')
+
+    const prevu = cell.querySelector('[title="Prévisionnel"]')
+    expect(prevu).not.toBeNull()
+    expect(prevu!.className).toContain('pattern-hatch')
+    expect(prevu!.className).toContain('italic')
+
+    // Le marqueur reste hors du DOM textuel : le texte de la cellule ne bouge pas.
+    expect(cell.textContent).toBe('2 + 1')
+  })
+
   // Constat revue C.3 — la marge « Reste à planifier » doit utiliser le
   // même helper `jours()` (virgule française) que le reste du tableau,
   // pas une division brute qui laisse passer le point décimal JS.

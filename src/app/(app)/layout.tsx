@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { requireUser, signOut } from '@/auth'
+import { Button } from '@/components/ui/Button'
 
 const LIENS = [
   { href: '/saisie', label: 'Saisie' },
@@ -21,24 +22,24 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b border-slate-200 bg-slate-50">
+      <header className="border-b border-rule bg-surface">
         <nav className="mx-auto flex max-w-4xl items-center justify-between px-6 py-3">
           <ul className="flex gap-4 text-sm font-medium">
             {LIENS.map((lien) => (
               <li key={lien.href}>
-                <Link href={lien.href} className="text-slate-700 hover:text-slate-900 hover:underline">
+                <Link
+                  href={lien.href}
+                  className="touch-target inline-flex items-center px-2 text-ink hover:text-link hover:underline"
+                >
                   {lien.label}
                 </Link>
               </li>
             ))}
           </ul>
           <form action={handleSignOut}>
-            <button
-              type="submit"
-              className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100"
-            >
+            <Button variant="secondary" type="submit">
               Se déconnecter
-            </button>
+            </Button>
           </form>
         </nav>
       </header>
