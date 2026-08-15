@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { readdirSync, readFileSync, statSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { join, isAbsolute } from 'node:path'
+import { tmpdir } from 'node:os'
 import { contrastRatio, relativeLuminance, AA_TEXT_RATIO, NON_TEXT_RATIO } from './contrast'
 import {
   THEME_TOKEN_KEYS,
@@ -12,6 +13,8 @@ import {
   TEXT_PAIRS,
   NON_TEXT_PAIRS,
   MIN_LUMINANCE_GAP,
+  FONDS_DE_TEXTE,
+  ENCRES_ETAT,
   findContrastIssues,
   describeContrastIssue,
   type ThemeTokens,
@@ -73,8 +76,11 @@ const COUPLES_TEXTE_ATTENDUS = [
   'link/page', 'link/surface', 'link/off',
   'onAccent/accent', 'onDark/inkDeep',
   'successInk/success', 'successInk/successEdge', 'successInk/page', 'successInk/surface',
+  'successInk/off', 'successInk/offStrong',
   'warningInk/warning', 'warningInk/warningEdge', 'warningInk/page', 'warningInk/surface',
+  'warningInk/off', 'warningInk/offStrong',
   'dangerInk/danger', 'dangerInk/dangerEdge', 'dangerInk/page', 'dangerInk/surface',
+  'dangerInk/off', 'dangerInk/offStrong',
   'infoInk/info', 'infoInk/infoEdge', 'infoInk/page', 'infoInk/surface',
 ]
 
@@ -299,6 +305,31 @@ describe('lisibilité monochrome des fonds de grille', () => {
  * c'est un filet, pas une preuve. Le contrôle par jeton qui suit couvre en
  * partie cet angle mort, en exigeant que toute encre et tout fond de texte
  * employés quelque part figurent dans la liste.
+ *
+ * Angle mort refermé pour partie : une encre posée **seule** — sans `bg-*`
+ * dans le même littéral — hérite du fond de son parent, et le balayage ci-
+ * dessus ne formait alors aucun couple. C'est ainsi que `warningInk` sur
+ * `off`/`offStrong` (`ChargeTable`, `EngagementBar`) est resté hors du filet.
+ * Pour `ENCRES_ETAT` — les quatre encres pensées pour signaler un état
+ * n'importe où dans l'interface, sans chrome dédié qui porterait toujours son
+ * propre fond — une encre trouvée sans fond est confrontée aux quatre
+ * `FONDS_DE_TEXTE` plutôt que de ne former aucun couple.
+ *
+ * Ce que ce filet-là ne couvre toujours pas :
+ * - une encre d'état héritant d'un fond hors de `FONDS_DE_TEXTE` (un
+ *   `warningInk` bare glissé dans un `bg-danger`, par exemple) : le fond de
+ *   remplacement suppose l'un des quatre fonds de texte courants, pas un fond
+ *   d'état voisin ;
+ * - `ink`, `muted`, `link`, `onAccent`, `onDark` posés seuls : `ink`/`muted`
+ *   sont déjà exigées sur les quatre `FONDS_DE_TEXTE` par construction, mais
+ *   `link` en particulier reste hors filet — son unique fond manquant,
+ *   `offStrong`, échoue à 4,28:1 sur KreativPM, et l'exiger malgré son
+ *   invariant documenté (aucune classe ne le rend sur les fériés)
+ *   assombrirait un jeton pour un usage que l'interface ne produit pas ;
+ * - un composant futur qui poserait une nouvelle encre d'état seule sur un
+ *   cinquième fond non listé ici (`accentDark`, par exemple) resterait
+ *   silencieux tant que ce fond n'a pas d'usage en `text-*` ailleurs, faute
+ *   d'appartenir à `FONDS_DE_TEXTE`.
  */
 const RACINES_BALAYEES = ['src/components', 'src/app']
 
@@ -325,7 +356,11 @@ interface UsageJetons {
   fonds: Map<keyof ThemeTokens, string>
 }
 
-function releverUsages(): UsageJetons {
+// `racines` accepte des chemins absolus (le test de mutation ci-dessous y
+// pointe un dossier temporaire) aussi bien que les chemins relatifs au dépôt
+// utilisés par défaut — `join(process.cwd(), racine)` laisserait passer un
+// chemin déjà absolu tel quel, mais ne le résoudrait pas correctement.
+function releverUsages(racines: readonly string[] = RACINES_BALAYEES): UsageJetons {
   const parClasse = new Map<string, keyof ThemeTokens>(
     THEME_TOKEN_KEYS.map((k) => [k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`), k]),
   )
@@ -334,11 +369,13 @@ function releverUsages(): UsageJetons {
   // Le `/` exclu en fin de classe écarte les opacités (`bg-accent/45`), qui
   // ne sont pas des couleurs opaques et échappent par nature à ce contrôle.
   const motif = new RegExp(`(?:^|[\\s:])(text|bg)-(${alternance})(?![a-z0-9-/])`, 'g')
+  const encresEtat = new Set<keyof ThemeTokens>(ENCRES_ETAT)
 
   const usages: UsageJetons = { couples: new Map(), encres: new Map(), fonds: new Map() }
 
-  for (const racine of RACINES_BALAYEES) {
-    for (const fichier of fichiersRendus(join(process.cwd(), racine))) {
+  for (const racine of racines) {
+    const dossier = isAbsolute(racine) ? racine : join(process.cwd(), racine)
+    for (const fichier of fichiersRendus(dossier)) {
       const contenu = readFileSync(fichier, 'utf8')
       // Découpage aux frontières de littéraux et d'interpolations : ce qui
       // reste est une suite ininterrompue de classes.
@@ -351,10 +388,26 @@ function releverUsages(): UsageJetons {
         }
         for (const e of encres) if (!usages.encres.has(e)) usages.encres.set(e, racine)
         for (const f of fonds) if (!usages.fonds.has(f)) usages.fonds.set(f, racine)
-        for (const e of encres) {
-          for (const f of fonds) {
-            const cle = `${e}/${f}`
-            if (!usages.couples.has(cle)) usages.couples.set(cle, fichier)
+
+        if (fonds.length > 0) {
+          for (const e of encres) {
+            for (const f of fonds) {
+              const cle = `${e}/${f}`
+              if (!usages.couples.has(cle)) usages.couples.set(cle, fichier)
+            }
+          }
+        } else {
+          // Angle mort : une encre posée seule hérite du fond de son parent,
+          // et ce littéral n'en dit rien. Pour les encres d'état, on la
+          // confronte aux quatre fonds de texte possibles plutôt que de ne
+          // former aucun couple — voir le commentaire au-dessus de cette
+          // fonction pour ce que cela ne couvre toujours pas.
+          for (const e of encres) {
+            if (!encresEtat.has(e)) continue
+            for (const f of FONDS_DE_TEXTE) {
+              const cle = `${e}/${f}`
+              if (!usages.couples.has(cle)) usages.couples.set(cle, fichier)
+            }
           }
         }
       }
@@ -387,5 +440,67 @@ describe('la liste des couples suit ce que l’interface rend', () => {
   it('ne pose aucun fond de texte dont TEXT_PAIRS ne parle pas', () => {
     const fonds = new Set(TEXT_PAIRS.map((p) => p.background))
     expect([...usages.fonds.keys()].filter((k) => !fonds.has(k))).toEqual([])
+  })
+})
+
+/**
+ * Preuve de la brèche et de son correctif, isolée du dépôt réel : un dossier
+ * temporaire porte un unique composant posant `text-info-ink` seul, sans
+ * `bg-*` dans le même littéral — exactement la forme de `ChargeTable.tsx` et
+ * `EngagementBar.tsx` avec `warningInk`. `infoInk` est choisi ici parce que
+ * ses couples sur `off`/`offStrong` ne sont délibérément pas dans TEXT_PAIRS
+ * (aucune classe réelle ne les rend) : le test peut donc affirmer, sans
+ * ambiguïté, que l'ancien algorithme ne voyait rien là où le nouveau détecte
+ * deux couples précis.
+ */
+describe('l’angle mort d’une encre posée sans fond', () => {
+  let dir: string
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'tokens-scan-'))
+    writeFileSync(
+      join(dir, 'Fixture.tsx'),
+      'export function Fixture() {\n  return <span className="text-info-ink">dépassement</span>\n}\n',
+    )
+  })
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('l’ancien algorithme — encres et fonds du seul littéral — ne formait aucun couple', () => {
+    const parClasse = new Map<string, keyof ThemeTokens>(
+      THEME_TOKEN_KEYS.map((k) => [k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`), k]),
+    )
+    const alternance = [...parClasse.keys()].sort((a, b) => b.length - a.length).join('|')
+    const motif = new RegExp(`(?:^|[\\s:])(text|bg)-(${alternance})(?![a-z0-9-/])`, 'g')
+    const couples = new Set<string>()
+    for (const fichier of fichiersRendus(dir)) {
+      const contenu = readFileSync(fichier, 'utf8')
+      for (const morceau of contenu.split(/[`'"\n]|\$\{|\}/)) {
+        const encres: (keyof ThemeTokens)[] = []
+        const fonds: (keyof ThemeTokens)[] = []
+        for (const m of morceau.matchAll(motif)) {
+          const jeton = parClasse.get(m[2]!)!
+          ;(m[1] === 'text' ? encres : fonds).push(jeton)
+        }
+        for (const e of encres) for (const f of fonds) couples.add(`${e}/${f}`)
+      }
+    }
+    expect(couples.size).toBe(0)
+  })
+
+  it('le balayage actuel confronte l’encre isolée aux quatre fonds de texte', () => {
+    const usages = releverUsages([dir])
+    expect(usages.couples.has('infoInk/off')).toBe(true)
+    expect(usages.couples.has('infoInk/offStrong')).toBe(true)
+    expect(usages.couples.has('infoInk/page')).toBe(true)
+    expect(usages.couples.has('infoInk/surface')).toBe(true)
+  })
+
+  it('ces deux couples seraient bien remontés comme orphelins par TEXT_PAIRS', () => {
+    const listes = new Set(nomme(TEXT_PAIRS))
+    expect(listes.has('infoInk/off')).toBe(false)
+    expect(listes.has('infoInk/offStrong')).toBe(false)
   })
 })

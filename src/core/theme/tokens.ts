@@ -206,7 +206,20 @@ const STATE_TOKENS: Record<
 }
 
 /** Les quatre fonds sur lesquels l'application pose du texte courant. */
-const FONDS_DE_TEXTE = ['page', 'surface', 'off', 'offStrong'] as const
+export const FONDS_DE_TEXTE = ['page', 'surface', 'off', 'offStrong'] as const
+
+/**
+ * Les quatre encres d'état. Contrairement à `link` — un petit nombre de
+ * composants connus, chacun avec son fond documenté — ou à `ink`/`muted`,
+ * déjà exigées sur les quatre `FONDS_DE_TEXTE`, ces encres sont pensées pour
+ * signaler un état n'importe où dans l'interface : rien n'empêche un futur
+ * écran de les poser seules, sans passer par `Badge` ou `Banner`, qui portent
+ * toujours leur propre fond dans le même `className`. C'est ce qui les rend
+ * exposées à l'angle mort décrit dans `tokens.test.ts`, et c'est pour elles
+ * que le balayage confronte une encre trouvée sans fond aux quatre fonds de
+ * texte possibles plutôt que de ne former aucun couple.
+ */
+export const ENCRES_ETAT: readonly (keyof ThemeTokens)[] = STATES.map((s) => STATE_TOKENS[s].ink)
 
 /**
  * Contrat d'usage : un composant ne pose une encre que sur un fond listé ici.
@@ -256,6 +269,21 @@ export const TEXT_PAIRS: readonly TokenPair[] = [
       { text: t.ink, background: 'surface' },
     ]
   }),
+  // Encres d'état posées seules, sans fond dans le même `className` : le
+  // dépassement en `ChargeTable` et `EngagementBar` (`warningInk`), l'objectif
+  // dépassé en `ExerciceBar` (`successInk`), l'erreur de `Field`, `Select` et
+  // `TotalsRow` (`dangerInk`). Sans fond explicite, elles héritent de celui du
+  // parent — `surface`, `off` ou `offStrong` selon la cellule ou le champ.
+  // `infoInk` n'y figure pas : aucune classe ne le pose ainsi aujourd'hui, et
+  // l'ajouter « par symétrie » romprait la règle du fichier — c'est le
+  // balayage plus bas, adossé à `ENCRES_ETAT`, qui l'exigerait le jour où une
+  // classe apparaît.
+  { text: 'successInk', background: 'off' },
+  { text: 'successInk', background: 'offStrong' },
+  { text: 'warningInk', background: 'off' },
+  { text: 'warningInk', background: 'offStrong' },
+  { text: 'dangerInk', background: 'off' },
+  { text: 'dangerInk', background: 'offStrong' },
 ]
 
 /**
