@@ -29,6 +29,7 @@ afterAll(async () => {
   })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'ACME' } } })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'SURCHARGE' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'CASCADE' } } })
   await prisma.$disconnect()
 })
 
@@ -212,5 +213,31 @@ describe('surcharges de durée de journée', () => {
     const mission = (await listMissionsForUser(userId)).find((x) => x.label === 'MP')
     expect(mission!.minutesParJourEffectif).toBe(450)
     expect(mission!.minutesParJourSurcharge).toBe(450)
+  })
+})
+
+describe('LineForGrid et la cascade du facteur', () => {
+  it('applique la surcharge du client à la prestation affichée', async () => {
+    await updateSettings({ minutesParJour: 480 })
+    const c = await createClient('CASCADE client', 420)
+    const m = await createMission({ clientId: c.id, label: 'CASCADE mission' })
+    const l = await createLine({ missionId: m.id, userId, label: 'CASCADE ligne', soldCentiemes: 100, tjmCents: 0 })
+
+    const ligne = (await listActiveLines(userId)).find((x) => x.id === l.id)
+    // Sans la cascade, la ligne afficherait 480 alors que l'écriture fige 420.
+    expect(ligne!.minutesParJour).toBe(420)
+  })
+
+  it('laisse la surcharge de la prestation l emporter sur celle du client', async () => {
+    await updateSettings({ minutesParJour: 480 })
+    const c = await createClient('CASCADE priorite', 420)
+    const m = await createMission({ clientId: c.id, label: 'CASCADE mission 2' })
+    const l = await createLine({
+      missionId: m.id, userId, label: 'CASCADE ligne 2', soldCentiemes: 100, tjmCents: 0,
+      minutesParJour: 400,
+    })
+
+    const ligne = (await listActiveLines(userId)).find((x) => x.id === l.id)
+    expect(ligne!.minutesParJour).toBe(400)
   })
 })

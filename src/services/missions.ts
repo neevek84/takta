@@ -145,7 +145,14 @@ export async function listActiveLines(userId: string): Promise<LineForGrid[]> {
     missionLabel: a.line.mission.label,
     clientName: a.line.mission.client.name,
     displayUnit: a.line.displayUnit as DisplayUnit,
-    minutesParJour: a.line.minutesParJour ?? settings.minutesParJour,
+    // La cascade complète, comme à l'écriture : afficher un facteur que le gel
+    // ne figera pas ferait mentir chaque case du calendrier.
+    minutesParJour: resolveMinutesParJour({
+      line: a.line.minutesParJour,
+      mission: a.line.mission.minutesParJour,
+      client: a.line.mission.client.minutesParJour,
+      global: settings.minutesParJour,
+    }),
     soldCentiemes: a.soldCentiemes,
     allowedSlotIds: a.line.allowedSlotIds === '' ? [] : a.line.allowedSlotIds.split(','),
   }))

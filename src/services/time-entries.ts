@@ -124,8 +124,17 @@ function monthStartOf(isoDate: string): Date {
   return new Date(`${isoDate.slice(0, 7)}-01T00:00:00.000Z`)
 }
 
-/** Résout le facteur effectif d'une prestation en remontant la cascade. */
-async function facteurDeLaLigne(lineId: string, globalMinutesParJour: number): Promise<number> {
+/**
+ * Facteur effectif d'une prestation, en remontant la cascade
+ * prestation → mission → client → global.
+ *
+ * Exporté : le service des cases fige exactement le même facteur que
+ * `saveEntry`, sans le recalculer autrement.
+ */
+export async function resolveLineMinutesParJour(
+  lineId: string,
+  globalMinutesParJour: number,
+): Promise<number> {
   const line = await prisma.missionLine.findUniqueOrThrow({
     where: { id: lineId },
     select: {
@@ -235,7 +244,7 @@ export async function saveEntry(args: {
   // Le facteur de conversion est figé au moment de l'écriture : le rejouer au
   // moment de la lecture réinterpréterait tout l'historique dès que le
   // réglage change.
-  const minutesParJour = await facteurDeLaLigne(args.lineId, settings.minutesParJour)
+  const minutesParJour = await resolveLineMinutesParJour(args.lineId, settings.minutesParJour)
 
   await prisma.timeEntry.upsert({
     where: {
