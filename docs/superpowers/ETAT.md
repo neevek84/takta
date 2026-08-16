@@ -105,8 +105,8 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 
 - **`jsdom` ne fonctionne pas ici** (Node 22.11 < 22.12). Tests de composants : `// @vitest-environment happy-dom` en **première ligne**, et `afterEach(cleanup)` **explicite**.
 - **`environmentMatchGlobs` n'existe plus en Vitest 4.**
-- **`vitest.config.ts` est en `fileParallelism: false`** — base SQLite partagée. Ne pas modifier.
-- **Ne jamais lancer plusieurs agents exécutant `vitest` en même temps** : ce réglage ne protège qu'à l'intérieur d'un processus. C'était la cause d'échecs intermittents `expected 420 to be 480`.
+- **`vitest.config.ts` est en `fileParallelism: false`** — base SQLite partagée à l'intérieur d'un processus. Ne pas modifier.
+- **Chaque exécution de vitest a désormais sa propre base**, nommée d'après son PID (`vitest.globalSetup.ts`). Deux conséquences : les agents peuvent tourner en parallèle, et les tests n'écrivent plus dans `prisma/dev.db` — ils y réécrivaient la ligne singleton `Settings`, donc le thème et les réglages réels.
 - **Ne jamais lancer `npx next build` pendant que le serveur de développement tourne** : cela écrase son cache et le casse. Remède : arrêter, `rm -rf .next`, relancer.
 - **Ne jamais utiliser `git add -A` pendant que des agents travaillent** — chemins explicites uniquement. Cette erreur a balayé du code d'agent dans des commits de documentation **deux fois**.
 - **TypeScript est épinglé en `^5.9`** : Next 15 rejette TypeScript 7.
