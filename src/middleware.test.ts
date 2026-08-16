@@ -114,6 +114,19 @@ describe('middleware — le déclenchement externe n est pas gaté par la sessio
     expect(matcher.test('/api/webhooks/signature')).toBe(false)
   })
 
+  it('laisse GET /api/events hors du champ du middleware', () => {
+    // Un intégrateur porte le jeton d'instance, jamais un cookie de session :
+    // gaté, il recevrait une page de connexion en HTML à la place de ses
+    // événements, et son client la compterait comme une réponse valide.
+    expect(matcher.test('/api/events')).toBe(false)
+  })
+
+  it('laisse POST /api/jobs/tick hors du champ du middleware', () => {
+    // Le réveil de l'ordonnanceur vient d'un cron, d'un timer systemd ou de
+    // n8n : aucun d'eux n'a de session, tous portent le même jeton.
+    expect(matcher.test('/api/jobs/tick')).toBe(false)
+  })
+
   it('garde les pages applicatives dans le champ du middleware', () => {
     // Le garde-fou de l'exclusion ci-dessus : une exclusion trop large
     // ouvrirait l'application entière sans qu'aucune assertion ne bouge.

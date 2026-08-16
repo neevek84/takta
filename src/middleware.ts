@@ -46,28 +46,29 @@ export default function middleware(request: NextRequest, event: NextFetchEvent) 
 }
 
 /**
- * `api/sync` rejoint `api/auth` hors du champ : le déclenchement externe porte
- * son propre jeton et n'a pas de session. Gaté, il recevrait une redirection
- * 307 vers `/login` puis du `text/html` — un cron ou n8n n'en tirerait rien,
- * et le refus ressemblerait à un succès.
+ * `/api/` est exclu **en entier**, et non route par route.
  *
- * `api/webhooks` en sort pour la même raison, et pas une autre : le
- * prestataire de signature n'a pas de compte et ne porte aucun cookie. Il est
- * authentifié par la **signature HMAC de sa charge utile**, jamais par un
- * jeton d'URL ni par une session. Gaté, il recevrait un 307 vers `/login` que
- * son client HTTP compterait comme une livraison réussie — le CRA ne se
- * validerait jamais, et rien ne le dirait.
+ * Aucun appelant de ces routes ne porte de cookie de session : un cron, n8n ou
+ * `curl` portent un jeton d'instance (`api/sync`, `api/events`,
+ * `api/jobs/tick`), le prestataire de signature porte la **signature HMAC de
+ * sa charge utile** (`api/webhooks`), et Auth.js gère lui-même `api/auth`.
+ * Gatées, ces routes répondraient une redirection 307 vers `/login` puis du
+ * `text/html` : un client HTTP n'en tire rien, et le refus ressemble à un
+ * succès — Documenso compterait la livraison comme réussie et le CRA ne se
+ * validerait jamais.
  *
  * L'exclusion est celle du **routage**, pas de l'autorisation : chaque route
  * refuse elle-même toute requête non authentifiée (voir
- * `src/app/api/sync/flush/route.ts` et
+ * `src/services/api-token.ts`, `src/app/api/sync/flush/route.ts` et
  * `src/app/api/webhooks/signature/route.ts`), et elles ne s'ouvrent pas pour
- * autant — sans `SYNC_FLUSH_TOKEN` ni `SIGNATURE_WEBHOOK_SECRET`, elles
- * restent fermées.
+ * autant — sans `CRA_API_TOKEN`, `SYNC_FLUSH_TOKEN` ni
+ * `SIGNATURE_WEBHOOK_SECRET`, elles restent fermées. Une nouvelle route d'API
+ * hérite donc de l'exclusion, jamais de l'ouverture : elle doit porter sa
+ * garde, comme ses voisines.
  *
  * Elle ne touche pas aux fichiers publics de la PWA ci-dessus, qui passent,
  * eux, par le middleware et en ressortent aussitôt.
  */
 export const config = {
-  matcher: ['/((?!api/auth|api/sync|api/webhooks|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!api/|_next/static|_next/image|favicon.ico).*)'],
 }

@@ -317,6 +317,70 @@ export async function listCras(userId: string, month: string): Promise<CraView[]
   return rows.map((row) => toView(row, archives))
 }
 
+export interface CraNonCloture {
+  missionId: string
+  missionLabel: string
+  clientName: string
+  /** 'ABSENT' quand aucune ligne de CRA n'existe encore pour ce mois */
+  status: CraStatus | 'ABSENT'
+}
+
+/**
+ * Les missions saisies sur un mois dont le CRA n'est pas parti.
+ *
+ * **Ne crée rien** : un rappel qui ouvrirait des CRA pour pouvoir annoncer
+ * qu'ils sont ouverts serait absurde, et écrire depuis un traitement de fond
+ * est précisément ce que ce lot s'interdit.
+ *
+ * À ne pas confondre avec `listCrasEnSouffrance`, qui désigne les CRA **déjà
+ * envoyés** qu'aucune relance n'a fait revenir : ici, rien n'est encore
+ * parti.
+ */
+export async function listCrasNonClotures(
+  userId: string,
+  month: string,
+): Promise<CraNonCloture[]> {
+  const debut = monthStart(month)
+  const fin = new Date(Date.UTC(debut.getUTCFullYear(), debut.getUTCMonth() + 1, 1))
+
+  const saisies = await prisma.timeEntry.findMany({
+    where: { userId, date: { gte: debut, lt: fin } },
+    select: {
+      line: {
+        select: {
+          missionId: true,
+          mission: { select: { label: true, client: { select: { name: true } } } },
+        },
+      },
+    },
+  })
+
+  const missions = new Map<string, { missionLabel: string; clientName: string }>()
+  for (const s of saisies) {
+    missions.set(s.line.missionId, {
+      missionLabel: s.line.mission.label,
+      clientName: s.line.mission.client.name,
+    })
+  }
+  if (missions.size === 0) return []
+
+  const cras = await prisma.cra.findMany({
+    where: { userId, month: debut, missionId: { in: [...missions.keys()] } },
+    select: { missionId: true, status: true },
+  })
+  const statutParMission = new Map(cras.map((c) => [c.missionId, c.status as CraStatus]))
+
+  const out: CraNonCloture[] = []
+  for (const [missionId, info] of missions) {
+    const status = statutParMission.get(missionId)
+    // Envoyé, validé ou refusé : le CRA a quitté le brouillon, il n'est plus
+    // « à clôturer ».
+    if (status !== undefined && status !== 'BROUILLON') continue
+    out.push({ missionId, ...info, status: status ?? 'ABSENT' })
+  }
+  return out.sort((a, b) => a.missionLabel.localeCompare(b.missionLabel, 'fr'))
+}
+
 /**
  * Les CRA envoyés que trois relances n'ont pas fait revenir.
  *

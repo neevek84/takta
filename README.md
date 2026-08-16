@@ -100,10 +100,16 @@ donc toutes les variables de `.env.example`, et
 | --- | --- | --- |
 | `AUTH_SECRET` | oui — `docker compose up` refuse de démarrer sans elle | — |
 | `CREDENTIALS_KEY` | oui, même sans Google | — |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | non | vides : connexion Google indisponible |
-| `GOOGLE_REDIRECT_URI` | non | `http://localhost:3000/api/google/callback` |
-| `CRA_TIMEZONE` | non | `Europe/Paris` |
 | `SYNC_FLUSH_TOKEN` | non | vide : `POST /api/sync/flush` fermé |
+
+**Le client OAuth Google n'est pas dans ce tableau, et c'est le point.**
+Identifiant, secret et URL de retour se saisissent dans *Administration ·
+Google* et vivent chiffrés en base, scellés par `CREDENTIALS_KEY` — comme la
+clé d'API Dolibarr. La règle est simple : *si l'utilisateur doit taper la
+valeur, elle n'a rien à faire dans un fichier*. C'est aussi plus sûr : un
+secret dans un fichier se lit en clair, en base il faut la base **et** la clé.
+Le fuseau horaire suit la même route, vers *Administration · Saisie*, avec
+celui du système pour défaut.
 
 `CREDENTIALS_KEY` est exigée au démarrage alors que le connecteur Google est,
 lui, entièrement optionnel. C'est délibéré : absente, elle ne se manifesterait
@@ -112,9 +118,10 @@ d'alors ne peut proposer que de recommencer une opération qui ne peut jamais
 aboutir. Une variable exigée au démarrage se corrige en une commande ; la même
 variable oubliée se paye en dépannage.
 
-Pour un déploiement derrière un nom de domaine, exporter aussi
-`GOOGLE_REDIRECT_URI=https://votre-domaine/api/google/callback` — la même
-valeur, au caractère près, que celle déclarée dans la console Google Cloud.
+Pour un déploiement derrière un nom de domaine, l'écran *Administration ·
+Google* affiche l'URL de retour correspondant à l'adresse réellement servie
+(`https://votre-domaine/api/google/callback`) : c'est elle qu'il faut déclarer
+dans la console Google Cloud, au caractère près, puis enregistrer sur l'écran.
 
 ### Journaux
 
@@ -123,7 +130,7 @@ synchronisation sont préfixées `[cra]` :
 
 ```
 [cra] error google.callback userId=… erreur=SecretBoxError message="CREDENTIALS_KEY est absente…"
-[cra] warn  google.connect raison=non-configure manquantes=GOOGLE_CLIENT_ID
+[cra] warn  google.connect raison=client-oauth-absent
 [cra] warn  sync.connecteur userId=… raison=calendrier-absent
 [cra] info  sync.flush.api nonConnecte=false traitees=12 reussies=12 echecs=0
 ```
@@ -241,7 +248,7 @@ Rendre la purge inerte laisse les tests de prédicat verts et fait tomber ceux-l
 Le démarrage **préfère 3000** et n'en change que s'il est occupé, en annonçant
 alors, prête à copier, l'URL de retour exacte à réenregistrer dans la console
 Google Cloud (`http://localhost:<port>/api/google/callback`) et à reporter dans
-`GOOGLE_REDIRECT_URI` de `donnees/cra.env`. Google exige une correspondance au
+*Administration · Google*, qui l'affiche aussi. Google exige une correspondance au
 caractère près : un port qui change en silence casserait la connexion, et
 l'erreur viendrait de Google, pas de l'application.
 
@@ -342,6 +349,29 @@ Pour revenir à SQLite ensuite :
 ```bash
 npm run db:sqlite
 ```
+
+## API d'événements
+
+L'application **expose**, elle n'appelle personne. Un intégrateur (n8n, un
+script, autre chose demain) lit le journal et reprend où il s'était arrêté.
+
+    curl -H "Authorization: Bearer $CRA_API_TOKEN" \
+         "http://localhost:3000/api/events?since=0&limit=100"
+
+Paramètres : `since` (dernier `seq` traité, exclu), `limit` (100 par défaut,
+500 au maximum), `event` (un nom du catalogue, voir `src/core/audit/events.ts`).
+
+La réponse porte `events`, `nombre` et `derniereSeq` — ce dernier est le
+curseur à mémoriser pour l'appel suivant. **Aucun événement ne se perd**,
+même après plusieurs jours d'arrêt du consommateur.
+
+Sans `CRA_API_TOKEN`, la route reste fermée (503) : une instance mal
+configurée n'expose pas son journal.
+
+Le réveil de l'ordonnanceur utilise le même jeton :
+
+    curl -X POST -H "Authorization: Bearer $CRA_API_TOKEN" \
+         http://localhost:3000/api/jobs/tick
 
 ## Portabilité SQLite / Postgres
 
