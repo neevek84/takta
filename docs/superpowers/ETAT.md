@@ -148,7 +148,8 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 
 ## 9. Environnement du porteur
 
-- **Dolibarr 23.0.1** joignable par API. Exercice fiscal : `SOCIETE_FISCAL_MONTH_START = 4` — **avril à mars**. `TIMESHEET_DAY_DURATION = 7` heures, quand le défaut local est de 480 minutes : **à aligner**, sinon les temps poussés seront faux d'un septième.
+- **Dolibarr 23.0.1** joignable par API. Exercice fiscal : `SOCIETE_FISCAL_MONTH_START = 4` — **avril à mars**.
+- **`TIMESHEET_DAY_DURATION = 7` heures, quand le défaut local est de 480 minutes.** *Correction d'une affirmation fausse qui figurait ici et qui a été propagée dans trois briefs :* les temps poussés **ne sont pas faux d'un septième**. `task_duration` est en **secondes** — huit heures travaillées valent 28 800 secondes quel que soit ce réglage. Compenser ferait passer huit heures pour sept, et un implémenteur a eu raison de refuser l'instruction. Ce que le réglage change est **l'affichage jour/heure dans Dolibarr** : huit heures s'y lisent « 1,14 jour ». Cela **s'aligne**, cela ne se compense pas.
 - **Client OAuth Google existant** (`OAUTH_GOOGLE-KreativWKS`) — réutilisable pour le calendrier en ajoutant le scope.
 - **Documenso auto-hébergé**, pour le lot 3.
 - **n8n** disponible — consommateur de l'API du lot 4, jamais une dépendance.
