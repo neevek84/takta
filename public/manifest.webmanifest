@@ -1,0 +1,16 @@
+{
+  "name": "CRA — Compte rendu d’activité",
+  "short_name": "CRA",
+  "description": "Saisie mensuelle des comptes rendus d’activité.",
+  "lang": "fr",
+  "start_url": "/saisie",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#faf5ed",
+  "theme_color": "#342820",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
