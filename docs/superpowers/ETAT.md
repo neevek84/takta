@@ -70,12 +70,16 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 | Lot | Spec | Plan | Tâches |
 |---|---|---|---|
-| **1c** — Calendrier et saisie cyclique | oui | **oui** | 11 |
-| **1b** — Google Calendar | oui | **oui** | 12 |
-| **2** — Connecteur Dolibarr | oui | **oui** | 14 |
-| **3** — Validation client (PDF, signature) | oui | non | — |
-| **4** — Journal de preuve, API, ordonnanceur | oui | non | — |
-| **5** — Distribution portable | oui | non | — |
+| **1c** — Calendrier et saisie cyclique | oui | oui | 11 (+1 hors plan) |
+| **1b** — Google Calendar | oui | oui | 12 |
+| **2** — Connecteur Dolibarr | oui | oui | 14 |
+| **3** — Validation client (PDF, signature) | oui | oui | 15 |
+| **4** — Journal de preuve, API, ordonnanceur | oui | oui | 15 |
+| **5** — Distribution portable | oui | oui | 10 |
+
+**Les dix plans sont écrits.** Il ne reste que de l'implémentation.
+
+**Tâche 12 du lot 1c, ajoutée hors plan** : le contrôle de capacité compare des minutes cumulées à facteurs différents contre un seuil converti au facteur global. Une journée pleine chez un client à 600 min/jour est refusée ; 1,14 jour chez un client à 420 passe sans un mot. Brief rédigé, à lancer après la vague en cours — il modifie `checkCapacity`, dont dépend la tâche 4.
 
 **Ordre retenu** : 1c → 1b → 2 → 3 → 4 → 5.
 
