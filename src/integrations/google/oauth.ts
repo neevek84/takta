@@ -25,8 +25,10 @@ async function postToken(
   let res: Response
   try {
     // Le point d'API des jetons de Google attend un formulaire, pas du JSON :
-    // envoyer du JSON ici produit un `invalid_request` que rien dans les tests
-    // ne rattraperait, puisque le double, lui, accepterait les deux.
+    // envoyer du JSON ici produit un `invalid_request` bien réel. Le double
+    // refuse pareillement tout corps qui n'est pas encodé en formulaire sur
+    // cette route (voir `fake-google-api.ts`), donc une régression ici fait
+    // tomber la suite.
     res = await fetchFn(TOKEN_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },

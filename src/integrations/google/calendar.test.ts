@@ -3,6 +3,7 @@ import { CalendarApiError } from '@/core/calendar/connector'
 import { buildCalendarEvent } from '@/core/calendar/event'
 import { createGoogleCalendarConnector } from './calendar'
 import { createFakeGoogleApi, type FakeGoogleApi } from './fake-google-api'
+import { exchangeCode } from './oauth'
 
 const DEDIE = 'cra-dedie@group.calendar.google.com'
 
@@ -373,5 +374,39 @@ describe('sévérité du double', () => {
     const acl = (await urlEvents()).replace(/\/events$/, '/acl')
     const res = await api.fetchFn(acl, { method: 'GET', headers: ENTETES })
     expect(res.status).toBe(404)
+  })
+})
+
+/**
+ * I7 (revue adversariale lot 1b) — le point d'échange de jeton de Google
+ * attend un corps `application/x-www-form-urlencoded`, jamais du JSON. Un
+ * double qui accepterait les deux indifféremment validerait un connecteur qui
+ * échouerait réellement contre Google (`invalid_request`), sans qu'aucun test
+ * ne le rattrape.
+ */
+describe('sévérité du double — échange de jeton', () => {
+  const TOKEN_URL = 'https://oauth2.googleapis.com/token'
+
+  it('refuse un échange de jeton envoyé en JSON', async () => {
+    const res = await api.fetchFn(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_id: 'client-id-de-test',
+        client_secret: 'client-secret-de-test',
+        redirect_uri: 'http://localhost:3000/api/google/callback',
+        grant_type: 'authorization_code',
+        code: 'code-de-consentement',
+      }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('accepte la charge utile que le connecteur envoie vraiment', async () => {
+    // Garde-fou inverse : un double trop sévère rendrait la suite menteuse
+    // dans l'autre sens.
+    const jetons = await exchangeCode(api.fetchFn, 'code-de-consentement')
+    expect(jetons.accessToken).not.toBe('')
+    expect(jetons.refreshToken).not.toBe('')
   })
 })

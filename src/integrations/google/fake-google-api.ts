@@ -10,7 +10,8 @@
  * une requête que le double jugerait par ailleurs valide.
  *
  * Il refuse ce que la vraie API refuserait : jeton absent, borne manquante,
- * heure mal formée, couleur hors palette, route inconnue. Un double complaisant
+ * heure mal formée, couleur hors palette, route inconnue, corps JSON envoyé
+ * là où l'échange de jeton exige un formulaire. Un double complaisant
  * validerait un connecteur qui ne marcherait pas.
  */
 import type { FetchLike } from './calendar'
@@ -195,6 +196,14 @@ export function createFakeGoogleApi(): FakeGoogleApi {
 
     // L'échange de jeton n'est pas soumis à l'expiration du jeton d'accès.
     if (url.startsWith('https://oauth2.googleapis.com/token')) {
+      // Google exige un corps de formulaire pour ce point d'échange, jamais
+      // du JSON : un connecteur qui enverrait du JSON ici recevrait un
+      // `invalid_request` bien réel. Sans ce contrôle, `lireCorps` acceptait
+      // les deux indifféremment et ce défaut n'était retenu par rien (voir I7
+      // de la revue).
+      if (!(init.headers['content-type'] ?? '').includes('x-www-form-urlencoded')) {
+        return erreur(400, 'invalid_request')
+      }
       if (oauth.refusRefresh) return json({ error: 'invalid_grant' }, 400)
       return json({
         access_token: oauth.accessToken,

@@ -217,6 +217,36 @@ describe('applyCellState', () => {
     ])
   })
 
+  // I6 (revue adversariale lot 1b) — les 33 tests précédents ne réglaient le
+  // facteur que par `updateSettings` : la cascade prestation → mission →
+  // client valait toujours le réglage global, donc écrire `settings.minutesParJour`
+  // au lieu du facteur résolu par la cascade serait passé inaperçu. Ici la
+  // prestation surcharge le facteur (420) alors que le réglage global reste à
+  // 480 (posé par `beforeEach`) : les deux valeurs se distinguent réellement.
+  it('fige le facteur résolu par la cascade prestation → mission → client, pas le réglage global', async () => {
+    const ligneSurchargee = (await createLine({
+      missionId, userId, label: 'Surchargée', soldCentiemes: 1000, tjmCents: 50000,
+      minutesParJour: 420,
+    })).id
+
+    const r = await applyCellState({
+      userId, lineId: ligneSurchargee, date: '2026-03-29', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    expect(r.ok).toBe(true)
+    expect(await saisiesDu(ligneSurchargee, '2026-03-29')).toEqual([
+      { minutes: 420, slotId: '', kind: 'REALISE', minutesParJour: 420, userId },
+    ])
+
+    // Le réglage global change ensuite : la saisie déjà écrite ne doit pas
+    // suivre — c'est le gel exigé par le commanditaire (« si changement du
+    // nombre d'heures IL NE FAUT SURTOUT PAS QUE LES CRA VALIDÉS CHANGENT DE
+    // CALCUL »).
+    await updateSettings({ minutesParJour: 600 })
+    expect(await saisiesDu(ligneSurchargee, '2026-03-29')).toEqual([
+      { minutes: 420, slotId: '', kind: 'REALISE', minutesParJour: 420, userId },
+    ])
+  })
+
   it('refuse un dépassement réel malgré des facteurs différents dans la journée', async () => {
     await updateSettings({ capacityMode: 'BLOCAGE', capacityCentiemes: 100, minutesParJour: 420 })
     // Une journée pleine figée à 420 : 1,00 j.
