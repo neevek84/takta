@@ -113,6 +113,7 @@ Prérequis : Node.js 20 ou plus.
 npm install
 echo 'DATABASE_URL="file:./cra.db"' > .env
 echo "AUTH_SECRET=$(openssl rand -base64 32)" >> .env
+echo "CREDENTIALS_KEY=$(openssl rand -base64 32)" >> .env
 npm run setup:local
 npm run build
 node scripts/create-user.mjs moi@exemple.fr "Mon Nom" motdepasse
@@ -120,7 +121,33 @@ npm start
 ```
 
 La base est le fichier `prisma/cra.db` — le sauvegarder, c'est sauvegarder
-toutes les données.
+toutes les données. Une copie de ce fichier ne donne accès à aucun agenda :
+les jetons Google y sont chiffrés, et la clé vit dans l'environnement, hors
+de la base (voir ci-dessous).
+
+## Google Calendar
+
+Les jetons OAuth sont chiffrés au repos (AES-256-GCM) avec `CREDENTIALS_KEY`,
+lue dans l'environnement et jamais stockée en base.
+
+**Perdre `CREDENTIALS_KEY` impose de reconnecter le compte Google.** Aucun jeton
+n'est récupérable sans elle : l'application se comportera comme un compte non
+connecté — la saisie continue de fonctionner, la synchronisation reprend après
+reconnexion depuis `/admin/sync`.
+
+Deux conséquences pratiques, qui découlent de ce choix :
+
+- **La lecture dégrade en silence, l'écriture non.** Clé absente, illisible ou
+  changée : `getCredential` renvoie `null` (compte non connecté) et rien ne
+  casse. Mais enregistrer des jetons sans clé valide **échoue franchement**,
+  avec un message nommant `CREDENTIALS_KEY` — une reconnexion qui ne peut pas
+  aboutir se constate au lieu de poser en base des jetons illisibles.
+- **La clé ne voyage pas avec l'archive portable.** `next build` recopie le
+  `.env` du dépôt dans `.next/standalone` : une archive construite en l'état
+  embarquerait la clé de développement, donc la même clé chez tout le monde.
+  L'empaquetage portable (lot 5) doit exclure ce `.env` et **générer
+  `CREDENTIALS_KEY` dans le dossier de données**, à côté d'`AUTH_SECRET`, au
+  premier lancement.
 
 ## Développement
 
