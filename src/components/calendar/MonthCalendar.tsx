@@ -3,11 +3,14 @@
 import { useCallback, useMemo, useState } from 'react'
 import { buildWeeks } from '@/core/month/weeks'
 import { buildCellStates } from '@/core/saisie/cell-state'
+import { colorForLine } from '@/core/saisie/colors'
 import { cycleSlotIds, nextCellState } from '@/core/saisie/cycle'
 import type { CellState } from '@/core/saisie/cycle'
 import { formatQuantity } from '@/core/time/units'
 import type { MonthDay } from '@/core/month/build'
 import type { Slot } from '@/core/time/slots'
+import { Button } from '@/components/ui/Button'
+import { useDragSelect } from '@/components/grid/useDragSelect'
 import type { LineForGrid } from '@/services/missions'
 import type { MonthEntry } from '@/services/time-entries'
 import { useLongPress } from './useLongPress'
@@ -91,7 +94,10 @@ export function MonthCalendar({
   line,
   slots,
   entries,
+  autresLignes,
+  toutLeMois,
   onApply,
+  onRange,
   onFormulaire,
 }: {
   days: MonthDay[]
@@ -99,8 +105,12 @@ export function MonthCalendar({
   line: LineForGrid
   slots: Slot[]
   entries: MonthEntry[]
+  /** autres prestations, affichées en lecture seule quand `toutLeMois` */
+  autresLignes: LineForGrid[]
+  toutLeMois: boolean
   /** renvoie `true` quand l'état a bien été enregistré */
   onApply: (date: string, state: CellState) => Promise<boolean>
+  onRange: (dates: string[], state: CellState) => Promise<void>
   onFormulaire: (date: string, etat: CellState) => void
 }) {
   const semaines = useMemo(() => buildWeeks(days), [days])
@@ -138,6 +148,46 @@ export function MonthCalendar({
   const etatDe = useCallback(
     (date: string): CellState => optimiste.get(date) ?? serveur.get(date) ?? VIDE,
     [optimiste, serveur],
+  )
+
+  // Les autres prestations ne servent qu'à voir si un jour est déjà pris
+  // ailleurs : on n'a besoin que de leur présence, jamais de leur détail.
+  const autresParDate = useMemo(() => {
+    if (!toutLeMois) return new Map<string, LineForGrid[]>()
+
+    const parId = new Map(autresLignes.map((l) => [l.id, l]))
+    const parDate = new Map<string, LineForGrid[]>()
+    for (const e of entries) {
+      const autre = parId.get(e.lineId)
+      if (autre === undefined || e.minutes === 0) continue
+      const bucket = parDate.get(e.date)
+      if (bucket === undefined) parDate.set(e.date, [autre])
+      else if (!bucket.some((l) => l.id === autre.id)) bucket.push(autre)
+    }
+    return parDate
+  }, [toutLeMois, autresLignes, entries])
+
+  // `useDragSelect` applique une chaîne brute dans la vue tableau ; ici on ne
+  // se sert que de la plage qu'il calcule, l'état à appliquer venant des
+  // boutons de la barre.
+  const drag = useDragSelect(() => {})
+  const plage = drag.selection?.dates ?? []
+  const barreVisible = plage.length > 1
+
+  const appliquerPlage = useCallback(
+    async (state: CellState) => {
+      const dates = drag.selection?.dates ?? []
+      drag.clear()
+      if (dates.length === 0) return
+      // Optimiste sur toute la plage, comme sur une case seule.
+      setOptimiste((prev) => {
+        const suivant = new Map(prev)
+        for (const date of dates) suivant.set(date, state)
+        return suivant
+      })
+      await onRange(dates, state)
+    },
+    [drag, onRange],
   )
 
   const cliquer = useCallback(
@@ -201,16 +251,50 @@ export function MonthCalendar({
                 jour={jour}
                 etat={etatDe(jour.date)}
                 previsionnel={previsionnelles.has(jour.date)}
+                autres={autresParDate.get(jour.date) ?? []}
+                selected={drag.isSelected(line.id, jour.date)}
                 slots={slots}
                 minutesParJour={line.minutesParJour}
                 label={line.label}
                 onClick={() => void cliquer(jour.date)}
                 onFormulaire={() => onFormulaire(jour.date, etatDe(jour.date))}
+                dragHandlers={{
+                  onMouseDown: () => drag.handlers.onMouseDown(line.id, jour.date),
+                  onMouseEnter: () => drag.handlers.onMouseEnter(line.id, jour.date),
+                  onMouseUp: drag.handlers.onMouseUp,
+                }}
               />
             ),
           ),
         )}
       </div>
+
+      {barreVisible && (
+        <div
+          data-testid="barre-selection"
+          className="mt-2 flex flex-wrap items-center gap-2 rounded border border-rule bg-off px-3 py-2 text-sm text-ink"
+        >
+          <span className="font-medium">{plage.length} jours sélectionnés</span>
+          <Button type="button" onClick={() => void appliquerPlage({ kind: 'JOURNEE' })}>
+            1 jour
+          </Button>
+          {options.demiSlotIds.map((slotId) => (
+            <Button
+              key={slotId}
+              type="button"
+              onClick={() => void appliquerPlage({ kind: 'DEMI', slotId })}
+            >
+              ½ {libelleSlot(slotId, slots)}
+            </Button>
+          ))}
+          <Button type="button" onClick={() => void appliquerPlage({ kind: 'VIDE' })}>
+            Vider ces jours
+          </Button>
+          <Button type="button" onClick={drag.clear}>
+            Annuler la sélection
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
@@ -219,20 +303,27 @@ function Case({
   jour,
   etat,
   previsionnel,
+  autres,
+  selected,
   slots,
   minutesParJour,
   label,
   onClick,
   onFormulaire,
+  dragHandlers,
 }: {
   jour: MonthDay
   etat: CellState
   previsionnel: boolean
+  /** autres prestations occupant ce jour, en lecture seule */
+  autres: LineForGrid[]
+  selected: boolean
   slots: Slot[]
   minutesParJour: number
   label: string
   onClick: () => void
   onFormulaire: () => void
+  dragHandlers: { onMouseDown: () => void; onMouseEnter: () => void; onMouseUp: () => void }
 }) {
   const appuiLong = useLongPress(onFormulaire)
 
@@ -242,35 +333,64 @@ function Case({
   const detail = [titreJour, description(etat, slots)].filter((t) => t !== undefined).join(' — ')
 
   return (
-    <button
-      type="button"
-      data-testid={`case-${jour.date}`}
-      data-jour={jourDit}
-      aria-label={`${label} le ${jour.date} — ${detail}`}
-      title={detail}
-      {...appuiLong.handlers}
-      onClick={() => {
-        // L'appui long a déjà ouvert le formulaire : le clic qui le suit ne
-        // doit pas faire avancer la case d'un cran derrière lui.
-        if (appuiLong.consommerAppuiLong()) return
-        onClick()
-      }}
-      onContextMenu={(ev) => {
-        ev.preventDefault()
-        onFormulaire()
-      }}
-      className={`touch-target flex flex-col items-center justify-center rounded-sm border border-rule text-sm ${
-        FOND_JOUR[jourDit]
-      } ${etat.kind === 'LIBRE' && etat.eclatee ? 'ring-1 ring-inset ring-warning-edge' : ''} ${
-        etat.kind === 'VIDE' ? 'text-muted' : 'text-ink'
-      } ${previsionnel ? 'pattern-hatch italic text-muted' : ''}`}
-    >
-      <span className="text-xs leading-none text-muted">{Number(jour.date.slice(8))}</span>
-      {/* Le numéro du jour et la valeur sont deux nœuds distincts : les mêler
-          rendrait « la case est vide » indistinguable de « la case affiche 10 ». */}
-      <span data-testid={`valeur-${jour.date}`} className="leading-tight">
-        {contenu(etat, slots, minutesParJour)}
-      </span>
-    </button>
+    <div className="flex flex-col gap-0.5">
+      <button
+        type="button"
+        data-testid={`case-${jour.date}`}
+        data-jour={jourDit}
+        aria-label={`${label} le ${jour.date} — ${detail}`}
+        title={detail}
+        {...appuiLong.handlers}
+        {...dragHandlers}
+        onClick={() => {
+          // L'appui long a déjà ouvert le formulaire : le clic qui le suit ne
+          // doit pas faire avancer la case d'un cran derrière lui.
+          if (appuiLong.consommerAppuiLong()) return
+          onClick()
+        }}
+        onContextMenu={(ev) => {
+          ev.preventDefault()
+          onFormulaire()
+        }}
+        onKeyDown={(ev) => {
+          // Ni le clic droit ni l'appui long ne se produisent au clavier :
+          // Maj+Entrée (tout clavier) et la touche Menu (celle qui ouvre déjà
+          // le menu contextuel du système) sont les deux équivalents proposés.
+          // Entrée seul, lui, continue de faire avancer la case d'un cran —
+          // c'est l'activation native du bouton, laissée intacte.
+          if (ev.key === 'ContextMenu' || (ev.key === 'Enter' && ev.shiftKey)) {
+            ev.preventDefault()
+            onFormulaire()
+          }
+        }}
+        className={`touch-target flex flex-col items-center justify-center rounded-sm border border-rule text-sm ${
+          FOND_JOUR[jourDit]
+        } ${etat.kind === 'LIBRE' && etat.eclatee ? 'ring-1 ring-inset ring-warning-edge' : ''} ${
+          etat.kind === 'VIDE' ? 'text-muted' : 'text-ink'
+        } ${previsionnel ? 'pattern-hatch italic text-muted' : ''} ${
+          selected ? 'ring-2 ring-inset ring-focus' : ''
+        }`}
+      >
+        <span className="text-xs leading-none text-muted">{Number(jour.date.slice(8))}</span>
+        {/* Le numéro du jour et la valeur sont deux nœuds distincts : les mêler
+            rendrait « la case est vide » indistinguable de « la case affiche 10 ». */}
+        <span data-testid={`valeur-${jour.date}`} className="leading-tight">
+          {contenu(etat, slots, minutesParJour)}
+        </span>
+      </button>
+      {autres.map((a) => {
+        const couleur = colorForLine(a.id)
+        return (
+          <span
+            key={a.id}
+            data-testid={`autre-${a.id}-${jour.date}`}
+            title={`${a.label} — lecture seule`}
+            className={`truncate rounded border px-1 text-[10px] ${couleur.bg} ${couleur.text} ${couleur.border}`}
+          >
+            {a.label}
+          </span>
+        )
+      })}
+    </div>
   )
 }

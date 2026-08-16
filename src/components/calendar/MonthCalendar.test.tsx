@@ -38,7 +38,10 @@ function renderCalendar(
       line={ligneJour}
       slots={DEFAULT_SLOTS}
       entries={[]}
+      autresLignes={[]}
+      toutLeMois={false}
       onApply={vi.fn(async () => true)}
+      onRange={vi.fn(async () => {})}
       onFormulaire={vi.fn()}
       {...overrides}
     />,
@@ -229,6 +232,41 @@ describe('MonthCalendar', () => {
         vi.useRealTimers()
       }
     })
+
+    // Ni le clic droit ni l'appui long ne se produisent au clavier : sans ce
+    // raccourci, le formulaire de valeur libre serait inatteignable par
+    // tabulation seule.
+    it('ouvre le formulaire au clavier avec Maj+Entrée', () => {
+      const onApply = vi.fn(async () => true)
+      const onFormulaire = vi.fn()
+      renderCalendar({ onApply, onFormulaire })
+
+      fireEvent.keyDown(caseDu('2026-03-11'), { key: 'Enter', shiftKey: true })
+
+      expect(onFormulaire).toHaveBeenCalledWith('2026-03-11', { kind: 'VIDE' })
+      expect(onApply).not.toHaveBeenCalled()
+    })
+
+    it('ouvre le formulaire au clavier avec la touche Menu', () => {
+      const onApply = vi.fn(async () => true)
+      const onFormulaire = vi.fn()
+      renderCalendar({ onApply, onFormulaire })
+
+      fireEvent.keyDown(caseDu('2026-03-11'), { key: 'ContextMenu' })
+
+      expect(onFormulaire).toHaveBeenCalledWith('2026-03-11', { kind: 'VIDE' })
+      expect(onApply).not.toHaveBeenCalled()
+    })
+
+    it('un Entrée seul, sans Maj, continue de faire avancer la case', async () => {
+      const onApply = vi.fn(async () => true)
+      const onFormulaire = vi.fn()
+      renderCalendar({ onApply, onFormulaire })
+
+      fireEvent.keyDown(caseDu('2026-03-11'), { key: 'Enter' })
+
+      expect(onFormulaire).not.toHaveBeenCalled()
+    })
   })
 
   describe('affichage des états', () => {
@@ -285,11 +323,144 @@ describe('MonthCalendar', () => {
           line={ligneJour}
           slots={DEFAULT_SLOTS}
           entries={[entree({ minutes: 240, slotId: 'matin' })]}
+          autresLignes={[]}
+          toutLeMois={false}
           onApply={vi.fn(async () => true)}
+          onRange={vi.fn(async () => {})}
           onFormulaire={vi.fn()}
         />,
       )
       expect(valeurDu('2026-03-10').textContent).toBe('½ M')
+    })
+  })
+
+  const ligneB: LineForGrid = {
+    ...ligneJour,
+    id: 'lB',
+    label: 'Consultant ITSM Nuit',
+    soldCentiemes: 1000,
+  }
+
+  const surLigneB: MonthEntry[] = [
+    { id: 'b1', lineId: 'lB', date: '2026-03-10', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
+  ]
+
+  describe('Cette prestation ou tout le mois', () => {
+    it('n affiche que la prestation sélectionnée par défaut', () => {
+      renderCalendar({ entries: surLigneB, autresLignes: [ligneB], toutLeMois: false })
+      expect(screen.queryByTestId('autre-lB-2026-03-10')).toBeNull()
+    })
+
+    it('affiche les autres prestations en mode « Tout le mois »', () => {
+      renderCalendar({ entries: surLigneB, autresLignes: [ligneB], toutLeMois: true })
+      const badge = screen.getByTestId('autre-lB-2026-03-10')
+      expect(badge.textContent).toContain('Consultant ITSM Nuit')
+    })
+
+    it('rend les autres prestations non cliquables', async () => {
+      const onApply = vi.fn(async () => true)
+      renderCalendar({ entries: surLigneB, autresLignes: [ligneB], toutLeMois: true, onApply })
+
+      const badge = screen.getByTestId('autre-lB-2026-03-10')
+      // Un élément non interactif ne peut pas devenir cliquable par accident.
+      expect(badge.tagName).toBe('SPAN')
+      fireEvent.click(badge)
+      expect(onApply).not.toHaveBeenCalled()
+    })
+
+    it('laisse la prestation sélectionnée cliquable en mode « Tout le mois »', async () => {
+      const onApply = vi.fn(async () => true)
+      renderCalendar({ entries: surLigneB, autresLignes: [ligneB], toutLeMois: true, onApply })
+
+      fireEvent.click(caseDu('2026-03-11'))
+      await waitFor(() => expect(onApply).toHaveBeenCalledWith('2026-03-11', { kind: 'JOURNEE' }))
+    })
+
+    it('n affiche pas d autre prestation les jours où elle n a rien saisi', () => {
+      renderCalendar({ entries: surLigneB, autresLignes: [ligneB], toutLeMois: true })
+      expect(screen.queryByTestId('autre-lB-2026-03-11')).toBeNull()
+    })
+
+    it('donne à une prestation la même couleur entre deux chargements', () => {
+      renderCalendar({ entries: surLigneB, autresLignes: [ligneB], toutLeMois: true })
+      const premiere = screen.getByTestId('autre-lB-2026-03-10').className
+      cleanup()
+
+      // Second chargement : la liste des prestations a changé d'ordre et de taille.
+      renderCalendar({
+        entries: surLigneB,
+        autresLignes: [{ ...ligneJour, id: 'lZ', label: 'Autre' }, ligneB],
+        toutLeMois: true,
+      })
+      expect(screen.getByTestId('autre-lB-2026-03-10').className).toBe(premiere)
+    })
+  })
+
+  describe('sélection par glissement', () => {
+    function glisser(de: string, versLesDates: string[]): void {
+      fireEvent.mouseDown(caseDu(de))
+      for (const date of versLesDates) fireEvent.mouseEnter(caseDu(date))
+      fireEvent.mouseUp(caseDu(versLesDates[versLesDates.length - 1] ?? de))
+    }
+
+    it('n affiche aucune barre tant qu un seul jour est sélectionné', () => {
+      renderCalendar()
+      glisser('2026-03-09', [])
+      expect(screen.queryByTestId('barre-selection')).toBeNull()
+    })
+
+    it('propose d appliquer une valeur à toute la plage', () => {
+      renderCalendar()
+      glisser('2026-03-09', ['2026-03-10', '2026-03-11'])
+
+      const barre = screen.getByTestId('barre-selection')
+      expect(barre.textContent).toContain('3 jours')
+      expect(screen.getByRole('button', { name: '1 jour' })).toBeDefined()
+      expect(screen.getByRole('button', { name: '½ Matin' })).toBeDefined()
+      expect(screen.getByRole('button', { name: '½ Après-midi' })).toBeDefined()
+    })
+
+    it('applique la valeur choisie à tous les jours de la plage', async () => {
+      const onRange = vi.fn(async () => {})
+      renderCalendar({ onRange })
+      glisser('2026-03-09', ['2026-03-10', '2026-03-11'])
+
+      fireEvent.click(screen.getByRole('button', { name: '1 jour' }))
+      await waitFor(() =>
+        expect(onRange).toHaveBeenCalledWith(
+          ['2026-03-09', '2026-03-10', '2026-03-11'],
+          { kind: 'JOURNEE' },
+        ),
+      )
+    })
+
+    it('vide toute la plage sur demande', async () => {
+      const onRange = vi.fn(async () => {})
+      renderCalendar({ onRange })
+      glisser('2026-03-09', ['2026-03-10'])
+
+      fireEvent.click(screen.getByRole('button', { name: 'Vider ces jours' }))
+      await waitFor(() =>
+        expect(onRange).toHaveBeenCalledWith(['2026-03-09', '2026-03-10'], { kind: 'VIDE' }),
+      )
+    })
+
+    it('referme la barre sans rien appliquer sur Annuler', () => {
+      const onRange = vi.fn(async () => {})
+      renderCalendar({ onRange })
+      glisser('2026-03-09', ['2026-03-10'])
+
+      fireEvent.click(screen.getByRole('button', { name: 'Annuler la sélection' }))
+      expect(screen.queryByTestId('barre-selection')).toBeNull()
+      expect(onRange).not.toHaveBeenCalled()
+    })
+
+    it('n offre aucune demi-journée quand la prestation n en propose pas', () => {
+      renderCalendar({ line: { ...ligneJour, allowedSlotIds: ['nuit'] } })
+      glisser('2026-03-09', ['2026-03-10'])
+
+      expect(screen.queryByRole('button', { name: '½ Matin' })).toBeNull()
+      expect(screen.getByRole('button', { name: '1 jour' })).toBeDefined()
     })
   })
 })
