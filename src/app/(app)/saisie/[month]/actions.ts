@@ -33,6 +33,14 @@ export async function saveCell(args: {
   raw: string
   /** 'YYYY-MM' — le mois affiché, celui qu'on rafraîchit */
   month: string
+  /**
+   * créneau visé, chaîne vide (ou absent) = journée entière.
+   *
+   * Contrairement au `kind`, c'est bien au client de le dire : il décrit *ce
+   * que la personne a fait*, pas la nature engageante du temps. Un créneau que
+   * la prestation ne prévoit pas est signalé par le service, jamais refusé.
+   */
+  slotId?: string
 }): Promise<SaveResult | { ok: false; reason: 'SAISIE_INVALIDE' }> {
   const user = await requireUser()
 
@@ -48,6 +56,7 @@ export async function saveCell(args: {
     date: args.date,
     minutes,
     kind: args.date >= aujourdhui() ? 'PREVISIONNEL' : 'REALISE',
+    slotId: args.slotId ?? '',
   })
 
   if (result.ok) revalidatePath(`/saisie/${args.month}`)

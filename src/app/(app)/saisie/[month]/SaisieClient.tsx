@@ -125,18 +125,33 @@ export function SaisieClient(props: {
    * deux vues du même écran écrivaient sinon le même champ sous deux autorités
    * différentes — et une machine à l'horloge décalée écrivait le mauvais.
    */
-  async function handleSave(lineIdCellule: string, date: string, raw: string): Promise<boolean> {
-    const r = await saveCell({ lineId: lineIdCellule, date, raw, month: props.month })
+  async function handleSave(
+    lineIdCellule: string,
+    date: string,
+    raw: string,
+    slotId = '',
+  ): Promise<boolean> {
+    const r = await saveCell({ lineId: lineIdCellule, date, raw, month: props.month, slotId })
 
     if (r.ok) {
-      // Mode AVERTISSEMENT : la saisie est conservée, le dépassement signalé.
-      setMessage(
-        r.warning
-          ? avertissement(
-              `${phraseCapacite(date, r.warning.totalCentiemes, r.warning.capacityCentiemes)} La saisie est conservée.`,
-            )
-          : messageDOccupation(date),
-      )
+      // Trois choses peuvent être dites, dans cet ordre et aucune bloquante :
+      // le dépassement de capacité, le créneau non prévu par la prestation,
+      // puis l'occupation de l'agenda — la moins liée à la saisie elle-même.
+      if (r.warning) {
+        setMessage(
+          avertissement(
+            `${phraseCapacite(date, r.warning.totalCentiemes, r.warning.capacityCentiemes)} La saisie est conservée.`,
+          ),
+        )
+      } else if (r.slotWarning) {
+        setMessage(
+          avertissement(
+            `Ce créneau n’est pas prévu pour cette ligne (créneaux prévus : ${r.slotWarning.allowedSlotIds.join(', ')}). La saisie est conservée.`,
+          ),
+        )
+      } else {
+        setMessage(messageDOccupation(date))
+      }
       return true
     }
 
@@ -330,6 +345,9 @@ export function SaisieClient(props: {
           capacityCentiemes={props.capacityCentiemes}
           capacityMode={props.capacityMode}
           busyDates={props.busyDates}
+          // Les créneaux réglés en administration : le tableau les propose
+          // cellule par cellule, comme le formulaire du calendrier le fait déjà.
+          slots={props.slots}
           onSave={handleSave}
         />
       )}

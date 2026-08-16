@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { MonthGrid } from './MonthGrid'
+import { DEFAULT_SLOTS } from '@/services/settings'
 import { buildMonthDays } from '@/core/month/build'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
@@ -482,7 +483,9 @@ describe('MonthGrid', () => {
       fireEvent.blur(input)
 
       // Marquer n'est pas bloquer : la valeur part au serveur et reste à l'écran.
-      await waitFor(() => expect(onSave).toHaveBeenCalledWith('l1', '2026-03-13', '0,5'))
+      // Le créneau est le quatrième paramètre depuis la tâche 12 : vide, c'est
+      // la journée entière, et c'est le défaut.
+      await waitFor(() => expect(onSave).toHaveBeenCalledWith('l1', '2026-03-13', '0,5', ''))
       expect(input.value).toBe('0,5')
     })
 
@@ -524,6 +527,178 @@ describe('MonthGrid', () => {
       cleanup()
       renderGrid()
       expect(screen.getByTestId('legende-jours').textContent).not.toContain('Occupation')
+    })
+  })
+
+  describe('saisie par créneau', () => {
+    it('ne montre aucun sélecteur quand aucun créneau n est configuré', () => {
+      renderGrid()
+      expect(screen.queryByLabelText('Créneau — Consultant ITSM')).toBeNull()
+    })
+
+    it('propose la journée par défaut, puis les créneaux', () => {
+      renderGrid({ slots: DEFAULT_SLOTS })
+      const select = screen.getByLabelText('Créneau — Consultant ITSM') as HTMLSelectElement
+
+      expect(select.value).toBe('')
+      expect([...select.options].map((o) => o.textContent)).toEqual([
+        'Journée',
+        'Matin',
+        'Après-midi',
+        'Nuit',
+      ])
+    })
+
+    it('enregistre sur le créneau choisi', async () => {
+      const onSave = vi.fn(async () => true)
+      renderGrid({ slots: DEFAULT_SLOTS, onSave })
+
+      fireEvent.change(screen.getByLabelText('Créneau — Consultant ITSM'), {
+        target: { value: 'matin' },
+      })
+      const input = cell('Consultant ITSM', '2026-03-13')
+      fireEvent.change(input, { target: { value: '0,5' } })
+      fireEvent.blur(input)
+
+      await waitFor(() =>
+        expect(onSave).toHaveBeenCalledWith('l1', '2026-03-13', '0,5', 'matin'),
+      )
+    })
+
+    it('rend éditable une cellule agrégée dès qu un créneau est choisi', () => {
+      // Ligne l2 : sa cellule du 12 agrège un créneau, donc verrouillée en vue
+      // journée — mais éditable dès qu'on se place sur le créneau lui-même.
+      renderGrid({ slots: DEFAULT_SLOTS })
+      expect(cell('Consultant ITSM Nuit', '2026-03-12').readOnly).toBe(true)
+
+      fireEvent.change(screen.getByLabelText('Créneau — Consultant ITSM Nuit'), {
+        target: { value: 'nuit' },
+      })
+      expect(cell('Consultant ITSM Nuit', '2026-03-12').readOnly).toBe(false)
+    })
+
+    // `readOnly` et le garde-fou de l'enregistrement sont deux choses : une
+    // cellule redevenue modifiable dont l'écriture serait encore court-circuitée
+    // rendrait la saisie par créneau muette, sans qu'aucun état visible ne
+    // change.
+    it('enregistre réellement sur une journée déjà éclatée en créneaux', async () => {
+      const onSave = vi.fn(async () => true)
+      renderGrid({ slots: DEFAULT_SLOTS, onSave })
+
+      fireEvent.change(screen.getByLabelText('Créneau — Consultant ITSM Nuit'), {
+        target: { value: 'nuit' },
+      })
+      const input = cell('Consultant ITSM Nuit', '2026-03-12')
+      fireEvent.change(input, { target: { value: '6h' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => expect(onSave).toHaveBeenCalledWith('l2', '2026-03-12', '6h', 'nuit'))
+      expect(input.value).toBe('6h')
+    })
+
+    // La cellule vise la saisie du créneau choisi, pas le total de la journée :
+    // afficher l'agrégat sur un créneau ferait écraser une demi-journée par le
+    // total des deux à la première correction.
+    it('montre la valeur du créneau choisi, jamais le total de la journée', () => {
+      renderGrid({
+        slots: DEFAULT_SLOTS,
+        entries: [
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', minutesParJour: 480 },
+          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', minutesParJour: 480 },
+        ],
+      })
+      expect(cell('Consultant ITSM', '2026-03-16').value).toBe('1')
+
+      fireEvent.change(screen.getByLabelText('Créneau — Consultant ITSM'), {
+        target: { value: 'matin' },
+      })
+      expect(cell('Consultant ITSM', '2026-03-16').value).toBe('0,5')
+    })
+
+    it('laisse vide la cellule d un créneau que la journée ne porte pas', () => {
+      renderGrid({ slots: DEFAULT_SLOTS })
+      // Le 12 porte une saisie « nuit » sur l2, et rien sur « matin ».
+      expect(cell('Consultant ITSM Nuit', '2026-03-12').value).toBe('4h')
+
+      fireEvent.change(screen.getByLabelText('Créneau — Consultant ITSM Nuit'), {
+        target: { value: 'matin' },
+      })
+      expect(cell('Consultant ITSM Nuit', '2026-03-12').value).toBe('')
+    })
+
+    // `kindDeLaJournee` tranche pour la journée entière ; sur un créneau, c'est
+    // la nature de *cette* saisie qui se lit, sans quoi une demi-journée
+    // réalisée s'afficherait prévisionnelle parce que l'autre moitié l'est.
+    it('lit la nature du créneau choisi, pas celle de la journée mêlée', () => {
+      renderGrid({
+        slots: DEFAULT_SLOTS,
+        entries: [
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', minutesParJour: 480 },
+          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', minutesParJour: 480 },
+        ],
+      })
+      expect(cell('Consultant ITSM', '2026-03-16').getAttribute('data-saisie')).toBe(
+        'previsionnel',
+      )
+
+      fireEvent.change(screen.getByLabelText('Créneau — Consultant ITSM'), {
+        target: { value: 'matin' },
+      })
+      expect(cell('Consultant ITSM', '2026-03-16').getAttribute('data-saisie')).toBe('realise')
+    })
+
+    it('ne change le créneau que de sa propre ligne', () => {
+      renderGrid({ slots: DEFAULT_SLOTS })
+      fireEvent.change(screen.getByLabelText('Créneau — Consultant ITSM'), {
+        target: { value: 'matin' },
+      })
+
+      const autre = screen.getByLabelText('Créneau — Consultant ITSM Nuit') as HTMLSelectElement
+      expect(autre.value).toBe('')
+      expect(cell('Consultant ITSM Nuit', '2026-03-12').readOnly).toBe(true)
+    })
+
+    it('offre une cible tactile sur le sélecteur de créneau', () => {
+      renderGrid({ slots: DEFAULT_SLOTS })
+      expect(screen.getByLabelText('Créneau — Consultant ITSM').className).toContain(
+        'touch-target',
+      )
+    })
+
+    it('laisse la saisie rapide au glissement inchangée', async () => {
+      const onSave = vi.fn(async () => true)
+      renderGrid({ slots: DEFAULT_SLOTS, onSave })
+
+      const debut = cell('Consultant ITSM', '2026-03-16')
+      fireEvent.mouseDown(debut.parentElement as HTMLElement)
+      fireEvent.mouseEnter(cell('Consultant ITSM', '2026-03-17').parentElement as HTMLElement)
+      fireEvent.mouseUp(debut.parentElement as HTMLElement)
+      fireEvent.change(debut, { target: { value: '1' } })
+      fireEvent.keyDown(debut, { key: 'Enter' })
+
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+      // Journée par défaut : le geste principal n'est pas modifié.
+      expect(onSave).toHaveBeenCalledWith('l1', '2026-03-16', '1', '')
+    })
+
+    it('suit le créneau choisi jusque dans la saisie rapide au glissement', async () => {
+      const onSave = vi.fn(async () => true)
+      renderGrid({ slots: DEFAULT_SLOTS, onSave })
+
+      fireEvent.change(screen.getByLabelText('Créneau — Consultant ITSM'), {
+        target: { value: 'apres-midi' },
+      })
+
+      const debut = cell('Consultant ITSM', '2026-03-16')
+      fireEvent.mouseDown(debut.parentElement as HTMLElement)
+      fireEvent.mouseEnter(cell('Consultant ITSM', '2026-03-17').parentElement as HTMLElement)
+      fireEvent.mouseUp(debut.parentElement as HTMLElement)
+      fireEvent.change(debut, { target: { value: '0,5' } })
+      fireEvent.keyDown(debut, { key: 'Enter' })
+
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+      expect(onSave).toHaveBeenCalledWith('l1', '2026-03-16', '0,5', 'apres-midi')
+      expect(onSave).toHaveBeenCalledWith('l1', '2026-03-17', '0,5', 'apres-midi')
     })
   })
 

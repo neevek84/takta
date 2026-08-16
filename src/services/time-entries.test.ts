@@ -14,6 +14,8 @@ import {
 let userId = ''
 let intrusId = ''
 let autreId = ''
+/** Mission des lignes de ce fichier : les tests de créneau y créent les leurs. */
+let missionA = ''
 let lineA = ''
 let lineB = ''
 /** Sur une **seconde** mission : le verrou porte sur un couple (mission, mois). */
@@ -44,6 +46,7 @@ beforeAll(async () => {
 
   const c = await createClient('ENTRIES client')
   const m = await createMission({ clientId: c.id, label: 'M' })
+  missionA = m.id
   lineA = (await createLine({ missionId: m.id, userId, label: 'A', soldCentiemes: 3000, tjmCents: 0 })).id
   lineB = (await createLine({ missionId: m.id, userId, label: 'B', soldCentiemes: 3000, tjmCents: 0 })).id
   ligneAutre = (await createLine({
@@ -229,6 +232,116 @@ describe('saveEntry', () => {
 
     const r = await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 480, kind: 'REALISE' })
     expect(r).toEqual({ ok: true, minutes: 480 })
+  })
+})
+
+describe('saisie par créneau', () => {
+  it('enregistre une saisie sur un créneau', async () => {
+    const r = await saveEntry({
+      userId,
+      lineId: lineA,
+      date: '2026-03-12',
+      minutes: 240,
+      kind: 'REALISE',
+      slotId: 'matin',
+    })
+    expect(r).toEqual({ ok: true, minutes: 240 })
+
+    const entries = await getMonthEntries(userId, '2026-03')
+    expect(entries.map((e) => e.slotId)).toEqual(['matin'])
+  })
+
+  it('laisse deux créneaux coexister le même jour sur la même ligne', async () => {
+    await updateSettings({ capacityMode: 'DESACTIVE' })
+    await saveEntry({
+      userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'matin',
+    })
+    await saveEntry({
+      userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'apres-midi',
+    })
+
+    const entries = await getMonthEntries(userId, '2026-03')
+    expect(entries.map((e) => e.slotId).sort()).toEqual(['apres-midi', 'matin'])
+  })
+
+  it('signale un créneau non prévu sans refuser la saisie', async () => {
+    // Conformément au lot 0 : signalement, jamais refus.
+    const ligne = await createLine({
+      missionId: missionA, userId, label: 'Nuit only', soldCentiemes: 3000, tjmCents: 0,
+      allowedSlotIds: ['nuit'],
+    })
+
+    const r = await saveEntry({
+      userId, lineId: ligne.id, date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'matin',
+    })
+
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.slotWarning).toEqual({ slotId: 'matin', allowedSlotIds: ['nuit'] })
+    expect(await prisma.timeEntry.count({ where: { userId, lineId: ligne.id } })).toBe(1)
+  })
+
+  // Le signalement ne vaut que s'il laisse derrière lui *exactement* la saisie
+  // demandée : un compte de lignes ne dirait rien d'un créneau silencieusement
+  // remplacé par la journée entière, ce qui serait un refus déguisé.
+  it('conserve le créneau non prévu tel qu il a été saisi', async () => {
+    const ligne = await createLine({
+      missionId: missionA, userId, label: 'Nuit conservée', soldCentiemes: 3000, tjmCents: 0,
+      allowedSlotIds: ['nuit'],
+    })
+
+    await saveEntry({
+      userId, lineId: ligne.id, date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'matin',
+    })
+
+    const ecrite = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: ligne.id },
+      select: { slotId: true, minutes: true, kind: true },
+    })
+    expect(ecrite).toEqual({ slotId: 'matin', minutes: 240, kind: 'REALISE' })
+  })
+
+  it('ne signale rien quand le créneau est autorisé', async () => {
+    const ligne = await createLine({
+      missionId: missionA, userId, label: 'Nuit ok', soldCentiemes: 3000, tjmCents: 0,
+      allowedSlotIds: ['nuit'],
+    })
+
+    const r = await saveEntry({
+      userId, lineId: ligne.id, date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'nuit',
+    })
+    expect(r).toEqual({ ok: true, minutes: 240 })
+  })
+
+  it('ne signale rien quand la ligne n impose aucun créneau', async () => {
+    const r = await saveEntry({
+      userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'nuit',
+    })
+    expect(r).toEqual({ ok: true, minutes: 240 })
+  })
+
+  it('ne signale rien pour une saisie à la journée', async () => {
+    const ligne = await createLine({
+      missionId: missionA, userId, label: 'Nuit journée', soldCentiemes: 3000, tjmCents: 0,
+      allowedSlotIds: ['nuit'],
+    })
+
+    const r = await saveEntry({
+      userId, lineId: ligne.id, date: '2026-03-12', minutes: 240, kind: 'REALISE',
+    })
+    expect(r).toEqual({ ok: true, minutes: 240 })
+  })
+
+  it('met en file une ligne par créneau', async () => {
+    await updateSettings({ capacityMode: 'DESACTIVE' })
+    await saveEntry({
+      userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'matin',
+    })
+    await saveEntry({
+      userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'apres-midi',
+    })
+
+    // Un événement Google par ligne de temps, jamais de fusion.
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(2)
   })
 })
 

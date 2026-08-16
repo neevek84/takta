@@ -178,6 +178,9 @@ describe('SaisieClient', () => {
         date: '2026-03-12',
         raw: '1',
         month: '2026-03',
+        // Le créneau, lui, vient bien du client : c'est un choix de saisie, pas
+        // une décision sur la nature du temps. Vide = journée entière.
+        slotId: '',
       }),
     )
   })
@@ -218,6 +221,52 @@ describe('SaisieClient', () => {
 
     const message = await screen.findByText(/Capacité dépassée/)
     expect(message.textContent).toContain('1,14 j saisis pour une capacité de 1 j')
+  })
+
+  // Tâche 12 — un créneau que la prestation ne prévoit pas est signalé, jamais
+  // refusé : la saisie reste à l'écran et le message dit qu'elle est conservée.
+  describe('créneau non prévu, vue tableau', () => {
+    it('signale le créneau sans effacer la saisie', async () => {
+      saveCell.mockResolvedValue({
+        ok: true,
+        minutes: 240,
+        slotWarning: { slotId: 'matin', allowedSlotIds: ['nuit'] },
+      })
+      renderClient()
+      ouvrirTableau()
+      const input = saisir('0,5')
+
+      const message = await screen.findByText(/n’est pas prévu pour cette ligne/)
+      expect(message.textContent).toContain('nuit')
+      expect(message.textContent).toContain('conservée')
+      expect(input.value).toBe('0,5')
+
+      // Signalement et non refus : la tonalité n'est pas celle d'un rejet.
+      const bandeau = message.closest('[role="alert"]')
+      expect(bandeau).not.toBeNull()
+      expect(bandeau!.className).toContain('bg-warning')
+      expect(bandeau!.className).not.toContain('bg-danger')
+    })
+
+    it('transmet au serveur le créneau choisi dans la grille', async () => {
+      saveCell.mockResolvedValue({ ok: true, minutes: 240 })
+      renderClient()
+      ouvrirTableau()
+      fireEvent.change(screen.getByLabelText('Créneau — Consultant ITSM'), {
+        target: { value: 'matin' },
+      })
+      saisir('0,5')
+
+      await waitFor(() =>
+        expect(saveCell).toHaveBeenCalledWith({
+          lineId: 'l1',
+          date: '2026-03-12',
+          raw: '0,5',
+          month: '2026-03',
+          slotId: 'matin',
+        }),
+      )
+    })
   })
 
   // M5 — un refus et un avertissement ne se ressemblent pas.

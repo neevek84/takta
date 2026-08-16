@@ -6,6 +6,7 @@ import { OCCUPATION_TITRE } from '@/core/saisie/occupation'
 import { centiemesParFacteur, formatJours, formatQuantity } from '@/core/time/units'
 import type { MinutesAuFacteur } from '@/core/time/units'
 import type { MonthDay } from '@/core/month/build'
+import type { Slot } from '@/core/time/slots'
 import type { CapacityMode, TimeEntryKind } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
@@ -23,6 +24,9 @@ const AUCUN_TOTAL: LineEngagementTotals = []
  */
 const AUCUNE_OCCUPATION: string[] = []
 
+/** Même raison que `AUCUNE_OCCUPATION` : un littéral neuf à chaque rendu. */
+const AUCUN_CRENEAU: Slot[] = []
+
 const CELLULE_CRENEAUX =
   'Journée saisie par créneaux : la cellule agrège plusieurs créneaux et ne se modifie pas ici.'
 
@@ -38,6 +42,10 @@ interface Cell {
 
 function cellKey(lineId: string, date: string): string {
   return `${lineId}|${date}`
+}
+
+function slotKey(lineId: string, date: string, slotId: string): string {
+  return `${lineId}|${date}|${slotId}`
 }
 
 type EtatJour = 'ouvre' | 'weekend' | 'ferie'
@@ -136,6 +144,26 @@ function buildCells(entries: MonthEntry[]): Map<string, Cell> {
   return cells
 }
 
+/**
+ * Saisies indexées sur leur clé réelle : (ligne, jour, créneau).
+ *
+ * Aucune agrégation ici — c'est tout l'intérêt : la clé d'unicité en base est
+ * `(lineId, userId, date, slotId)`, et une cellule placée sur un créneau vise
+ * cette saisie précise, jamais le total du jour.
+ */
+function buildSlotCells(entries: MonthEntry[]): Map<string, Cell> {
+  const cells = new Map<string, Cell>()
+  for (const e of entries) {
+    cells.set(slotKey(e.lineId, e.date, e.slotId), {
+      lineId: e.lineId,
+      saisies: [{ minutes: e.minutes, minutesParJour: e.minutesParJour }],
+      kinds: [e.kind],
+      hasSlots: e.slotId !== '',
+    })
+  }
+  return cells
+}
+
 export function MonthGrid({
   days,
   lines,
@@ -144,6 +172,7 @@ export function MonthGrid({
   capacityCentiemes,
   capacityMode,
   busyDates = AUCUNE_OCCUPATION,
+  slots = AUCUN_CRENEAU,
   onSave,
 }: {
   days: MonthDay[]
@@ -175,24 +204,53 @@ export function MonthGrid({
    * il n'interdit rien.
    */
   busyDates?: string[]
+  /**
+   * créneaux configurés ; vide = saisie à la journée uniquement.
+   *
+   * Ce sont les créneaux **réglés en administration**, pas ceux qu'une ligne
+   * autorise : un créneau hors des créneaux prévus reste choisissable, et fait
+   * l'objet d'un signalement au retour du serveur — jamais d'un refus.
+   */
+  slots?: Slot[]
   /** renvoie `true` quand la valeur a bien été enregistrée */
-  onSave: (lineId: string, date: string, raw: string) => Promise<boolean>
+  onSave: (lineId: string, date: string, raw: string, slotId: string) => Promise<boolean>
 }) {
   const occupes = useMemo(() => new Set(busyDates), [busyDates])
-  const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines])
   const cells = useMemo(() => buildCells(entries), [entries])
+  const slotCells = useMemo(() => buildSlotCells(entries), [entries])
+
+  // Créneau courant par ligne. Vide = journée, et c'est le défaut : le geste
+  // principal n'est pas modifié par ce lot.
+  const [slotByLine, setSlotByLine] = useState<ReadonlyMap<string, string>>(new Map())
+  const slotDe = useCallback((lineId: string) => slotByLine.get(lineId) ?? '', [slotByLine])
+
+  /**
+   * La saisie qu'une cellule montre et vise : la journée agrégée tant qu'aucun
+   * créneau n'est choisi, celle du créneau sinon.
+   */
+  const celluleAffichee = useCallback(
+    (lineId: string, date: string): Cell | undefined => {
+      const slot = slotByLine.get(lineId) ?? ''
+      return slot === ''
+        ? cells.get(cellKey(lineId, date))
+        : slotCells.get(slotKey(lineId, date, slot))
+    },
+    [cells, slotCells, slotByLine],
+  )
 
   // Valeurs telles que le serveur les connaît : ce sont elles qu'on restaure
   // quand un enregistrement est refusé.
   const serverValues = useMemo(() => {
     const values = new Map<string, string>()
-    for (const [key, cell] of cells) {
-      const line = lineById.get(cell.lineId)
-      if (line === undefined) continue
-      values.set(key, quantiteAffichee(cell, line))
+    for (const line of lines) {
+      for (const d of days) {
+        const cell = celluleAffichee(line.id, d.date)
+        if (cell === undefined) continue
+        values.set(cellKey(line.id, d.date), quantiteAffichee(cell, line))
+      }
     }
     return values
-  }, [cells, lineById])
+  }, [celluleAffichee, lines, days])
 
   // Cellules contrôlées : un input non contrôlé garde à l'écran une valeur
   // refusée par le serveur, et ne se met pas à jour lors d'un remplissage par
@@ -221,18 +279,23 @@ export function MonthGrid({
   const commit = useCallback(
     async (lineId: string, date: string, raw: string) => {
       const key = cellKey(lineId, date)
-      // Réécrire une cellule agrégeant des créneaux créerait une saisie
-      // supplémentaire à créneau vide, qui doublerait le total du jour.
-      if (cells.get(key)?.hasSlots === true) {
+      const slot = slotByLine.get(lineId) ?? ''
+
+      // En vue journée, réécrire une cellule qui agrège des créneaux créerait
+      // une saisie supplémentaire à créneau vide, qui doublerait le total du
+      // jour. Sur un créneau choisi, la cellule vise cette saisie précise : le
+      // garde-fou n'a plus lieu d'être, et le maintenir rendrait la saisie par
+      // créneau silencieusement inopérante là où elle sert le plus.
+      if (slot === '' && cells.get(key)?.hasSlots === true) {
         setCell(key, serverValues.get(key) ?? '')
         return
       }
 
       setCell(key, raw)
-      const saved = await onSave(lineId, date, raw)
+      const saved = await onSave(lineId, date, raw, slot)
       if (!saved) setCell(key, serverValues.get(key) ?? '')
     },
-    [cells, onSave, serverValues, setCell],
+    [cells, onSave, serverValues, setCell, slotByLine],
   )
 
   const drag = useDragSelect((sel, raw) => {
@@ -315,12 +378,34 @@ export function MonthGrid({
           {lines.map((l) => (
             <tr key={l.id} className="border-t border-rule">
               <th scope="row" className="sticky left-0 bg-surface px-2 py-1 text-left font-normal">
-                {l.label}
+                <span className="mr-2">{l.label}</span>
+                {/* Le sélecteur n'apparaît que si l'administration a réglé des
+                    créneaux : sans créneau configuré, il n'offrirait que
+                    « Journée » et n'annoncerait qu'une possibilité inexistante. */}
+                {slots.length > 0 && (
+                  <select
+                    aria-label={`Créneau — ${l.label}`}
+                    value={slotDe(l.id)}
+                    onChange={(ev) =>
+                      setSlotByLine((prev) => new Map(prev).set(l.id, ev.target.value))
+                    }
+                    className="touch-target rounded-md border border-rule bg-surface px-1 text-xs text-ink"
+                  >
+                    <option value="">Journée</option>
+                    {slots.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </th>
               {days.map((d) => {
                 const key = cellKey(l.id, d.date)
-                const cell = cells.get(key)
-                const parCreneaux = cell?.hasSlots === true
+                const cell = celluleAffichee(l.id, d.date)
+                // Seulement en vue journée : sur un créneau choisi, la cellule
+                // est modifiable, c'est tout l'objet de ce lot.
+                const parCreneaux = slotDe(l.id) === '' && cells.get(key)?.hasSlots === true
                 return (
                   <td
                     key={d.date}

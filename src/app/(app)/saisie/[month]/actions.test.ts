@@ -194,6 +194,61 @@ describe('saveCell', () => {
     expect(await kindsEcrits(ligneOuverte, date)).toEqual(['PREVISIONNEL'])
   })
 
+  // Tâche 12 — l'action est le seul fil entre la cellule et le service : un
+  // `slotId` reçu mais non transmis écrirait silencieusement la journée
+  // entière, et rien à l'écran ne le montrerait.
+  it('écrit sur le créneau demandé', async () => {
+    const date = `${moisCase}-17`
+    const resultat = await saveCell({
+      lineId: ligneOuverte,
+      date,
+      raw: '0,5',
+      month: moisCase,
+      slotId: 'matin',
+    })
+    expect(resultat.ok).toBe(true)
+
+    const ecrites = await prisma.timeEntry.findMany({
+      where: { userId: session.id, lineId: ligneOuverte, date: new Date(`${date}T00:00:00.000Z`) },
+      select: { slotId: true, minutes: true },
+    })
+    expect(ecrites).toEqual([{ slotId: 'matin', minutes: 240 }])
+  })
+
+  it('remonte le signalement d un créneau non prévu, sans refuser la saisie', async () => {
+    const { missionId } = await prisma.missionLine.findUniqueOrThrow({
+      where: { id: ligneOuverte },
+      select: { missionId: true },
+    })
+    const ligneNuit = (
+      await createLine({
+        missionId,
+        userId: session.id,
+        label: 'Nuit seulement',
+        soldCentiemes: 3000,
+        tjmCents: 0,
+        allowedSlotIds: ['nuit'],
+      })
+    ).id
+
+    const date = `${moisCase}-18`
+    const resultat = await saveCell({
+      lineId: ligneNuit,
+      date,
+      raw: '0,5',
+      month: moisCase,
+      slotId: 'matin',
+    })
+
+    expect(resultat.ok).toBe(true)
+    if (resultat.ok) {
+      expect(resultat.slotWarning).toEqual({ slotId: 'matin', allowedSlotIds: ['nuit'] })
+    }
+    expect(await prisma.timeEntry.count({ where: { userId: session.id, lineId: ligneNuit } })).toBe(
+      1,
+    )
+  })
+
   it('refuse un mois validé sans rien écrire', async () => {
     const date = `${month}-16`
     const resultat = await saveCell({ lineId: ligneVerrouillee, date, raw: '1', month })

@@ -119,8 +119,21 @@ export interface CapacityWarning {
   capacityCentiemes: number
 }
 
+/**
+ * Créneau saisi que la ligne ne prévoit pas — signalement, jamais refus.
+ *
+ * La règle est celle du lot 0, déjà appliquée par `applyCellState` pour la vue
+ * calendrier : la prestation restreint ce que la cinématique *propose*, elle
+ * n'interdit pas ce que l'utilisateur décrit. Refuser reviendrait à lui
+ * interdire de déclarer une nuit réellement travaillée.
+ */
+export interface SlotWarning {
+  slotId: string
+  allowedSlotIds: string[]
+}
+
 export type SaveResult =
-  | { ok: true; minutes: number; warning?: CapacityWarning }
+  | { ok: true; minutes: number; warning?: CapacityWarning; slotWarning?: SlotWarning }
   | { ok: false; reason: 'CAPACITE'; totalCentiemes: number; capacityCentiemes: number }
   | { ok: false; reason: 'VERROUILLE' }
   | { ok: false; reason: 'NON_AFFECTE' }
@@ -183,7 +196,7 @@ export async function saveEntry(args: {
   // vit dans le service, pas dans le server action qui l'appelle.
   const assignment = await prisma.assignment.findUnique({
     where: { lineId_userId: { lineId: args.lineId, userId: args.userId } },
-    select: { line: { select: { missionId: true } } },
+    select: { line: { select: { missionId: true, allowedSlotIds: true } } },
   })
 
   if (assignment === null) {
@@ -290,9 +303,25 @@ export async function saveEntry(args: {
     await enqueueTimeEntry(tx, { userId: args.userId, entryId: entry.id, operation: 'UPSERT' })
   })
 
-  return warning === null
-    ? { ok: true, minutes: args.minutes }
-    : { ok: true, minutes: args.minutes, warning }
+  // Une ligne qui n'énumère aucun créneau les accepte tous ; une saisie à la
+  // journée n'est jamais concernée. La liste est stockée en chaîne séparée par
+  // des virgules — aucun tableau en base, pour rester portable.
+  const allowedSlotIds =
+    assignment.line.allowedSlotIds === '' ? [] : assignment.line.allowedSlotIds.split(',')
+  const slotWarning: SlotWarning | null =
+    slotId !== '' && allowedSlotIds.length > 0 && !allowedSlotIds.includes(slotId)
+      ? { slotId, allowedSlotIds }
+      : null
+
+  // Le signalement se calcule **après** l'écriture, et il ne la conditionne
+  // pas : la saisie est déjà en base et déjà en file quand cette phrase se
+  // forme.
+  return {
+    ok: true,
+    minutes: args.minutes,
+    ...(warning === null ? {} : { warning }),
+    ...(slotWarning === null ? {} : { slotWarning }),
+  }
 }
 
 /**
