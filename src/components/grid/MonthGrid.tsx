@@ -1,6 +1,11 @@
 'use client'
 
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { readCellState } from '@/core/saisie/cell-state'
+import type { CellEntry } from '@/core/saisie/cell-state'
+import { colorForLine } from '@/core/saisie/colors'
+import { formeDeLaCase } from '@/core/saisie/forme'
+import type { Forme } from '@/core/saisie/forme'
 import { kindDeLaJournee } from '@/core/saisie/kind'
 import { OCCUPATION_TITRE } from '@/core/saisie/occupation'
 import { centiemesParFacteur, formatJours, formatQuantity } from '@/core/time/units'
@@ -10,6 +15,7 @@ import type { Slot } from '@/core/time/slots'
 import type { CapacityMode, TimeEntryKind } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
+import { Aplat } from '@/components/ui/Aplat'
 import { SegmentLegend } from '@/components/ui/SegmentLegend'
 import { EngagementBar } from './EngagementBar'
 import { TotalsRow } from './TotalsRow'
@@ -34,6 +40,15 @@ interface Cell {
   lineId: string
   /** minutes de la journée, chacune sous le facteur figé à son écriture */
   saisies: MinutesAuFacteur[]
+  /**
+   * les mêmes saisies, telles que la cinématique les lit.
+   *
+   * Conservées à côté de `saisies` parce que le classement d'une journée —
+   * entière, demie, libre — se fait sur le créneau autant que sur les minutes,
+   * et que ce classement n'est écrit nulle part ici : `readCellState` le fait,
+   * pour les deux vues.
+   */
+  brutes: CellEntry[]
   /** nature de chaque saisie agrégée ; celle de la journée en dérive */
   kinds: TimeEntryKind[]
   /** vrai dès qu'une des saisies agrégées porte un créneau */
@@ -115,6 +130,47 @@ function quantiteAffichee(cell: Cell, line: LineForGrid): string {
 }
 
 /**
+ * La forme d'une cellule — **la même règle que le calendrier**, prise au même
+ * endroit : `readCellState` classe la journée, `formeDeLaCase` la dessine. Rien
+ * n'est décidé ici, et surtout pas une seconde fois.
+ *
+ * La quantité se lit ainsi à la forme — aplat plein pour une journée, demi
+ * taillé en diagonale pour une demi-journée, hauteur proportionnelle pour une
+ * durée libre —, le chiffre restant par-dessus et jamais à sa place.
+ */
+function formeDeLaCellule(
+  cell: Cell | undefined,
+  line: LineForGrid,
+  slots: readonly Slot[],
+): Forme {
+  if (cell === undefined) return { kind: 'AUCUNE' }
+  const etat = readCellState(cell.brutes, { minutesParJour: line.minutesParJour, slots })
+  // Les saisies partent une à une : chacune porte le facteur figé à son
+  // écriture, et `formeDeLaCase` les convertit à facteur constant. Sommer
+  // d'abord donnerait une hauteur d'aplat fausse.
+  return formeDeLaCase(etat, cell.saisies, slots)
+}
+
+/**
+ * L'encre du champ de saisie — une seule, jamais deux superposées.
+ *
+ * C'est la contrainte que le calendrier n'a pas : ces cellules sont des champs
+ * modifiables, et l'aplat passe **derrière** le texte qu'on y tape. Dès qu'un
+ * aplat porte la cellule, l'encre est `ink` : c'est le seul couple déclaré sur
+ * les fonds de la palette catégorielle (`TEXT_PAIRS`, `core/theme/tokens.ts`).
+ * `muted` — que le prévisionnel posait — et `warning-ink` — que la journée par
+ * créneaux pose — tombent sous 4,5:1 sur les teintes les plus claires de cette
+ * palette. Le prévisionnel et les créneaux ne perdent rien : leurs hachures,
+ * leur italique et leur liseré se lisent en vision monochrome, ce qu'une
+ * nuance d'encre n'a jamais fait.
+ */
+function encreCellule(remplie: boolean, previsionnel: boolean, parCreneaux: boolean): string {
+  if (remplie) return 'text-ink'
+  if (parCreneaux) return 'text-warning-ink'
+  return previsionnel ? 'text-muted' : 'text-ink'
+}
+
+/**
  * Agrège les saisies par (ligne, jour).
  *
  * La clé d'unicité d'une saisie est `(ligne, user, date, créneau)` : plusieurs
@@ -134,6 +190,7 @@ function buildCells(entries: MonthEntry[]): Map<string, Cell> {
       // porte le facteur figé à son écriture, et les additionner avant de
       // convertir écraserait cette distinction.
       saisies: [...(prev?.saisies ?? []), { minutes: e.minutes, minutesParJour: e.minutesParJour }],
+      brutes: [...(prev?.brutes ?? []), e],
       // De même pour les natures : `kindDeLaJournee` tranche, et elle tranche
       // pour les deux vues à la fois.
       kinds: [...(prev?.kinds ?? []), e.kind],
@@ -157,6 +214,7 @@ function buildSlotCells(entries: MonthEntry[]): Map<string, Cell> {
     cells.set(slotKey(e.lineId, e.date, e.slotId), {
       lineId: e.lineId,
       saisies: [{ minutes: e.minutes, minutesParJour: e.minutesParJour }],
+      brutes: [e],
       kinds: [e.kind],
       hasSlots: e.slotId !== '',
     })
@@ -406,6 +464,8 @@ export function MonthGrid({
                 // Seulement en vue journée : sur un créneau choisi, la cellule
                 // est modifiable, c'est tout l'objet de ce lot.
                 const parCreneaux = slotDe(l.id) === '' && cells.get(key)?.hasSlots === true
+                const forme = formeDeLaCellule(cell, l, slots)
+                const previsionnel = etatSaisie(cell) === 'previsionnel'
                 return (
                   <td
                     key={d.date}
@@ -413,10 +473,14 @@ export function MonthGrid({
                     onMouseDown={() => drag.handlers.onMouseDown(l.id, d.date)}
                     onMouseEnter={() => drag.handlers.onMouseEnter(l.id, d.date)}
                     onMouseUp={drag.handlers.onMouseUp}
-                    className={`${FOND_JOUR[etatJour(d)]} ${
+                    // `relative` : l'aplat est posé en absolu dans la cellule,
+                    // et n'ajoute donc aucune largeur — le budget des sept
+                    // colonnes à 375 points n'en bouge pas.
+                    className={`relative ${FOND_JOUR[etatJour(d)]} ${
                       drag.isSelected(l.id, d.date) ? 'ring-2 ring-inset ring-focus' : ''
                     }`}
                   >
+                    <Aplat cle={`${l.id}-${d.date}`} forme={forme} couleur={colorForLine(l.id)} />
                     <input
                       aria-label={`${l.label} ${d.date}`}
                       data-saisie={etatSaisie(cell)}
@@ -444,9 +508,17 @@ export function MonthGrid({
                       // opaque posé ici efface le fond ET le motif du jour.
                       // Le focus se voit par le contour de `globals.css`, et
                       // les créneaux par un liseré — jamais par un aplat.
-                      className={`touch-target w-11 border-0 bg-transparent text-center text-xs text-ink ${
-                        etatSaisie(cell) === 'previsionnel' ? 'pattern-hatch italic text-muted' : ''
-                      } ${parCreneaux ? 'text-warning-ink ring-1 ring-inset ring-warning-edge' : ''}`}
+                      //
+                      // `relative` : le champ passe **au-dessus** de l'aplat,
+                      // qui est le seul nœud positionné en absolu de la
+                      // cellule. Sans cela, l'aplat recouvrirait le chiffre.
+                      className={`touch-target relative w-11 border-0 bg-transparent text-center text-xs ${encreCellule(
+                        forme.kind !== 'AUCUNE',
+                        previsionnel,
+                        parCreneaux,
+                      )} ${previsionnel ? 'pattern-hatch italic' : ''} ${
+                        parCreneaux ? 'ring-1 ring-inset ring-warning-edge' : ''
+                      }`}
                     />
                   </td>
                 )

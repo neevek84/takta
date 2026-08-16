@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { MonthGrid } from './MonthGrid'
+import { colorForLine } from '@/core/saisie/colors'
 import { DEFAULT_SLOTS } from '@/services/settings'
 import { buildMonthDays } from '@/core/month/build'
 import type { LineForGrid } from '@/services/missions'
@@ -32,11 +33,18 @@ const lines: LineForGrid[] = [
   },
 ]
 
+/**
+ * Bornes figées d'une saisie (lot 1f). Le tableau ne les lit pas — il montre
+ * des durées, pas des placements — mais le type de `MonthEntry` les exige :
+ * elles sont ce qui identifie une saisie en base et ce qui part dans l'agenda.
+ */
+const BORNES = { startMinute: 540, endMinute: 1020 }
+
 // `minutesParJour` est figé sur chaque saisie depuis le lot 1d : les deux
 // lignes du jeu d'essai travaillent en journées de 8 h.
 const entries: MonthEntry[] = [
-  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
-  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'nuit', minutesParJour: 480 },
+  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480 },
+  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'nuit', ...BORNES, minutesParJour: 480 },
 ]
 
 const engagementTotals: Record<string, LineEngagementTotals> = {
@@ -153,8 +161,8 @@ describe('MonthGrid', () => {
     it('distingue réalisé, prévisionnel et vide sur la saisie', () => {
       renderGrid({
         entries: [
-          { id: 'r', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
-          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', minutesParJour: 480 },
+          { id: 'r', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480 },
+          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480 },
         ],
       })
 
@@ -178,8 +186,8 @@ describe('MonthGrid', () => {
     it('lit une journée mêlant réalisé et prévisionnel comme prévisionnelle', () => {
       renderGrid({
         entries: [
-          { id: 'm', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'REALISE', slotId: 'matin', minutesParJour: 480 },
-          { id: 'a', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+          { id: 'a', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
         ],
       })
 
@@ -191,8 +199,8 @@ describe('MonthGrid', () => {
     it('ne dépend pas de l ordre des saisies pour lire une journée mixte', () => {
       renderGrid({
         entries: [
-          { id: 'a', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', minutesParJour: 480 },
-          { id: 'm', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'REALISE', slotId: 'matin', minutesParJour: 480 },
+          { id: 'a', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
         ],
       })
 
@@ -205,8 +213,8 @@ describe('MonthGrid', () => {
     it('convertit chaque saisie sous son propre facteur, jamais la somme', () => {
       renderGrid({
         entries: [
-          { id: 'court', lineId: 'l1', date: '2026-03-18', minutes: 105, kind: 'REALISE', slotId: 'matin', minutesParJour: 420 },
-          { id: 'long', lineId: 'l1', date: '2026-03-18', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', minutesParJour: 480 },
+          { id: 'court', lineId: 'l1', date: '2026-03-18', minutes: 105, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 420 },
+          { id: 'long', lineId: 'l1', date: '2026-03-18', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
         ],
       })
 
@@ -283,7 +291,7 @@ describe('MonthGrid', () => {
     // Une journée pleine écrite sous un réglage à 7 h 12 : 432 minutes valent
     // 1 j, jamais 0,9 j — ce que donnerait le facteur global de 8 h.
     const uneJourneeSurL1: MonthEntry[] = [
-      { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 432, kind: 'REALISE', slotId: '', minutesParJour: 432 },
+      { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 432, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 432 },
     ]
 
     it('formate chaque saisie au facteur figé à son écriture', () => {
@@ -344,7 +352,7 @@ describe('MonthGrid', () => {
           days={days}
           lines={lines}
           entries={[
-            { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: '', minutesParJour: 480 },
+            { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480 },
           ]}
           engagementTotals={engagementTotals}
           capacityCentiemes={100}
@@ -401,8 +409,8 @@ describe('MonthGrid', () => {
   // son modèle de données plutôt que d'en masquer un.
   describe('journée éclatée en créneaux', () => {
     const deuxCreneaux: MonthEntry[] = [
-      { id: 'e1', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', minutesParJour: 480 },
-      { id: 'e2', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', minutesParJour: 480 },
+      { id: 'e1', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+      { id: 'e2', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
     ]
 
     it('additionne les créneaux d une même journée au lieu d en masquer un', () => {
@@ -603,8 +611,8 @@ describe('MonthGrid', () => {
       renderGrid({
         slots: DEFAULT_SLOTS,
         entries: [
-          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', minutesParJour: 480 },
-          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
         ],
       })
       expect(cell('Consultant ITSM', '2026-03-16').value).toBe('1')
@@ -633,8 +641,8 @@ describe('MonthGrid', () => {
       renderGrid({
         slots: DEFAULT_SLOTS,
         entries: [
-          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', minutesParJour: 480 },
-          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
         ],
       })
       expect(cell('Consultant ITSM', '2026-03-16').getAttribute('data-saisie')).toBe(
@@ -699,6 +707,196 @@ describe('MonthGrid', () => {
       await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
       expect(onSave).toHaveBeenCalledWith('l1', '2026-03-16', '0,5', 'apres-midi')
       expect(onSave).toHaveBeenCalledWith('l1', '2026-03-17', '0,5', 'apres-midi')
+    })
+  })
+
+  /**
+   * Le tableau est la vue **multi-CRA** : celle qui montre toutes les missions
+   * et prestations auxquelles on est affecté. C'est donc là que distinguer les
+   * lignes sert le plus — et c'est justement là que le code couleur manquait,
+   * le calendrier l'ayant reçu seul au lot 1f.
+   *
+   * La règle est la même des deux côtés, et elle n'est réécrite ni ici ni dans
+   * le composant : la teinte vient de `colorForLine`, la forme de
+   * `formeDeLaCase`.
+   */
+  describe('le code couleur, comme au calendrier', () => {
+    /** Les classes `text-*` qui ne portent pas d'encre : taille et alignement. */
+    const SANS_ENCRE = new Set([
+      'text-xs',
+      'text-sm',
+      'text-base',
+      'text-lg',
+      'text-xl',
+      'text-2xl',
+      'text-center',
+      'text-left',
+      'text-right',
+    ])
+
+    function remplissage(lineId: string, date: string): HTMLElement | null {
+      return screen.queryByTestId(`remplissage-${lineId}-${date}`)
+    }
+
+    /**
+     * Les classes une à une, jamais la chaîne entière : `toContain('bg-cat-a')`
+     * sur `className` accepterait `bg-cat-a-edge`.
+     */
+    function classes(el: Element): string[] {
+      return el.className.split(/\s+/).filter((c) => c !== '')
+    }
+
+    it('pose derrière chaque cellule remplie l aplat de sa prestation', () => {
+      renderGrid()
+      const aplat = remplissage('l1', '2026-03-12')
+      expect(aplat).not.toBeNull()
+      expect(classes(aplat!)).toContain(colorForLine('l1').bg)
+    })
+
+    // Une couleur par prestation, dérivée du seul identifiant : c'est ce qui
+    // permet de suivre une ligne d'un écran à l'autre.
+    it('donne à deux prestations deux teintes distinctes', () => {
+      renderGrid()
+      const premiere = classes(remplissage('l1', '2026-03-12')!).find((c) => c.startsWith('bg-cat-'))
+      const seconde = classes(remplissage('l2', '2026-03-12')!).find((c) => c.startsWith('bg-cat-'))
+      expect(premiere).toBeDefined()
+      expect(seconde).toBeDefined()
+      expect(premiere).not.toBe(seconde)
+    })
+
+    it('ne pose aucun aplat sur une cellule vide', () => {
+      renderGrid()
+      expect(remplissage('l1', '2026-03-13')).toBeNull()
+    })
+
+    // La quantité se lit à la forme : aplat plein pour une journée, demi-aplat
+    // taillé en diagonale pour une demi-journée, hauteur proportionnelle pour
+    // une durée libre. Le chiffre reste, il ne porte plus seul la lecture.
+    it('remplit toute la cellule pour une journée entière', () => {
+      renderGrid()
+      const aplat = remplissage('l1', '2026-03-12')!
+      expect(aplat.getAttribute('data-forme')).toBe('PLEINE')
+      expect(aplat.style.height).toBe('100%')
+    })
+
+    it('taille la demi-journée du matin en diagonale, comme le calendrier', () => {
+      renderGrid({
+        slots: DEFAULT_SLOTS,
+        entries: [
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+        ],
+      })
+      const aplat = remplissage('l1', '2026-03-16')!
+      expect(aplat.getAttribute('data-forme')).toBe('MOITIE-AM')
+      expect(classes(aplat)).toContain('clip-half-am')
+      expect(classes(aplat)).not.toContain('clip-half-pm')
+    })
+
+    it('remplit une durée libre proportionnellement, sans effacer le chiffre', () => {
+      renderGrid({
+        slots: DEFAULT_SLOTS,
+        entries: [
+          { id: 'l', lineId: 'l1', date: '2026-03-16', minutes: 180, kind: 'REALISE', slotId: 'nuit', ...BORNES, minutesParJour: 480 },
+        ],
+      })
+      const aplat = remplissage('l1', '2026-03-16')!
+      expect(aplat.getAttribute('data-forme')).toBe('PARTIELLE')
+      // 3 h sur une journée de 8 h : 0,38 j, et 38 % de la cellule.
+      expect(aplat.style.height).toBe('38%')
+      // Aucun aplat ne dit « trois heures » : le chiffre reste, et il reste
+      // dans le champ, pas dans l'aplat.
+      const champ = cell('Consultant ITSM', '2026-03-16')
+      expect(champ.value).toBe('0,38')
+      expect(aplat.contains(champ)).toBe(false)
+    })
+
+    // Le piège le plus répété du projet, ici sur une hauteur d'aplat :
+    // convertir la somme des minutes sous le facteur courant de la ligne
+    // donnerait 360/480 = 75 %.
+    it('calcule la hauteur de l aplat à facteur constant', () => {
+      renderGrid({
+        slots: DEFAULT_SLOTS,
+        entries: [
+          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+          { id: 'b', lineId: 'l1', date: '2026-03-16', minutes: 120, kind: 'REALISE', slotId: 'nuit', ...BORNES, minutesParJour: 420 },
+        ],
+      })
+      // 0,50 + 0,29 = 0,79 — et non 0,75.
+      expect(remplissage('l1', '2026-03-16')!.style.height).toBe('79%')
+    })
+
+    it('pose l aplat sous le champ, sans intercepter le geste', () => {
+      renderGrid()
+      const aplat = remplissage('l1', '2026-03-12')!
+      expect(aplat.getAttribute('aria-hidden')).toBe('true')
+      expect(classes(aplat)).toContain('pointer-events-none')
+    })
+
+    // L'angle mort déjà documenté : le contrôle de contraste porte sur des
+    // couleurs **opaques**. Une demi-couverture obtenue par une opacité y
+    // échapperait entièrement.
+    it('n obtient jamais sa moitié par une opacité', () => {
+      renderGrid({
+        slots: DEFAULT_SLOTS,
+        entries: [
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+        ],
+      })
+      const aplat = remplissage('l1', '2026-03-16')!
+      for (const c of classes(aplat)) expect(c).not.toMatch(/^(?:bg|text|border|ring)-.*\/\d+$/)
+      expect(aplat.style.opacity).toBe('')
+    })
+
+    /**
+     * La contrainte que le calendrier n'a pas : les cellules du tableau sont
+     * des champs de saisie. Une encre posée par-dessus l'aplat doit tenir le
+     * contraste sur la teinte catégorielle, et le seul couple déclaré pour ces
+     * fonds est `ink` (`TEXT_PAIRS`, `core/theme/tokens.ts`). `muted` — que le
+     * prévisionnel posait — tombe sous 4,5:1 sur les fonds les plus clairs de
+     * la palette, et `warning-ink` — que la journée par créneaux pose — aussi.
+     */
+    it('ne pose aucune encre non déclarée par-dessus l aplat', () => {
+      renderGrid({
+        slots: DEFAULT_SLOTS,
+        entries: [
+          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
+        ],
+      })
+
+      // Le jeu d'essai porte bien les deux cas que la règle vise.
+      expect(cell('Consultant ITSM', '2026-03-13').getAttribute('data-saisie')).toBe('previsionnel')
+      expect(cell('Consultant ITSM', '2026-03-16').readOnly).toBe(true)
+
+      let couverts = 0
+      for (const champ of screen.getAllByLabelText(/^Consultant ITSM 2026-03-/)) {
+        if (remplissage('l1', champ.getAttribute('aria-label')!.slice(-10)) === null) continue
+        couverts += 1
+        // `text-*` porte aussi des tailles et des alignements : ne garder que
+        // les encres, sans quoi l'assertion refuserait `text-xs`.
+        expect(classes(champ).filter((c) => /^text-/.test(c) && !SANS_ENCRE.has(c))).toEqual([
+          'text-ink',
+        ])
+      }
+      // Deux cellules couvertes, et ce sont exactement les deux cas visés :
+      // le prévisionnel du 13 et la journée par créneaux du 16.
+      expect(couverts).toBe(2)
+    })
+
+    // Le prévisionnel garde ce qui le distingue en vision monochrome : le
+    // remplacement de l'encre grise par l'encre pleine ne lui retire ni ses
+    // hachures ni son italique.
+    it('garde les hachures et l italique du prévisionnel sous l aplat', () => {
+      renderGrid({
+        entries: [
+          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480 },
+        ],
+      })
+      const champ = cell('Consultant ITSM', '2026-03-13')
+      expect(remplissage('l1', '2026-03-13')).not.toBeNull()
+      expect(classes(champ)).toContain('pattern-hatch')
+      expect(classes(champ)).toContain('italic')
     })
   })
 
