@@ -6,6 +6,13 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { DataTable } from '@/components/ui/DataTable'
 import { PageShell } from '@/components/ui/PageShell'
+import {
+  IconeAttente,
+  IconeAvertissement,
+  IconeDanger,
+  IconeSucces,
+  type Icone,
+} from '@/components/ui/icons'
 import { listWebhooks, readSeuilSuspension } from '@/services/webhooks/subscriptions'
 import { listDeliveries } from '@/services/webhooks/delivery'
 import { renvoyerLivraison } from '../supervision/actions'
@@ -16,11 +23,11 @@ export const dynamic = 'force-dynamic'
 
 const CHEMIN = '/admin/webhooks'
 
-const ETATS_LIVRAISON: Record<string, { libelle: string; tone: Tone; glyph: string }> = {
-  PENDING: { libelle: 'En attente', tone: 'neutral', glyph: '·' },
-  SUCCES: { libelle: 'Réussie', tone: 'success', glyph: '✓' },
-  ECHEC: { libelle: 'Échec', tone: 'warning', glyph: '▲' },
-  ABANDONNE: { libelle: 'Abandonnée', tone: 'danger', glyph: '✕' },
+const ETATS_LIVRAISON: Record<string, { libelle: string; tone: Tone; icone: Icone }> = {
+  PENDING: { libelle: 'En attente', tone: 'neutral', icone: IconeAttente },
+  SUCCES: { libelle: 'Réussie', tone: 'success', icone: IconeSucces },
+  ECHEC: { libelle: 'Échec', tone: 'warning', icone: IconeAvertissement },
+  ABANDONNE: { libelle: 'Abandonnée', tone: 'danger', icone: IconeDanger },
 }
 
 export default async function WebhooksPage({
@@ -74,7 +81,7 @@ export default async function WebhooksPage({
                       <span className="font-medium">{abonnement.label}</span>
                       <Badge
                         tone={suspendu ? 'danger' : 'success'}
-                        glyph={suspendu ? '✕' : '✓'}
+                        icone={suspendu ? IconeDanger : IconeSucces}
                       >
                         {suspendu ? 'Suspendu' : 'Actif'}
                       </Badge>
@@ -162,7 +169,7 @@ export default async function WebhooksPage({
                       <td className="p-2 tabular-nums">{livraison.seq}</td>
                       <td className="p-2">{livraison.action}</td>
                       <td className="p-2">
-                        <Badge tone={etat.tone} glyph={etat.glyph}>{etat.libelle}</Badge>
+                        <Badge tone={etat.tone} icone={etat.icone}>{etat.libelle}</Badge>
                       </td>
                       <td className="p-2 tabular-nums">{livraison.attempts}</td>
                       <td className="p-2 tabular-nums">

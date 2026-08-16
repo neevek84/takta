@@ -84,8 +84,8 @@ describe('écran des abonnements sortants', () => {
 
     const actif = screen.getByText('Actif')
     const suspendu = screen.getByText('Suspendu')
-    expect(actif.textContent).toMatch(/[✓]/)
-    expect(suspendu.textContent).toMatch(/[✕]/)
+    expect(actif.querySelector('svg[data-icone="succes"]')).not.toBeNull()
+    expect(suspendu.querySelector('svg[data-icone="danger"]')).not.toBeNull()
   })
 
   it('AFFICHE LE SEQ SANS LEQUEL LE RATTRAPAGE EST IMPOSSIBLE', async () => {
@@ -127,14 +127,16 @@ describe('écran des abonnements sortants', () => {
 
     const bandeau = screen.getByRole('alert')
     expect(bandeau.textContent).toContain('L’URL n’a pas répondu.')
-    expect(bandeau.textContent).toMatch(/[✕]/)
+    expect(bandeau.querySelector('svg[data-icone="danger"]')).not.toBeNull()
   })
 
   it('NE FAIT JAMAIS PASSER UN RETOUR POUR UNE RÉUSSITE en l absence de tonalité', async () => {
     for (const tone of [undefined, 'vert', 'SUCCESS']) {
       cleanup()
       await rendre({ message: 'Retour sans tonalité.', ...(tone === undefined ? {} : { tone }) })
-      expect(screen.getByRole('alert').textContent, String(tone)).toContain('▲')
+      const bandeau = screen.getByRole('alert')
+      expect(bandeau.querySelector('svg[data-icone="avertissement"]'), String(tone)).not.toBeNull()
+      expect(bandeau.querySelector('svg[data-icone="succes"]'), String(tone)).toBeNull()
     }
   })
 })

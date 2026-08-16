@@ -135,9 +135,14 @@ describe('MonthGrid', () => {
       expect(weekend.getAttribute('data-jour')).toBe('weekend')
       expect(ferie.getAttribute('data-jour')).toBe('ferie')
 
-      // Le motif porte l'information là où la teinte ne suffit pas.
+      // Le férié garde son motif : dix jours par an, une information plus
+      // forte. Le week-end, lui, se distingue par sa seule clarté — huit jours
+      // par mois hachurés étaient le signal d'ancienneté le plus fort du
+      // dessin, et l'écart de clarté entre `surface` et `off` porte déjà
+      // l'information, sous la garde de `MIN_LIGHTNESS_GAP`.
       expect(ouvre.className).not.toMatch(/pattern-/)
-      expect(weekend.className).toContain('pattern-stripes')
+      expect(weekend.className).not.toMatch(/pattern-/)
+      expect(weekend.className).toContain('bg-off')
       expect(ferie.className).toContain('pattern-dots')
     })
 
@@ -254,9 +259,11 @@ describe('MonthGrid', () => {
       const weekend = cell('Consultant ITSM', '2026-03-01').closest('td')!
 
       // 2026-03-02 est férié dans ce jeu, 2026-03-01 est un dimanche : leurs
-      // motifs diffèrent, et rien dans la cellule ne les efface au focus.
+      // fonds diffèrent, le férié garde son motif, et rien dans la cellule ne
+      // les efface au focus.
       expect(ferie.className).toContain('pattern-dots')
-      expect(weekend.className).toContain('pattern-stripes')
+      expect(weekend.className).toContain('bg-off')
+      expect(weekend.className).not.toMatch(/pattern-/)
       expect(cell('Consultant ITSM', '2026-03-02').className).not.toMatch(/(^|:)bg-off/)
     })
   })
@@ -505,7 +512,7 @@ describe('MonthGrid', () => {
       const occupe = screen.getByTestId('day-header-2026-03-01')
 
       expect(occupe.getAttribute('data-jour')).toBe('weekend')
-      expect(occupe.className).toContain('pattern-stripes')
+      expect(occupe.className).toContain('bg-off')
       expect(occupe.getAttribute('title')).toBe('Jour non ouvré — Occupation dans votre agenda')
     })
 

@@ -81,4 +81,17 @@ describe('page Administration · Thème', () => {
     expect(bandeau.textContent).toContain('catégorie 6')
     expect(bandeau.textContent).toContain('fond des jours non ouvrés')
   })
+
+  // Cet écran était le dernier en `max-w-3xl` : son bord gauche ne tombait au
+  // même endroit que celui d'aucun autre.
+  it('se rend dans le gabarit commun, comme tous les autres écrans', async () => {
+    getThemeConfig.mockResolvedValue(MARQUE)
+
+    const { container } = render(await AdminThemePage())
+
+    const principal = container.querySelector('main')!
+    expect(principal.className).toContain('max-w-5xl')
+    expect(principal.className).not.toContain('max-w-3xl')
+    expect(screen.getByRole('heading', { level: 1 }).className).toContain('text-2xl')
+  })
 })

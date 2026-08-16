@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { MonthGrid } from '@/components/grid/MonthGrid'
 import { MonthCalendar } from '@/components/calendar/MonthCalendar'
+import { EngagementBar } from '@/components/grid/EngagementBar'
 import { CellForm } from '@/components/calendar/CellForm'
 import { LineSelector } from '@/components/calendar/LineSelector'
 import { readSelection } from '@/components/calendar/selection-storage'
@@ -19,6 +20,12 @@ import type { CapacityMode } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
 import { appliquerCase, remplirMois, saveCell, viderMois } from './actions'
+
+/**
+ * Constante de module et non littéral au point d'appel : un `[]` écrit dans le
+ * JSX serait un tableau neuf à chaque rendu.
+ */
+const AUCUN_TOTAL: LineEngagementTotals = []
 
 /**
  * Centièmes de jour → jours, comme la charge et l'engagement les affichent
@@ -346,6 +353,19 @@ export function SaisieClient(props: {
             onRange={handleRange}
             onFormulaire={(date, etat) => setFormulaire({ date, etat })}
           />
+          {/* La réglette du mois : à la largeur de la grille, sous elle, en
+              permanence. Le calendrier n'affichait aucun total — on saisissait
+              douze jours sans jamais voir combien —, et l'engagement ne vivait
+              que dans la vue tableau. Elle ne montre que la ligne affichée :
+              empiler celui des autres dirait des chiffres qui ne concernent
+              pas ce qu'on regarde. */}
+          <div className="mt-3">
+            <EngagementBar
+              line={ligne}
+              totals={props.engagementTotals[ligne.id] ?? AUCUN_TOTAL}
+              pleineLargeur
+            />
+          </div>
           {formulaire !== null && (
             <CellForm
               date={formulaire.date}

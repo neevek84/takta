@@ -3,17 +3,25 @@ import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { DataTable } from '@/components/ui/DataTable'
+import {
+  IconeAbsence,
+  IconeDanger,
+  IconeIgnore,
+  IconeInfo,
+  IconeSucces,
+  type Icone,
+} from '@/components/ui/icons'
 import type { JobView } from '@/services/jobs/scheduler'
 import type { Ordonnanceur } from '@/services/supervision'
 import { executerTravail, basculerTravail } from './actions'
 
-/** Chaque état porte un glyphe : la teinte seule ne se perçoit pas de tous. */
-const ETATS: Record<string, { libelle: string; tone: Tone; glyph: string }> = {
-  SUCCES: { libelle: 'Succès', tone: 'success', glyph: '✓' },
-  ECHEC: { libelle: 'Échec', tone: 'danger', glyph: '✕' },
-  IGNORE: { libelle: 'Ignoré', tone: 'neutral', glyph: '·' },
-  INDISPONIBLE: { libelle: 'Indisponible', tone: 'info', glyph: 'ℹ' },
-  '': { libelle: 'Jamais exécuté', tone: 'neutral', glyph: '–' },
+/** Chaque état porte une icône : la teinte seule ne se perçoit pas de tous. */
+const ETATS: Record<string, { libelle: string; tone: Tone; icone: Icone }> = {
+  SUCCES: { libelle: 'Succès', tone: 'success', icone: IconeSucces },
+  ECHEC: { libelle: 'Échec', tone: 'danger', icone: IconeDanger },
+  IGNORE: { libelle: 'Ignoré', tone: 'neutral', icone: IconeIgnore },
+  INDISPONIBLE: { libelle: 'Indisponible', tone: 'info', icone: IconeInfo },
+  '': { libelle: 'Jamais exécuté', tone: 'neutral', icone: IconeAbsence },
 }
 
 function horodatage(date: Date | null): string {
@@ -78,7 +86,7 @@ export function TravauxPanel({
                   {travail.disponible && travail.enabled ? horodatage(travail.nextRunAt) : '—'}
                 </td>
                 <td className="p-2">
-                  <Badge tone={etat.tone} glyph={etat.glyph}>{etat.libelle}</Badge>
+                  <Badge tone={etat.tone} icone={etat.icone}>{etat.libelle}</Badge>
                   {/* Le verrou pris, en toutes lettres : la prise n'est pas
                       atomique, et deux déclenchements simultanés exécuteraient
                       le même travail deux fois. */}

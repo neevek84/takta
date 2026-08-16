@@ -31,9 +31,11 @@ describe('panneau des alertes', () => {
         alertes={[{ code: 'TRAVAIL_ECHEC', libelle: 'Travail en échec : X', detail: 'boum' }]}
       />,
     )
-    // Le bandeau porte un glyphe, et un rôle d'alerte lu par les lecteurs d'écran.
+    // Le bandeau porte une icône, et un rôle d'alerte lu par les lecteurs d'écran.
     expect(screen.getByRole('alert')).toBeTruthy()
-    expect(screen.getByRole('alert').textContent).toMatch(/[✕▲]/)
+    expect(
+      screen.getByRole('alert').querySelector('svg[data-icone="danger"], svg[data-icone="avertissement"]'),
+    ).not.toBeNull()
   })
 
   it('annonce le nombre d alertes dans le titre', () => {

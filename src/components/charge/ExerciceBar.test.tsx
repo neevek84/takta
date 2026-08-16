@@ -51,14 +51,14 @@ describe('ExerciceBar', () => {
   })
 
   // La barre d'exercice porte la même distinction que le reste : le
-  // prévisionnel se hachure, il ne se contente pas d'être plus clair.
+  // prévisionnel se tirete, il ne se contente pas de porter sa teinte.
   it('distingue le segment prévisionnel du réalisé sans la couleur', () => {
     render(<ExerciceBar label="Exercice 2026-2027" progress={base} resteEnJoursCentiemes={null} />)
     const realise = screen.getByTestId('bar-realise')
     const prevu = screen.getByTestId('bar-prevu')
 
-    expect(prevu.className).toContain('pattern-hatch')
-    expect(realise.className).not.toContain('pattern-hatch')
+    expect(prevu.className).toContain('border-dashed')
+    expect(realise.className).not.toContain('border-dashed')
   })
 
   // I5 — le nom des segments ne peut pas reposer sur un `title` posé sur un

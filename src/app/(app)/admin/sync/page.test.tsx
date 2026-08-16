@@ -117,8 +117,8 @@ describe('la tonalité du retour de connexion', () => {
     const bandeau = screen.getByRole('alert')
     expect(bandeau.textContent).toContain('Connexion Google refusée.')
     // L'information n'est pas portée par la seule couleur : le bandeau porte
-    // un glyphe propre à sa tonalité.
-    expect(bandeau.textContent).toContain('✕')
+    // une icône propre à sa tonalité.
+    expect(bandeau.querySelector('svg[data-icone="danger"]')).not.toBeNull()
     expect(screen.queryByRole('status')).toBeNull()
   })
 
@@ -135,7 +135,9 @@ describe('la tonalité du retour de connexion', () => {
       )
       // Repli sur l'avertissement : rien ne doit pouvoir se faire passer pour
       // une réussite en omettant simplement le paramètre.
-      expect(screen.getByRole('alert').textContent, String(tone)).toContain('▲')
+      const bandeau = screen.getByRole('alert')
+      expect(bandeau.querySelector('svg[data-icone="avertissement"]'), String(tone)).not.toBeNull()
+      expect(bandeau.querySelector('svg[data-icone="succes"]'), String(tone)).toBeNull()
     }
   })
 })

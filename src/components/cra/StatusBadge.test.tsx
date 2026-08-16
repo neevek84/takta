@@ -13,9 +13,9 @@ describe('StatusBadge', () => {
     }
   })
 
-  it('donne à chaque statut un glyphe distinct', () => {
-    const glyphes = CRA_STATUSES.map((s) => craStatusBadge(s).glyph)
-    expect(new Set(glyphes).size).toBe(CRA_STATUSES.length)
+  it('donne à chaque statut une icône distincte', () => {
+    const icones = CRA_STATUSES.map((s) => craStatusBadge(s).icone)
+    expect(new Set(icones).size).toBe(CRA_STATUSES.length)
   })
 
   it('donne à chaque statut une teinte distincte', () => {
@@ -31,7 +31,10 @@ describe('StatusBadge', () => {
 
   it('reste lisible sans la couleur', () => {
     render(<StatusBadge status="REFUSE" />)
-    expect(screen.getByTestId('cra-statut').textContent).toContain('✕')
-    expect(screen.getByTestId('cra-statut').textContent).toContain('Refusé')
+    const badge = screen.getByTestId('cra-statut')
+    // Un tracé, pas un caractère de la police système : `data-icone` le nomme,
+    // et il distingue « Refusé » de « Validé » en vision monochrome.
+    expect(badge.querySelector('svg[data-icone="danger"]')).not.toBeNull()
+    expect(badge.textContent).toContain('Refusé')
   })
 })

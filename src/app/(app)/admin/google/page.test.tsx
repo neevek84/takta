@@ -145,7 +145,7 @@ describe('la tonalité du message de retour', () => {
     await rendre({ message: "Aucun client OAuth n'est enregistré.", tone: 'warning' })
 
     const bandeau = screen.getByRole('alert')
-    expect(bandeau.textContent).toContain('▲')
+    expect(bandeau.querySelector('svg[data-icone="avertissement"]')).not.toBeNull()
     expect(screen.queryByRole('status')).toBeNull()
   })
 
@@ -154,7 +154,9 @@ describe('la tonalité du message de retour', () => {
     for (const params of cas) {
       cleanup()
       await rendre(params)
-      expect(screen.getByRole('alert').textContent).toContain('▲')
+      expect(
+        screen.getByRole('alert').querySelector('svg[data-icone="avertissement"]'),
+      ).not.toBeNull()
     }
   })
 })

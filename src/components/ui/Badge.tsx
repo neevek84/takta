@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import type { Icone } from './icons'
 
 export type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info'
 
@@ -11,18 +12,22 @@ const TONES: Record<Tone, string> = {
 }
 
 /**
- * Le glyphe n'est pas une décoration : c'est lui qui distingue les états
- * quand la teinte n'est pas perçue. Il est masqué aux lecteurs d'écran, qui
+ * L'icône n'est pas une décoration : c'est elle qui distingue les états quand
+ * la teinte n'est pas perçue. Elle est masquée aux lecteurs d'écran, qui
  * lisent déjà le libellé.
+ *
+ * Elle reste **obligatoire** : l'appelant choisit laquelle, il ne peut pas
+ * s'en passer. C'est le contrat que portait la prop `glyph` avant que les
+ * caractères de la police système ne deviennent des tracés.
  */
 export function Badge({
   tone,
-  glyph,
+  icone: Glyphe,
   children,
   testId,
 }: {
   tone: Tone
-  glyph: string
+  icone: Icone
   children: ReactNode
   testId?: string
 }) {
@@ -31,7 +36,7 @@ export function Badge({
       data-testid={testId}
       className={`inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 text-xs font-medium ${TONES[tone]}`}
     >
-      <span aria-hidden="true">{glyph}</span>
+      <Glyphe className="shrink-0" />
       {children}
     </span>
   )

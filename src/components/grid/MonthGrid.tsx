@@ -70,11 +70,18 @@ function etatJour(d: MonthDay): EtatJour {
   return d.isWorking ? 'ouvre' : 'weekend'
 }
 
-// Fond ET motif : la teinte porte la lecture rapide, le motif porte
-// l'information pour qui ne la distingue pas.
+// Fond ET motif — mais le motif ne sert plus qu'au férié. Le dithering du
+// week-end était le signal d'ancienneté le plus fort du dessin, et il couvrait
+// huit jours par mois. Le contrat non chromatique tient sans lui : l'écart de
+// clarté entre `surface`, `off` et `off-strong` (100 / 91,2 / 85,4 en L*)
+// porte l'information, et `MIN_LIGHTNESS_GAP` le vérifie déjà — le nom
+// accessible du jour la porte pour qui ne voit ni l'un ni l'autre.
+//
+// Le férié garde le sien : dix jours par an, une information plus forte, et un
+// marqueur si rare ne fatigue personne.
 const FOND_JOUR: Record<EtatJour, string> = {
   ouvre: 'bg-surface',
-  weekend: 'bg-off pattern-stripes',
+  weekend: 'bg-off',
   ferie: 'bg-off-strong pattern-dots',
 }
 

@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ReactElement } from 'react'
 import {
   DEFAULT_THEME_CONFIG,
-  THEME_CLAIR,
+  THEME_ENCRE_CLAIR,
+  THEME_ENCRE_SOMBRE,
   THEME_KREATIVPM,
   THEME_SOMBRE,
   THEME_TOKEN_KEYS,
@@ -72,16 +73,16 @@ describe('RootLayout', () => {
     getThemeConfig.mockResolvedValue(DEFAULT_THEME_CONFIG)
     const css = await feuille()
     expect(css).toContain('@media (prefers-color-scheme:dark)')
-    expect(css).toContain(`--color-page:${THEME_CLAIR.page};`)
-    expect(css).toContain(`--color-page:${THEME_SOMBRE.page};`)
+    expect(css).toContain(`--color-page:${THEME_ENCRE_CLAIR.page};`)
+    expect(css).toContain(`--color-page:${THEME_ENCRE_SOMBRE.page};`)
   })
 
   it('n’en porte qu’une sur un choix explicite — la préférence est remplacée', async () => {
     getThemeConfig.mockResolvedValue({ ...DEFAULT_THEME_CONFIG, mode: 'sombre' })
     const css = await feuille()
     expect(css).not.toContain('@media')
-    expect(css).toContain(`--color-page:${THEME_SOMBRE.page};`)
-    expect(css).not.toContain(THEME_CLAIR.page)
+    expect(css).toContain(`--color-page:${THEME_ENCRE_SOMBRE.page};`)
+    expect(css).not.toContain(THEME_ENCRE_CLAIR.page)
   })
 
   it('rend quand même la page quand la lecture du thème jette', async () => {
@@ -91,7 +92,7 @@ describe('RootLayout', () => {
     getThemeConfig.mockRejectedValue(new Error('base injoignable'))
 
     const css = await feuille()
-    expect(css).toContain(`--color-page:${THEME_CLAIR.page};`)
+    expect(css).toContain(`--color-page:${THEME_ENCRE_CLAIR.page};`)
     expect(css).toContain('@media (prefers-color-scheme:dark)')
   })
 
@@ -109,8 +110,8 @@ describe('generateViewport', () => {
   it('dédouble la couleur de la barre quand le thème suit le système', async () => {
     getThemeConfig.mockResolvedValue(DEFAULT_THEME_CONFIG)
     expect((await generateViewport()).themeColor).toEqual([
-      { media: '(prefers-color-scheme: light)', color: THEME_CLAIR.ink },
-      { media: '(prefers-color-scheme: dark)', color: THEME_SOMBRE.ink },
+      { media: '(prefers-color-scheme: light)', color: THEME_ENCRE_CLAIR.ink },
+      { media: '(prefers-color-scheme: dark)', color: THEME_ENCRE_SOMBRE.ink },
     ])
   })
 
@@ -118,7 +119,7 @@ describe('generateViewport', () => {
     // Deux couleurs dont une ne s'appliquera jamais feraient basculer la barre
     // du navigateur sans que la page bouge.
     getThemeConfig.mockResolvedValue({ ...DEFAULT_THEME_CONFIG, mode: 'sombre' })
-    expect((await generateViewport()).themeColor).toBe(THEME_SOMBRE.ink)
+    expect((await generateViewport()).themeColor).toBe(THEME_ENCRE_SOMBRE.ink)
 
     getThemeConfig.mockResolvedValue(MARQUE)
     expect((await generateViewport()).themeColor).toBe(THEME_KREATIVPM.ink)
@@ -132,8 +133,8 @@ describe('generateViewport', () => {
   it('retombe sur le défaut quand la lecture jette', async () => {
     getThemeConfig.mockRejectedValue(new Error('base injoignable'))
     expect((await generateViewport()).themeColor).toEqual([
-      { media: '(prefers-color-scheme: light)', color: THEME_CLAIR.ink },
-      { media: '(prefers-color-scheme: dark)', color: THEME_SOMBRE.ink },
+      { media: '(prefers-color-scheme: light)', color: THEME_ENCRE_CLAIR.ink },
+      { media: '(prefers-color-scheme: dark)', color: THEME_ENCRE_SOMBRE.ink },
     ])
   })
 })
