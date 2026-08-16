@@ -76,7 +76,9 @@ Le chapitre porte une **procédure**, pas seulement un état :
 
 C'est ce qui transforme « je crois que ça marche encore » en « c'est prouvé contre telle version, à telle date ».
 
-**Les réglages tiers qui changent le sens des données méritent leur propre encadré.** `TIMESHEET_DAY_DURATION` en est l'exemple vivant : réglé à 7 heures chez le porteur quand le défaut local est de 480 minutes, il rend les temps poussés faux d'un septième si on l'ignore.
+**Les réglages tiers qui changent le sens des données méritent leur propre encadré.** `TIMESHEET_DAY_DURATION` en est l'exemple vivant, et il est aussi l'exemple de ce que ce chapitre doit empêcher : **cette spec elle-même a d'abord affirmé qu'il rendait les temps « faux d'un septième ». C'était faux.** `task_duration` est en secondes — huit heures travaillées valent 28 800 secondes quel que soit ce réglage. Ce qu'il change est la **lecture** jour/heure dans Dolibarr, où huit heures s'affichent « 1,14 jour ». Cela **s'aligne**, cela ne se compense pas ; un implémenteur a refusé, à juste titre, une instruction qui lui demandait de compenser.
+
+L'encadré doit donc distinguer **ce qui altère la donnée envoyée** de **ce qui n'altère que son affichage chez le tiers**. Confondre les deux est précisément l'erreur qui a circulé ici, et un catalogue engendré depuis le code l'aurait rendue impossible.
 
 ---
 
