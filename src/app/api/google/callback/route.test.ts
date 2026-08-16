@@ -9,7 +9,13 @@ const { requireUser, connectGoogle, cookies } = vi.hoisted(() => ({
 
 vi.mock('@/auth', () => ({ requireUser }))
 vi.mock('next/headers', () => ({ cookies }))
-vi.mock('@/services/google/connect', () => ({ connectGoogle }))
+// Seule `connectGoogle` est doublée. `GoogleClientAbsentError` reste la vraie
+// classe : la route s'en sert dans un `instanceof`, et un double la rendrait
+// toujours fausse — le test passerait en décrivant une branche jamais prise.
+vi.mock('@/services/google/connect', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/google/connect')>()),
+  connectGoogle,
+}))
 
 import { GET } from './route'
 
@@ -119,6 +125,44 @@ describe('destination du retour', () => {
     const url = destination(reponse)
     expect(url.origin).toBe('https://cra.test')
     expect(url.pathname).toBe('/admin/sync')
+  })
+})
+
+describe('la tonalité voyage avec le message', () => {
+  it('marque le succès comme un succès', async () => {
+    const reponse = await GET(requete('?state=etat-attendu&code=code-google'))
+    expect(destination(reponse).searchParams.get('tone')).toBe('success')
+  })
+
+  it.each([
+    ['annulation chez Google', '?error=access_denied&state=etat-attendu'],
+    ['état forgé', '?state=etat-forge&code=c'],
+    ['code absent', '?state=etat-attendu'],
+  ])('ne marque pas %s comme un succès', async (_cas, query) => {
+    // Cet écran affichait tout retour à l'identique : « Connexion Google
+    // refusée » avait exactement l'apparence de « Google Calendar est
+    // connecté ». Un refus qui repart en `tone=success` rouvre ce défaut.
+    const reponse = await GET(requete(query))
+    expect(destination(reponse).searchParams.get('tone')).toBe('danger')
+  })
+
+  it('ne marque pas un échec de connexion comme un succès', async () => {
+    connectGoogle.mockRejectedValue(new Error('invalid_grant'))
+    const reponse = await GET(requete('?state=etat-attendu&code=code-google'))
+    expect(destination(reponse).searchParams.get('tone')).toBe('danger')
+  })
+
+  it('dit que le client OAuth manque au lieu de conseiller de réessayer', async () => {
+    // Recommencer ne changera rien tant que le client n'est pas ressaisi :
+    // c'est l'écran d'administration qu'il faut atteindre, pas le bouton.
+    const { GoogleClientAbsentError } = await import('@/services/google/connect')
+    connectGoogle.mockRejectedValue(new GoogleClientAbsentError())
+
+    const reponse = await GET(requete('?state=etat-attendu&code=code-google'))
+    const message = destination(reponse).searchParams.get('message') ?? ''
+
+    expect(message).toContain('Administration · Google')
+    expect(destination(reponse).searchParams.get('tone')).toBe('danger')
   })
 })
 

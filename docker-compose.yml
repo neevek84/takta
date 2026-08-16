@@ -31,12 +31,11 @@ services:
       # proposer de recommencer. La perdre impose de reconnecter Google —
       # aucun jeton n'est récupérable sans elle.
       CREDENTIALS_KEY: ${CREDENTIALS_KEY:?definir CREDENTIALS_KEY (openssl rand -base64 32)}
-      # Connecteur Google : entièrement optionnel. Vides, la connexion est
-      # simplement indisponible et l'application fonctionne sans agenda.
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:3000/api/google/callback}
-      CRA_TIMEZONE: ${CRA_TIMEZONE:-Europe/Paris}
+      # Le connecteur Google ne se configure plus ici : identifiant, secret et
+      # URL de retour se saisissent dans Administration · Google et vivent
+      # chiffrés en base. Le fuseau se règle dans Administration · Saisie.
+      # Ne rien remettre ici : `src/deploy/deployment-config.test.ts` refuse
+      # que ces valeurs reviennent dans un fichier.
       # Vide = POST /api/sync/flush fermé. Le bouton « Synchroniser
       # maintenant » suffit sans lui.
       SYNC_FLUSH_TOKEN: ${SYNC_FLUSH_TOKEN:-}

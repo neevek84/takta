@@ -93,8 +93,8 @@ du demarrage est dans donnees/journal.log
 Le 3000 est demande a chaque demarrage ; s'il etait pris, CRA prend le
 suivant et le dit. Ce changement casse l'URL de retour enregistree chez
 Google : le terminal affiche la ligne exacte a enregistrer dans la console
-Google Cloud (http://localhost:3001/api/google/callback) et a reporter dans
-GOOGLE_REDIRECT_URI du fichier donnees/cra.env. Pour garder un port fixe,
-libere le 3000 ou impose CRA_PORT=3005 ./demarrer.sh.
+Google Cloud (http://localhost:3001/api/google/callback), que l'ecran
+Administration > Google affiche aussi et ou elle se recopie -- aucun fichier
+a ouvrir. Pour un port fixe, libere le 3000 ou impose CRA_PORT=3005.
 `
 }

@@ -9,7 +9,7 @@
  *
  *   1. les valeurs de secret **connues** du processus, effacées par égalité
  *      exacte — c'est la seule garantie stricte, et elle couvre nos propres
- *      variables (`CREDENTIALS_KEY`, `AUTH_SECRET`, `GOOGLE_CLIENT_SECRET`…) ;
+ *      variables (`CREDENTIALS_KEY`, `AUTH_SECRET`, `SYNC_FLUSH_TOKEN`…) ;
  *   2. les paires **nommées** (`client_secret=…`, `"access_token": "…"`,
  *      `Bearer …`), où le nom trahit la valeur ;
  *   3. les longues chaînes opaques non nommées, reconnues à leur forme.

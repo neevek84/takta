@@ -29,11 +29,21 @@ const PREFIXE = '[cra]'
 const VARIABLES_SECRETES = [
   'CREDENTIALS_KEY',
   'AUTH_SECRET',
-  'GOOGLE_CLIENT_ID',
-  'GOOGLE_CLIENT_SECRET',
   'SYNC_FLUSH_TOKEN',
   'DATABASE_URL',
 ] as const
+
+// Le client OAuth Google n'y figure plus : il ne vit plus dans l'environnement
+// mais chiffré en base, et cette liste-ci ne lit que l'environnement. Le faire
+// lire la base rendrait ce module asynchrone et dépendant de Prisma, alors
+// qu'il est appelé depuis le connecteur lui-même.
+//
+// La garantie ne disparaît pas pour autant, elle change de famille : un secret
+// de client est effacé par le nom qui le porte (`client_secret=…`) et, nu, par
+// sa forme de chaîne opaque — les deux autres familles de `redact.ts`, toutes
+// deux exercées. Et il ne sort de toute façon jamais des deux seules fonctions
+// qui le manipulent : l'action d'administration l'expurge elle-même de tout
+// message d'erreur avant de le rendre.
 
 /**
  * Lues à chaque appel : un test qui change l'environnement doit être suivi.
@@ -45,7 +55,39 @@ const VARIABLES_SECRETES = [
  * publié.
  */
 export function secretsDuProcessus(): string[] {
-  return VARIABLES_SECRETES.map((nom) => process.env[nom] ?? '').filter((v) => v !== '')
+  return [...VARIABLES_SECRETES.map((nom) => process.env[nom] ?? ''), ...secretsConfies].filter(
+    (v) => v !== '',
+  )
+}
+
+/**
+ * Secrets que le processus connaît sans qu'ils vivent dans l'environnement.
+ *
+ * Depuis que les identifiants du client OAuth se saisissent à l'écran et
+ * vivent chiffrés en base, la liste des variables ne les couvre plus — et
+ * **rien d'autre ne les couvrait** : un secret Google recopié dans un message
+ * de refus n'a ni la forme d'une paire nommée, ni forcément celle d'une chaîne
+ * opaque, qui exige des chiffres. Il serait sorti en clair.
+ *
+ * Le service qui vient de lire un secret le confie donc ici, pour la durée du
+ * processus. Faire lire la base à ce module le rendrait asynchrone et
+ * dépendant de Prisma, alors qu'il est appelé depuis les connecteurs
+ * eux-mêmes.
+ */
+const secretsConfies = new Set<string>()
+
+/** Longueur en deçà de laquelle une valeur confiée découperait les messages. */
+const LONGUEUR_MINIMALE_CONFIE = 8
+
+export function confierSecret(valeur: string | null | undefined): void {
+  if (typeof valeur !== 'string') return
+  if (valeur.length < LONGUEUR_MINIMALE_CONFIE) return
+  secretsConfies.add(valeur)
+}
+
+/** Uniquement pour les tests : rend le registre à son état initial. */
+export function oublierSecretsConfies(): void {
+  secretsConfies.clear()
 }
 
 /** Un journal reste sur une ligne : sinon il devient illisible au `grep`. */

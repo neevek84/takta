@@ -1,3 +1,4 @@
+import { Banner } from '@/components/ui/Banner'
 import { PageShell } from '@/components/ui/PageShell'
 import { requireUser } from '@/auth'
 import { getConnectionState } from '@/services/google/connect'
@@ -13,10 +14,16 @@ import { SyncClient } from './SyncClient'
 export default async function AdminSyncPage({
   searchParams,
 }: {
-  searchParams: Promise<{ message?: string }>
+  searchParams: Promise<{ message?: string; tone?: string }>
 }) {
   const user = await requireUser()
-  const { message } = await searchParams
+  const { message, tone } = await searchParams
+  // Cet écran affichait tout retour de connexion Google de la même façon —
+  // « Connexion Google annulée » avec l'apparence exacte de « Google Calendar
+  // est connecté ». La tonalité voyage désormais avec le message ; une valeur
+  // forgée ou absente retombe sur l'avertissement, jamais sur le succès : rien
+  // ne doit pouvoir se faire passer pour une réussite.
+  const toneMessage = tone === 'success' ? 'success' : tone === 'danger' ? 'danger' : 'warning'
 
   const [connection, conflicts, failures] = await Promise.all([
     getConnectionState(user.id),
@@ -27,12 +34,9 @@ export default async function AdminSyncPage({
   return (
     <PageShell title="Administration · Synchronisation">
       {message !== undefined && (
-        <p
-          role="status"
-          className="mb-6 rounded-md border border-info-edge bg-info px-3 py-2 text-sm text-info-ink"
-        >
-          {message}
-        </p>
+        <div className="mb-6">
+          <Banner tone={toneMessage}>{message}</Banner>
+        </div>
       )}
       <SyncClient connection={connection} conflicts={conflicts} failures={failures} />
     </PageShell>

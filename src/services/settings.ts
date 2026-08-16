@@ -25,9 +25,9 @@ export const ENGAGEMENT_SOURCES: readonly EngagementSource[] = [
  * Le fuseau de la machine, tel qu'`Intl` le rapporte.
  *
  * C'est le défaut du réglage de fuseau : personne ne devrait avoir à déclarer
- * qu'il vit à Paris. `process.env.CRA_TIMEZONE` n'est **pas** consulté, ici ni
- * ailleurs — une valeur que l'utilisateur tape ne vit plus dans un fichier, et
- * un repli discret sur l'ancienne variable rendrait le réglage à l'écran
+ * qu'il vit à Paris. L'ancienne variable d'environnement n'est **pas**
+ * consultée, ici ni ailleurs — une valeur que l'utilisateur tape ne vit plus
+ * dans un fichier, et un repli discret sur elle rendrait le réglage à l'écran
  * décoratif sur tous les postes qui l'ont conservée.
  *
  * `Europe/Paris` en dernier recours seulement : un environnement sans base

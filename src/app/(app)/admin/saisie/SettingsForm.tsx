@@ -354,6 +354,28 @@ export function SettingsForm({
 
       <Card>
         <fieldset>
+          <legend className="mb-2 font-medium">Fuseau horaire</legend>
+          {/* Le fuseau situe les blocs poussés dans l'agenda : il ne décale
+              aucune minute saisie, il dit dans quel fuseau les lire. Il se
+              règle ici, plus dans un fichier — et son défaut est celui de la
+              machine, personne n'ayant à déclarer qu'il vit à Paris. */}
+          <Field
+            label="Fuseau horaire (IANA)"
+            name="timeZone"
+            defaultValue={settings.timeZone}
+            autoComplete="off"
+            hint="Par défaut, celui de cette machine. Exemples : Europe/Paris, Indian/Reunion."
+            className="w-64"
+          />
+          <p className="mt-2 text-sm text-muted">
+            Il n’est utilisé que pour situer les blocs déposés dans l’agenda Google. Les heures
+            saisies ne bougent pas.
+          </p>
+        </fieldset>
+      </Card>
+
+      <Card>
+        <fieldset>
           <legend className="mb-2 font-medium">Exercice</legend>
           <div className="flex flex-wrap gap-4">
             <Select

@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers'
 import { requireUser } from '@/auth'
 import { SecretBoxError } from '@/core/crypto/secret-box'
-import { connectGoogle } from '@/services/google/connect'
+import { connectGoogle, GoogleClientAbsentError } from '@/services/google/connect'
 import { journalErreur } from '@/services/log'
 
 /**
@@ -20,10 +20,15 @@ const MESSAGE_CLE_ABSENTE =
  * La destination du retour est écrite ici, jamais lue dans la requête : un
  * paramètre qui choisirait l'adresse de redirection ferait de ce point
  * d'entrée un tremplin vers n'importe quel site, sous notre nom de domaine.
+ *
+ * La **tonalité** voyage avec le message, et ce n'est pas décoratif : cet
+ * écran affichait tout retour à l'identique, refus compris, si bien qu'une
+ * connexion refusée avait exactement l'air d'une connexion réussie.
  */
-function retour(request: Request, message: string): Response {
+function retour(request: Request, message: string, tone: 'success' | 'danger' = 'danger'): Response {
   const url = new URL('/admin/sync', request.url)
   url.searchParams.set('message', message)
+  url.searchParams.set('tone', tone)
   return Response.redirect(url.toString(), 302)
 }
 
@@ -55,8 +60,11 @@ export async function GET(request: Request): Promise<Response> {
     // connexion qui ne peut pas aboutir est indiscernable d'un aléa réseau.
     journalErreur('google.callback', err, { userId: user.id })
     if (err instanceof SecretBoxError) return retour(request, MESSAGE_CLE_ABSENTE)
+    // Le client OAuth a disparu entre le départ et le retour : recommencer ne
+    // servira à rien tant qu'il n'est pas ressaisi, et l'écran doit le dire.
+    if (err instanceof GoogleClientAbsentError) return retour(request, err.message)
     return retour(request, 'La connexion Google a échoué. Réessayez.')
   }
 
-  return retour(request, 'Google Calendar est connecté.')
+  return retour(request, 'Google Calendar est connecté.', 'success')
 }

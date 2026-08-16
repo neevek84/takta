@@ -68,6 +68,10 @@ export async function saveSettings(
       debutExerciceMois: Number(formData.get('debutExerciceMois')),
       journeeDebutMinute: timeInputToMinutes(String(formData.get('journeeDebut') ?? '')),
       journeeFinMinute: timeInputToMinutes(String(formData.get('journeeFin') ?? '')),
+      // Le fuseau vit désormais ici et non dans `CRA_TIMEZONE`. Un champ vidé
+      // est refusé par le service : « vide » signifie « jamais choisi », et
+      // l'écrire rendrait ce sens indiscernable d'un choix délibéré.
+      timeZone: String(formData.get('timeZone') ?? ''),
     },
     // Le journal de preuve nomme l'auteur du réglage : un acte humain
     // attribué à `SYSTEME` serait une preuve fausse.

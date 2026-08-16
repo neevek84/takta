@@ -314,6 +314,11 @@ model Settings {
   smtpUser   String  @default("")
   smtpFrom   String  @default("")
   smtpSecure Boolean @default(true)
+
+  /// fuseau IANA des blocs poussés dans l'agenda ("Europe/Paris").
+  /// "" = jamais choisi : celui du système s'applique. Personne ne devrait
+  /// avoir à déclarer qu'il vit à Paris, et surtout pas dans un fichier.
+  timeZone String @default("")
 }
 
 /// Le journal de preuve : **jamais modifié, jamais supprimé**.

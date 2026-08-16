@@ -93,8 +93,49 @@ describe('page Administration · Synchronisation', () => {
 
   it('affiche le message rapporté par la redirection de connexion', async () => {
     render(
-      await AdminSyncPage({ searchParams: Promise.resolve({ message: 'Agenda connecté.' }) }),
+      await AdminSyncPage({
+        searchParams: Promise.resolve({ message: 'Agenda connecté.', tone: 'success' }),
+      }),
     )
     expect(screen.getByRole('status').textContent).toContain('Agenda connecté.')
+  })
+})
+
+describe('la tonalité du retour de connexion', () => {
+  // Cet écran affichait TOUT retour à l'identique, refus compris : « Connexion
+  // Google refusée » avait exactement l'apparence de « Google Calendar est
+  // connecté ». La tonalité voyage désormais avec le message, de bout en bout.
+  it('annonce un refus comme un refus, pas comme un succès', async () => {
+    render(
+      await AdminSyncPage({
+        searchParams: Promise.resolve({ message: 'Connexion Google refusée.', tone: 'danger' }),
+      }),
+    )
+
+    // `alert` interrompt ; `status` attend. Un refus rendu en `status` est
+    // exactement le défaut d'origine.
+    const bandeau = screen.getByRole('alert')
+    expect(bandeau.textContent).toContain('Connexion Google refusée.')
+    // L'information n'est pas portée par la seule couleur : le bandeau porte
+    // un glyphe propre à sa tonalité.
+    expect(bandeau.textContent).toContain('✕')
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('ne laisse pas une tonalité absente ou forgée passer pour un succès', async () => {
+    for (const tone of [undefined, 'vert', 'SUCCESS']) {
+      cleanup()
+      render(
+        await AdminSyncPage({
+          searchParams: Promise.resolve({
+            message: 'Message sans tonalité.',
+            ...(tone === undefined ? {} : { tone }),
+          }),
+        }),
+      )
+      // Repli sur l'avertissement : rien ne doit pouvoir se faire passer pour
+      // une réussite en omettant simplement le paramètre.
+      expect(screen.getByRole('alert').textContent, String(tone)).toContain('▲')
+    }
   })
 })

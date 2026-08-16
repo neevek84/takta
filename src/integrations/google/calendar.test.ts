@@ -403,7 +403,15 @@ describe('sévérité du double — échange de jeton', () => {
   it('accepte la charge utile que le connecteur envoie vraiment', async () => {
     // Garde-fou inverse : un double trop sévère rendrait la suite menteuse
     // dans l'autre sens.
-    const jetons = await exchangeCode(api.fetchFn, 'code-de-consentement')
+    const jetons = await exchangeCode(
+      api.fetchFn,
+      {
+        clientId: 'client-id-de-test',
+        clientSecret: 'client-secret-de-test',
+        redirectUri: 'http://localhost:3000/api/google/callback',
+      },
+      'code-de-consentement',
+    )
     expect(jetons.accessToken).not.toBe('')
     expect(jetons.refreshToken).not.toBe('')
   })

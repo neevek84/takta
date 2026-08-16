@@ -1,17 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SecretBoxError } from '@/core/crypto/secret-box'
 
-const { getCredential, updateAccessToken, refreshAccessToken, createGoogleCalendarConnector } =
-  vi.hoisted(() => ({
-    getCredential: vi.fn(),
-    updateAccessToken: vi.fn(),
-    refreshAccessToken: vi.fn(),
-    createGoogleCalendarConnector: vi.fn(),
-  }))
+const {
+  getCredential,
+  updateAccessToken,
+  refreshAccessToken,
+  createGoogleCalendarConnector,
+  readGoogleOAuthClient,
+} = vi.hoisted(() => ({
+  getCredential: vi.fn(),
+  updateAccessToken: vi.fn(),
+  refreshAccessToken: vi.fn(),
+  createGoogleCalendarConnector: vi.fn(),
+  readGoogleOAuthClient: vi.fn(),
+}))
 
 vi.mock('@/services/credentials', () => ({ getCredential, updateAccessToken }))
+vi.mock('@/services/google/oauth-client', () => ({ readGoogleOAuthClient }))
 vi.mock('@/integrations/google/oauth', () => ({ refreshAccessToken }))
 vi.mock('@/integrations/google/calendar', () => ({ createGoogleCalendarConnector }))
+
+/** Le client OAuth de l'instance, tel qu'il vit en base — jamais dans un fichier. */
+const CLIENT_OAUTH = {
+  clientId: 'client-id-de-test',
+  clientSecret: 'client-secret-de-test',
+  redirectUri: 'http://localhost:3000/api/google/callback',
+}
 
 import { resolveConnector } from './connector'
 
@@ -34,6 +48,7 @@ beforeEach(() => {
   getCredential.mockReset().mockResolvedValue(jetons())
   updateAccessToken.mockReset().mockResolvedValue(undefined)
   refreshAccessToken.mockReset()
+  readGoogleOAuthClient.mockReset().mockResolvedValue(CLIENT_OAUTH)
   createGoogleCalendarConnector.mockReset().mockReturnValue({ marqueur: 'connecteur' })
   journal = []
   vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
@@ -107,5 +122,36 @@ describe('chaque cause de « null » devient distinguable', () => {
 
     expect(journal[0]).not.toContain('1//05aBcDeFgHiJkLmNoPqRs')
     expect(journal[0]).not.toContain('jeton-rafraichissement')
+  })
+
+  it('journalise un client OAuth effacé sous les pieds d une session', async () => {
+    // Le client vit en base : quelqu'un peut l'effacer pendant qu'une personne
+    // est connectée. Ses jetons ne pourront plus être renouvelés — c'est « non
+    // connecté », et il faut pouvoir le distinguer d'un refus de Google.
+    getCredential.mockResolvedValue(jetons({ expiresAt: new Date('2026-03-10T09:00:10Z') }))
+    readGoogleOAuthClient.mockResolvedValue(null)
+
+    expect(await resolveConnector('u1', { now: MAINTENANT })).toBeNull()
+    expect(refreshAccessToken).not.toHaveBeenCalled()
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toContain('client-oauth-absent')
+  })
+})
+
+describe('le renouvellement emploie le client enregistré', () => {
+  it('passe le client OAuth de la base au renouvellement', async () => {
+    getCredential.mockResolvedValue(jetons({ expiresAt: new Date('2026-03-10T09:00:10Z') }))
+    refreshAccessToken.mockResolvedValue({
+      accessToken: 'jeton-neuf',
+      expiresAt: new Date('2026-03-10T10:00:00Z'),
+    })
+
+    await resolveConnector('u1', { now: MAINTENANT })
+
+    expect(refreshAccessToken).toHaveBeenCalledWith(
+      expect.anything(),
+      CLIENT_OAUTH,
+      'jeton-rafraichissement',
+    )
   })
 })

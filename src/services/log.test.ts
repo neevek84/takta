@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { journalAvertissement, journalErreur, journalInfo } from './log'
+import { journalAvertissement, journalErreur, journalInfo , confierSecret, oublierSecretsConfies } from './log'
 
 let erreurs: string[]
 let avertissements: string[]
@@ -98,21 +98,35 @@ describe('aucun secret ne sort', () => {
     expect(erreurs[0]).toContain('userId=u1')
   })
 
-  it('efface une valeur de secret du déploiement recopiée dans le message', () => {
-    const ancienne = process.env.GOOGLE_CLIENT_SECRET
-    process.env.GOOGLE_CLIENT_SECRET = 'GOCSPX-valeur-de-deploiement'
+  // Ce test posait `GOOGLE_CLIENT_SECRET` dans l'environnement. Il n'y vit plus
+  // — il se saisit à l'écran et vit chiffré en base — et rien ne le couvrait
+  // alors : un secret recopié dans un message de refus n'a ni la forme d'une
+  // paire nommée, ni forcément celle d'une chaîne opaque, qui exige des
+  // chiffres. Il serait sorti en clair. Le service qui le lit le confie donc.
+  it('efface un secret confié par le service qui vient de le lire', () => {
+    confierSecret('GOCSPX-valeur-de-deploiement')
     try {
       journalErreur(
         'google.callback',
         new Error('refus de GOCSPX-valeur-de-deploiement par Google'),
       )
     } finally {
-      if (ancienne === undefined) delete process.env.GOOGLE_CLIENT_SECRET
-      else process.env.GOOGLE_CLIENT_SECRET = ancienne
+      oublierSecretsConfies()
     }
 
     expect(erreurs[0]).not.toContain('GOCSPX-valeur-de-deploiement')
     expect(erreurs[0]).toContain('[secret]')
+  })
+
+  it('ne confie pas une valeur trop courte, qui découperait les messages', () => {
+    confierSecret('abc')
+    try {
+      journalErreur('google.callback', new Error('abc est absent du contexte'))
+    } finally {
+      oublierSecretsConfies()
+    }
+
+    expect(erreurs[0]).toContain('abc est absent')
   })
 
   it('efface la clé de chiffrement si elle atterrissait dans un message', () => {

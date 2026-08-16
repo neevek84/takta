@@ -4,7 +4,26 @@ import { prisma } from '@/db/client'
 import { getCredential, saveCredential } from '@/services/credentials'
 import { buildConsentUrl, GoogleOAuthError } from '@/integrations/google/oauth'
 import { createFakeGoogleApi, type FakeGoogleApi } from '@/integrations/google/fake-google-api'
-import { CALENDRIER_DEDIE, connectGoogle, disconnectGoogle, getConnectionState } from './connect'
+import { saveGoogleOAuthClient } from './oauth-client'
+import {
+  CALENDRIER_DEDIE,
+  connectGoogle,
+  disconnectGoogle,
+  getConnectionState,
+  GoogleClientAbsentError,
+} from './connect'
+
+/**
+ * Le client OAuth de l'instance : saisi à l'écran, chiffré en base. Aucun test
+ * ne pose plus `GOOGLE_CLIENT_ID` dans l'environnement — le connecteur ne l'y
+ * lit plus, et un test qui l'y poserait continuerait de passer en décrivant un
+ * mécanisme mort.
+ */
+const CLIENT_OAUTH = {
+  clientId: 'client-id-de-test',
+  clientSecret: 'client-secret-de-test',
+  redirectUri: 'http://localhost:3000/api/google/callback',
+}
 
 let userId = ''
 let autreId = ''
@@ -12,9 +31,9 @@ let api: FakeGoogleApi
 
 beforeAll(async () => {
   process.env.CREDENTIALS_KEY = randomBytes(32).toString('base64')
-  process.env.GOOGLE_CLIENT_ID = 'client-id-de-test'
-  process.env.GOOGLE_CLIENT_SECRET = 'client-secret-de-test'
-  process.env.GOOGLE_REDIRECT_URI = 'http://localhost:3000/api/google/callback'
+  delete process.env.GOOGLE_CLIENT_ID
+  delete process.env.GOOGLE_CLIENT_SECRET
+  delete process.env.GOOGLE_REDIRECT_URI
 
   const u = await prisma.user.create({
     data: { email: 'connect@test.local', name: 'T', passwordHash: 'x' },
@@ -29,6 +48,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   api = createFakeGoogleApi()
   await prisma.providerCredential.deleteMany({})
+  await saveGoogleOAuthClient(CLIENT_OAUTH)
 })
 
 afterAll(async () => {
@@ -41,7 +61,7 @@ afterAll(async () => {
 
 describe('URL de consentement', () => {
   it('demande le scope calendrier et un accès hors ligne', () => {
-    const url = new URL(buildConsentUrl({ state: 'etat-aleatoire' }))
+    const url = new URL(buildConsentUrl({ client: CLIENT_OAUTH, state: 'etat-aleatoire' }))
 
     expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth')
     expect(url.searchParams.get('scope')).toContain('https://www.googleapis.com/auth/calendar')
@@ -52,7 +72,7 @@ describe('URL de consentement', () => {
   })
 
   it('porte l état anti-rejeu et l URI de retour', () => {
-    const url = new URL(buildConsentUrl({ state: 'etat-aleatoire' }))
+    const url = new URL(buildConsentUrl({ client: CLIENT_OAUTH, state: 'etat-aleatoire' }))
     expect(url.searchParams.get('state')).toBe('etat-aleatoire')
     expect(url.searchParams.get('redirect_uri')).toBe(
       'http://localhost:3000/api/google/callback',
@@ -154,6 +174,56 @@ describe('connexion', () => {
     const jeton = (await prisma.providerCredential.findFirst({ where: { userId } })) ?? null
     expect(jeton).toBeNull()
     espion.mockRestore()
+  })
+})
+
+describe('le client OAuth vient de la base, et de nulle part ailleurs', () => {
+  it('refuse l échange quand aucun client n est enregistré', async () => {
+    await prisma.providerCredential.deleteMany({})
+
+    await expect(
+      connectGoogle({ userId, code: 'code', fetchFn: api.fetchFn }),
+    ).rejects.toBeInstanceOf(GoogleClientAbsentError)
+    expect(await prisma.providerCredential.count()).toBe(0)
+  })
+
+  it('ne retombe pas sur l environnement quand la base ne porte aucun client', async () => {
+    // Sans cette vérification, une installation qui a gardé son ancien `.env`
+    // continuerait de fonctionner « par hasard », et le déplacement ne serait
+    // terminé nulle part. Le repli doit lever, pas dépanner en silence.
+    await prisma.providerCredential.deleteMany({})
+    process.env.GOOGLE_CLIENT_ID = 'venu-du-fichier'
+    process.env.GOOGLE_CLIENT_SECRET = 'secret-venu-du-fichier'
+    process.env.GOOGLE_REDIRECT_URI = 'http://localhost:3000/api/google/callback'
+
+    try {
+      await expect(
+        connectGoogle({ userId, code: 'code', fetchFn: api.fetchFn }),
+      ).rejects.toBeInstanceOf(GoogleClientAbsentError)
+    } finally {
+      delete process.env.GOOGLE_CLIENT_ID
+      delete process.env.GOOGLE_CLIENT_SECRET
+      delete process.env.GOOGLE_REDIRECT_URI
+    }
+  })
+
+  it('envoie à Google l URL de retour enregistrée, pas une autre', async () => {
+    // Google recompare l'URL de retour au moment de l'échange : elle doit être
+    // celle qui a été enregistrée, au caractère près.
+    const corps: string[] = []
+    const fetchFn: typeof api.fetchFn = async (url, init) => {
+      if (url.startsWith('https://oauth2.googleapis.com/token')) {
+        corps.push(String(init?.body ?? ''))
+      }
+      return api.fetchFn(url, init)
+    }
+
+    await connectGoogle({ userId, code: 'code', fetchFn })
+
+    const envoye = new URLSearchParams(corps[0] ?? '')
+    expect(envoye.get('redirect_uri')).toBe(CLIENT_OAUTH.redirectUri)
+    expect(envoye.get('client_id')).toBe(CLIENT_OAUTH.clientId)
+    expect(envoye.get('client_secret')).toBe(CLIENT_OAUTH.clientSecret)
   })
 })
 

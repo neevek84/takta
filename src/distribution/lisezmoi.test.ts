@@ -72,8 +72,12 @@ describe('LISEZMOI', () => {
     expect(texte).toContain('3000')
     expect(port).toContain('Google')
     expect(port).toContain('/api/google/callback')
-    expect(port).toContain('GOOGLE_REDIRECT_URI')
-    expect(port).toContain('donnees/cra.env')
+    // Le client OAuth ne vit plus dans un fichier : l'URL de retour se
+    // recopie dans l'écran d'administration. Nommer encore `donnees/cra.env`
+    // enverrait éditer un fichier qui ne la porte plus.
+    expect(port).toContain('Administration')
+    expect(port).not.toContain('GOOGLE_REDIRECT_URI')
+    expect(port).not.toContain('donnees/cra.env')
     // L'adresse exacte n'est jamais à deviner : elle est affichée au démarrage.
     expect(port).toMatch(/affich/i)
   })

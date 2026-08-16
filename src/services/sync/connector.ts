@@ -3,10 +3,8 @@ import { PROVIDER_GOOGLE } from '@/core/sync/policy'
 import { createGoogleCalendarConnector, type FetchLike } from '@/integrations/google/calendar'
 import { refreshAccessToken } from '@/integrations/google/oauth'
 import { getCredential, updateAccessToken } from '@/services/credentials'
+import { readGoogleOAuthClient } from '@/services/google/oauth-client'
 import { journalAvertissement, journalErreur } from '@/services/log'
-
-/** Fuseau des blocs poussés. Un déploiement hors métropole le surcharge. */
-export const TIME_ZONE = process.env.CRA_TIMEZONE ?? 'Europe/Paris'
 
 /** Marge avant expiration : un jeton qui expire dans la minute est déjà mort. */
 const MARGE_MS = 60_000
@@ -48,8 +46,16 @@ export async function resolveConnector(
 
   let accessToken = creds.accessToken
   if (creds.expiresAt.getTime() <= now.getTime() + MARGE_MS) {
+    // Le renouvellement exige le client OAuth, qui vit en base comme le reste.
+    // Effacé pendant qu'une personne restait connectée, ses jetons ne peuvent
+    // plus être renouvelés : c'est « non connecté », et cela doit se lire.
+    const client = await readGoogleOAuthClient()
+    if (client === null) {
+      journalAvertissement('sync.connecteur', { userId, raison: 'client-oauth-absent' })
+      return null
+    }
     try {
-      const renouvele = await refreshAccessToken(fetchFn, creds.refreshToken)
+      const renouvele = await refreshAccessToken(fetchFn, client, creds.refreshToken)
       accessToken = renouvele.accessToken
       await updateAccessToken(userId, PROVIDER_GOOGLE, renouvele.accessToken, renouvele.expiresAt)
     } catch (err) {

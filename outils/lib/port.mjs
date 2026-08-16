@@ -66,7 +66,7 @@ export async function resoudrePort({ demande = null, prefere = PORT_PREFERE, ess
         `Le port ${port}, demandé par CRA_PORT, est déjà occupé.\n` +
           "L'application n'a pas démarré : changer de port à ta place casserait l'URL de retour\n" +
           'Google que tu as enregistrée sur ce port. Libère-le, ou choisis un autre CRA_PORT et\n' +
-          "mets à jour l'URL de retour dans la console Google.",
+          "mets à jour l'URL de retour dans la console Google puis dans Administration · Google.",
       )
     }
     return { port, bascule: false, demande: true }
@@ -95,7 +95,8 @@ export function messageBascule(port) {
     '',
     `    http://localhost:${port}/api/google/callback`,
     '',
-    `et GOOGLE_REDIRECT_URI dans donnees/cra.env doit porter la même valeur.`,
+    "puis reportée dans l'écran Administration · Google de l'application, qui l'affiche",
+    'aussi et où le client OAuth se saisit — plus aucun fichier à ouvrir.',
     `Pour retrouver un port fixe, libère le port ${PORT_PREFERE} ou pose CRA_PORT.`,
   ].join('\n')
 }

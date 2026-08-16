@@ -9,9 +9,25 @@ import {
   setCalendarId,
 } from '@/services/credentials'
 import { journalErreur } from '@/services/log'
+import { readGoogleOAuthClient } from './oauth-client'
 
 /** Libellé du calendrier dédié — jamais l'agenda principal. */
 export const CALENDRIER_DEDIE = 'CRA — disponibilités'
+
+/**
+ * Levée quand aucun client OAuth n'est enregistré. Un type propre, et non un
+ * `null` de plus : au retour du consentement, « Google a refusé » et « ce
+ * serveur n'a plus de client OAuth » appellent deux messages différents, et
+ * seul le second se répare depuis l'écran d'administration.
+ */
+export class GoogleClientAbsentError extends Error {
+  constructor() {
+    super(
+      "Aucun client OAuth Google n'est enregistré : la connexion se configure dans Administration · Google.",
+    )
+    this.name = 'GoogleClientAbsentError'
+  }
+}
 
 /**
  * Au retour du consentement : le jeton de rafraîchissement est chiffré et
@@ -28,7 +44,13 @@ export async function connectGoogle(args: {
 }): Promise<{ calendarId: string }> {
   const fetchFn = args.fetchFn ?? (globalThis.fetch as unknown as FetchLike)
 
-  const jetons = await exchangeCode(fetchFn, args.code)
+  // Le client vient de la base, jamais de l'environnement ni de la requête de
+  // retour. Absent, on lève au lieu d'envoyer chez Google un échange qui ne
+  // peut produire qu'un `invalid_client` illisible.
+  const client = await readGoogleOAuthClient()
+  if (client === null) throw new GoogleClientAbsentError()
+
+  const jetons = await exchangeCode(fetchFn, client, args.code)
   await saveCredential(args.userId, PROVIDER_GOOGLE, { ...jetons, calendarId: '' })
 
   try {

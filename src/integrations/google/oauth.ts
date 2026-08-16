@@ -1,3 +1,4 @@
+import type { GoogleOAuthClient } from '@/core/google/oauth-client'
 import type { FetchLike } from './calendar'
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -48,14 +49,18 @@ async function postToken(
 /**
  * URL de la page de consentement Google.
  *
- * Les identifiants viennent de l'environnement : aucun client OAuth n'est
- * codé en dur, l'installation réutilise le client existant du projet Google
- * Cloud en lui ajoutant le scope calendrier.
+ * Le client OAuth est **passé en argument**, jamais lu ici. Ni dans
+ * l'environnement — il se saisit à l'écran et vit chiffré en base — ni, à plus
+ * forte raison, dans la requête HTTP : une `redirect_uri` qui viendrait d'un
+ * paramètre ferait de ce départ un tremplin vers n'importe quel site sous
+ * notre nom de domaine, et Google renverrait le code de consentement là-bas.
+ * Ce module n'a accès ni à l'un ni à l'autre, ce qui rend la faute
+ * impossible à commettre ici.
  */
-export function buildConsentUrl(args: { state: string }): string {
+export function buildConsentUrl(args: { client: GoogleOAuthClient; state: string }): string {
   const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID ?? '',
-    redirect_uri: process.env.GOOGLE_REDIRECT_URI ?? '',
+    client_id: args.client.clientId,
+    redirect_uri: args.client.redirectUri,
     response_type: 'code',
     scope: SCOPES,
     // Le jeton de rafraîchissement est ce qui permet de synchroniser en fond
@@ -79,12 +84,16 @@ export function buildConsentUrl(args: { state: string }): string {
  */
 export async function exchangeCode(
   fetchFn: FetchLike,
+  client: GoogleOAuthClient,
   code: string,
 ): Promise<{ accessToken: string; refreshToken: string; expiresAt: Date; scope: string }> {
   const body = await postToken(fetchFn, {
-    client_id: process.env.GOOGLE_CLIENT_ID ?? '',
-    client_secret: process.env.GOOGLE_CLIENT_SECRET ?? '',
-    redirect_uri: process.env.GOOGLE_REDIRECT_URI ?? '',
+    client_id: client.clientId,
+    client_secret: client.clientSecret,
+    // La même URL de retour qu'au départ, et pour la même raison : Google la
+    // recompare ici. Elle vient de la configuration enregistrée, jamais de la
+    // requête qui a déclenché l'échange.
+    redirect_uri: client.redirectUri,
     grant_type: 'authorization_code',
     code,
   })
@@ -115,11 +124,12 @@ export async function exchangeCode(
  */
 export async function refreshAccessToken(
   fetchFn: FetchLike,
+  client: GoogleOAuthClient,
   refreshToken: string,
 ): Promise<{ accessToken: string; expiresAt: Date }> {
   const body = await postToken(fetchFn, {
-    client_id: process.env.GOOGLE_CLIENT_ID ?? '',
-    client_secret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+    client_id: client.clientId,
+    client_secret: client.clientSecret,
     refresh_token: refreshToken,
     grant_type: 'refresh_token',
   })

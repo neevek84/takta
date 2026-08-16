@@ -29,6 +29,7 @@ const REGLAGES: AppSettings = {
   journeeDebutMinute: 540,
   journeeFinMinute: 1080,
   relanceJours: 7,
+  timeZone: 'Europe/Paris',
 }
 
 beforeEach(() => {

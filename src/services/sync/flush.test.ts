@@ -6,9 +6,9 @@ import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
 import { saveEntry } from '@/services/time-entries'
 import { saveCredential } from '@/services/credentials'
+import { saveGoogleOAuthClient } from '@/services/google/oauth-client'
 import { createGoogleCalendarConnector } from '@/integrations/google/calendar'
 import { createFakeGoogleApi, type FakeGoogleApi } from '@/integrations/google/fake-google-api'
-import { TIME_ZONE } from './connector'
 import { drainSyncOutbox, flushAllSyncOutboxes, flushSyncOutbox } from './flush'
 
 const DEDIE = 'cra-dedie@group.calendar.google.com'
@@ -67,6 +67,14 @@ beforeEach(async () => {
   await prisma.syncConflict.deleteMany({})
   await prisma.externalLink.deleteMany({})
   await prisma.providerCredential.deleteMany({})
+  // Le client OAuth de l'instance vit en base, comme la clé Dolibarr : sans
+  // lui, aucun jeton ne peut être renouvelé et le drainage se lit « non
+  // connecté ». Il fait donc partie du décor minimal d'un drainage réel.
+  await saveGoogleOAuthClient({
+    clientId: 'client-id-de-test',
+    clientSecret: 'client-secret-de-test',
+    redirectUri: 'http://localhost:3000/api/google/callback',
+  })
   await prisma.timeEntry.deleteMany({ where: { userId: { in: [userId, autreId] } } })
   await updateSettings({
     minutesParJour: 480,
@@ -112,10 +120,12 @@ describe('poussée', () => {
   })
 
   // Les heures poussées sont des heures locales naïves : c'est le fuseau qui
-  // les situe. Le drainage est le seul endroit du dépôt qui consomme
-  // `CRA_TIMEZONE` — une régression y décalerait tous les blocs de l'agenda
-  // d'une à deux heures sans qu'aucune minute ne bouge en base.
-  it('pousse les heures dans le fuseau configuré', async () => {
+  // les situe. Une régression ici décalerait tous les blocs de l'agenda d'une
+  // à deux heures sans qu'aucune minute ne bouge en base.
+  it('pousse les heures dans le fuseau des réglages', async () => {
+    // Un fuseau qui n'est ni celui du système ni l'ancien défaut : un
+    // drainage retombé sur `Europe/Paris` ou sur `CRA_TIMEZONE` échoue ici.
+    await updateSettings({ timeZone: 'Indian/Reunion' })
     await saisir('2026-03-12', 480)
     await flushSyncOutbox({ userId, now: NOW, connector: connector() })
 
@@ -123,11 +133,22 @@ describe('poussée', () => {
       start: { timeZone: string }
       end: { timeZone: string }
     }
-    expect(corps.start.timeZone).toBe(TIME_ZONE)
-    expect(corps.end.timeZone).toBe(TIME_ZONE)
-    // Et le fuseau lui-même est celui du déploiement, métropole par défaut :
-    // un `TIME_ZONE` fixé à 'UTC' passerait les deux assertions ci-dessus.
-    expect(TIME_ZONE).toBe(process.env.CRA_TIMEZONE ?? 'Europe/Paris')
+    expect(corps.start.timeZone).toBe('Indian/Reunion')
+    expect(corps.end.timeZone).toBe('Indian/Reunion')
+  })
+
+  it('ne lit jamais le fuseau dans CRA_TIMEZONE', async () => {
+    await updateSettings({ timeZone: 'Indian/Reunion' })
+    process.env.CRA_TIMEZONE = 'Pacific/Kiritimati'
+    try {
+      await saisir('2026-03-13', 480)
+      await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+      const corps = api.dernierAppel().body as { start: { timeZone: string } }
+      expect(corps.start.timeZone).toBe('Indian/Reunion')
+    } finally {
+      delete process.env.CRA_TIMEZONE
+    }
   })
 
   it('ne repousse rien au drainage suivant', async () => {

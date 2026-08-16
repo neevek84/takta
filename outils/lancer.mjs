@@ -124,12 +124,10 @@ const enfant = spawn(process.execPath, [serveur], {
     // node_modules/@next/env/dist/index.js, fonction `populate`) — mais on ne
     // s'en remet pas à ça : il est supprimé plus haut.
     ...secrets,
-    // Sans URL de retour explicite, on donne celle du port réellement servi :
-    // c'est aussi celle que l'écran d'administration affiche à enregistrer.
-    GOOGLE_REDIRECT_URI:
-      secrets.GOOGLE_REDIRECT_URI && secrets.GOOGLE_REDIRECT_URI !== ''
-        ? secrets.GOOGLE_REDIRECT_URI
-        : `http://localhost:${port}/api/google/callback`,
+    // Aucune variable Google n'est posée ici : le client OAuth se saisit dans
+    // Administration · Google et vit chiffré en base. L'écran y affiche l'URL
+    // de retour à enregistrer, calculée depuis l'adresse réellement servie —
+    // donc depuis le port choisi ci-dessus.
     NODE_ENV: 'production',
     PORT: String(port),
     HOSTNAME: '127.0.0.1',

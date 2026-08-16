@@ -14,7 +14,7 @@ import type { FetchLike } from '@/integrations/google/calendar'
 import { OWNER_SCOPE_USER } from '@/services/credentials'
 import { getSettings } from '@/services/settings'
 import { toIsoDate } from '@/services/time-entries'
-import { resolveConnector, TIME_ZONE } from './connector'
+import { resolveConnector } from './connector'
 
 export interface FlushReport {
   /** aucun compte joignable : rien n'a été tenté, rien n'a été marqué en échec */
@@ -66,7 +66,12 @@ async function ouvrirConflit(row: Row, kind: ConflictKind, snapshot: unknown): P
 
 type Issue = 'OK' | 'CONFLIT'
 
-async function traiterUpsert(connector: CalendarConnector, row: Row, now: Date): Promise<Issue> {
+async function traiterUpsert(
+  connector: CalendarConnector,
+  row: Row,
+  now: Date,
+  timeZone: string,
+): Promise<Issue> {
   const entry = await prisma.timeEntry.findFirst({
     where: { id: row.entityId, userId: row.userId },
     include: { line: { include: { mission: { include: { client: true } } } } },
@@ -90,7 +95,10 @@ async function traiterUpsert(connector: CalendarConnector, row: Row, now: Date):
     lineLabel: entry.line.label,
     startMinute: entry.startMinute,
     endMinute: entry.endMinute,
-    timeZone: TIME_ZONE,
+    // Le fuseau, lui, est bien un réglage courant, et c'est voulu : il situe
+    // des heures locales naïves, il ne les change pas. Il vient des réglages,
+    // saisi à l'écran — plus de `CRA_TIMEZONE` dans un fichier.
+    timeZone,
   })
 
   const link = await prisma.externalLink.findUnique({
@@ -183,6 +191,10 @@ export async function flushSyncOutbox(args: {
   // même que l'utilisateur ait connecté son agenda.
   if (connector === null) return vide
 
+  // Lu une seule fois par drainage : le fuseau est le même pour toutes les
+  // lignes du lot, et le relire par ligne n'ajouterait que des allers-retours.
+  const { timeZone } = await getSettings()
+
   // `nextAttemptAt` porte un **recul après échec**, pas une date d'ouverture :
   // une ligne jamais tentée est due par définition, quelle que soit l'horloge.
   // La mise en file, elle, estampille avec l'horloge système ; comparer les
@@ -222,7 +234,7 @@ export async function flushSyncOutbox(args: {
       const issue =
         row.operation === 'DELETE'
           ? await traiterSuppression(connector, row)
-          : await traiterUpsert(connector, row, now)
+          : await traiterUpsert(connector, row, now, timeZone)
 
       if (issue === 'CONFLIT') report.conflits += 1
       else report.reussies += 1

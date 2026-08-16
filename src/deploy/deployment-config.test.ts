@@ -22,6 +22,17 @@ import path from 'node:path'
 
 const RACINE = path.resolve(__dirname, '../..')
 
+/** Les sources de production : les tests ont le droit de poser une variable. */
+function sourcesDeProduction(dossier = path.join(RACINE, 'src')): string[] {
+  const out: string[] = []
+  for (const entree of readdirSync(dossier, { withFileTypes: true })) {
+    const chemin = path.join(dossier, entree.name)
+    if (entree.isDirectory()) out.push(...sourcesDeProduction(chemin))
+    else if (/\.tsx?$/.test(entree.name) && !/\.test\.tsx?$/.test(entree.name)) out.push(chemin)
+  }
+  return out
+}
+
 function lit(nom: string): string {
   return readFileSync(path.join(RACINE, nom), 'utf8')
 }
@@ -92,7 +103,7 @@ describe('docker-compose.yml — les variables documentées atteignent le conten
     },
   )
 
-  it.each(['AUTH_SECRET', 'CREDENTIALS_KEY', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SYNC_FLUSH_TOKEN'])(
+  it.each(['AUTH_SECRET', 'CREDENTIALS_KEY', 'SYNC_FLUSH_TOKEN'])(
     '%s vient de l environnement, jamais écrite en dur dans le fichier committé',
     (nom) => {
       const valeur = valeurCompose(nom) ?? ''
@@ -111,12 +122,55 @@ describe('docker-compose.yml — les variables documentées atteignent le conten
   })
 
   it('laisse les variables purement optionnelles démarrer à vide', () => {
-    // Le connecteur Google est optionnel : une installation sans identifiants
-    // Google est un état légitime, pas une panne. Les rendre obligatoires
-    // empêcherait de démarrer une installation qui n'en veut pas.
-    for (const nom of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SYNC_FLUSH_TOKEN']) {
+    // Le déclenchement externe est optionnel : une installation qui n'expose
+    // rien à l'extérieur est un état légitime, pas une panne. Le rendre
+    // obligatoire empêcherait de démarrer une installation qui n'en veut pas.
+    for (const nom of ['SYNC_FLUSH_TOKEN', 'CRA_API_TOKEN']) {
       expect(valeurCompose(nom) ?? '', `${nom} ne doit pas bloquer le démarrage`).not.toContain(':?')
     }
+  })
+})
+
+// La règle du lot « configuration application vs environnement » : **si
+// l'utilisateur doit taper la valeur, elle n'a rien à faire dans un fichier**.
+//
+// Le client OAuth Google et le fuseau horaire se saisissent à l'écran et
+// vivent en base — le premier chiffré, comme la clé d'API Dolibarr. Les
+// remettre dans un fichier n'annulerait pas seulement le déplacement : cela
+// rendrait de nouveau le secret du client lisible par quiconque ouvre le
+// fichier, alors qu'en base il exige AUSSI `CREDENTIALS_KEY`.
+//
+// Ce garde-fou est statique parce que la régression l'est : personne ne
+// remarque une ligne réapparue dans un `.env.example`, et aucun test unitaire
+// ne regarde ces fichiers.
+describe("les valeurs saisies par l'utilisateur ne reviennent pas dans un fichier", () => {
+  const DEPLACEES = [
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'GOOGLE_REDIRECT_URI',
+    'CRA_TIMEZONE',
+  ]
+
+  it.each(DEPLACEES)('%s ne figure pas dans .env.example', (nom) => {
+    const declarees = lignesActives(ENV_EXAMPLE)
+      .map((l) => /^([A-Z_][A-Z0-9_]*)=/.exec(l)?.[1] ?? '')
+      .filter((n) => n !== '')
+    expect(declarees, `${nom} se saisit à l'écran : il n'a rien à faire dans un fichier`).not.toContain(nom)
+  })
+
+  it.each(DEPLACEES)('%s n est plus injectée par docker-compose', (nom) => {
+    expect(valeurCompose(nom), `${nom} ne doit plus être transmise au conteneur`).toBeNull()
+  })
+
+  it.each(DEPLACEES)('%s n est plus lue nulle part dans le code de production', (nom) => {
+    // La contrepartie du garde-fou : retirer la variable des fichiers ne sert
+    // à rien si le code continue de la lire — le déplacement serait à moitié
+    // fait, et un `.env` oublié suffirait à faire fonctionner l'écran « par
+    // hasard » sur un poste et pas sur un autre.
+    const fautifs = sourcesDeProduction().filter((chemin) =>
+      readFileSync(chemin, 'utf8').includes(`process.env.${nom}`),
+    )
+    expect(fautifs.map((c) => path.relative(RACINE, c))).toEqual([])
   })
 })
 
@@ -156,7 +210,7 @@ describe('le .env de développement ne part pas dans l image', () => {
   })
 
   it('.env.example ne porte aucune valeur de secret exploitable', () => {
-    for (const nom of ['AUTH_SECRET', 'CREDENTIALS_KEY', 'GOOGLE_CLIENT_SECRET', 'SYNC_FLUSH_TOKEN']) {
+    for (const nom of ['AUTH_SECRET', 'CREDENTIALS_KEY', 'SYNC_FLUSH_TOKEN', 'SIGNATURE_WEBHOOK_SECRET']) {
       const brut: string = new RegExp(`^${nom}=(.*)$`, 'm').exec(ENV_EXAMPLE)?.[1] ?? ''
       const valeur = brut.replace(/^"|"$/g, '')
       const factice = valeur === '' || /remplacer|exemple|changeme|xxx/i.test(valeur)

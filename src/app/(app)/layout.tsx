@@ -13,6 +13,10 @@ const LIENS = [
   // La clé d'API Dolibarr se saisit sur cet écran, et nulle part ailleurs :
   // sans lien, le connecteur ne peut pas être configuré du tout.
   { href: '/admin/dolibarr', label: 'Dolibarr' },
+  // Le client OAuth Google se saisit sur cet écran, et nulle part ailleurs :
+  // il ne vit plus dans un fichier d'environnement, donc sans lien il n'y a
+  // plus aucun moyen de configurer le connecteur.
+  { href: '/admin/google', label: 'Google' },
   // Un écran de supervision qu'aucun lien n'atteint ne supervise rien.
   { href: '/admin/sync', label: 'Synchro' },
 ]
