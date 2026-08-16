@@ -9,6 +9,7 @@ import { readSelection } from '@/components/calendar/selection-storage'
 import { resolveSelection } from '@/core/saisie/selection'
 import { formatClearReport, formatFillReport } from '@/core/saisie/report'
 import { phraseOccupation } from '@/core/saisie/occupation'
+import { phraseCreneauNonPrevu } from '@/core/saisie/slot-labels'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import type { CellState } from '@/core/saisie/cycle'
@@ -144,10 +145,13 @@ export function SaisieClient(props: {
           ),
         )
       } else if (r.slotWarning) {
+        // Mêmes libellés que la vue calendrier (`applyCellState`) : le
+        // serveur ne renvoie que des identifiants, `props.slots` — déjà
+        // transmis pour la cinématique — porte les libellés réglés en
+        // administration, avec repli sur l'identifiant si le créneau a été
+        // retiré des réglages depuis la saisie.
         setMessage(
-          avertissement(
-            `Ce créneau n’est pas prévu pour cette ligne (créneaux prévus : ${r.slotWarning.allowedSlotIds.join(', ')}). La saisie est conservée.`,
-          ),
+          avertissement(phraseCreneauNonPrevu(r.slotWarning.allowedSlotIds, props.slots)),
         )
       } else {
         setMessage(messageDOccupation(date))

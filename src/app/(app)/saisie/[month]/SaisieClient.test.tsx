@@ -226,19 +226,35 @@ describe('SaisieClient', () => {
   // Tâche 12 — un créneau que la prestation ne prévoit pas est signalé, jamais
   // refusé : la saisie reste à l'écran et le message dit qu'elle est conservée.
   describe('créneau non prévu, vue tableau', () => {
-    it('signale le créneau sans effacer la saisie', async () => {
+    // Le bug corrigé : le tableau affichait l'identifiant brut du créneau
+    // (« nuit ») là où le calendrier affiche le libellé réglé en
+    // administration (« Nuit (20 h – 4 h) »). Comparaison exacte de la phrase
+    // entière : un `toContain` sur un fragment court laisserait passer
+    // n'importe quel texte qui le contiendrait, y compris l'ancien.
+    it('signale le créneau avec le libellé réglé en administration, pas l’identifiant', async () => {
       saveCell.mockResolvedValue({
         ok: true,
         minutes: 240,
         slotWarning: { slotId: 'matin', allowedSlotIds: ['nuit'] },
       })
-      renderClient()
+      renderClient({
+        slots: [
+          { id: 'matin', label: 'Matin', startMinute: 540, endMinute: 780, centiemes: 50 },
+          {
+            id: 'nuit',
+            label: 'Nuit (20 h – 4 h)',
+            startMinute: 1200,
+            endMinute: 240,
+            centiemes: 50,
+          },
+        ],
+      })
       ouvrirTableau()
       const input = saisir('0,5')
 
-      const message = await screen.findByText(/n’est pas prévu pour cette ligne/)
-      expect(message.textContent).toContain('nuit')
-      expect(message.textContent).toContain('conservée')
+      const message = await screen.findByText(
+        'Ce créneau n’est pas prévu pour cette ligne (créneaux prévus : Nuit (20 h – 4 h)). La saisie est conservée.',
+      )
       expect(input.value).toBe('0,5')
 
       // Signalement et non refus : la tonalité n'est pas celle d'un rejet.
@@ -246,6 +262,25 @@ describe('SaisieClient', () => {
       expect(bandeau).not.toBeNull()
       expect(bandeau!.className).toContain('bg-warning')
       expect(bandeau!.className).not.toContain('bg-danger')
+    })
+
+    // Un créneau peut avoir été retiré des réglages après la saisie : son
+    // libellé n'existe plus nulle part côté client non plus. Le message doit
+    // retomber sur l'identifiant, jamais s'effacer ni afficher « undefined ».
+    it('retombe sur l’identifiant quand le créneau a été supprimé des réglages', async () => {
+      saveCell.mockResolvedValue({
+        ok: true,
+        minutes: 240,
+        slotWarning: { slotId: 'matin', allowedSlotIds: ['soiree-disparue'] },
+      })
+      renderClient({ slots: DEFAULT_SLOTS })
+      ouvrirTableau()
+      saisir('0,5')
+
+      const message = await screen.findByText(
+        'Ce créneau n’est pas prévu pour cette ligne (créneaux prévus : soiree-disparue). La saisie est conservée.',
+      )
+      expect(message.textContent).not.toMatch(/undefined/)
     })
 
     it('transmet au serveur le créneau choisi dans la grille', async () => {

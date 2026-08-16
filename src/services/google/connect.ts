@@ -40,9 +40,20 @@ export async function connectGoogle(args: {
   }
 }
 
+/**
+ * Supprime uniquement les jetons stockés ici : aucun appel n'est fait au
+ * point de révocation de Google. L'autorisation accordée à l'application
+ * reste donc active côté compte Google jusqu'à ce que l'utilisateur la
+ * retire lui-même — le porteur a tranché en faveur d'un comportement limité
+ * mais honnête plutôt qu'un appel réseau qui peut échouer à moitié. C'est
+ * pourquoi cette fonction ne s'appelle pas « revoke » : elle déconnecte
+ * l'application, elle ne révoque rien. Dire cette limite à l'écran est la
+ * responsabilité de l'appelant (voir `SyncClient`), pas la sienne.
+ *
+ * Les blocs déjà posés restent dans l'agenda : ils sont dans un calendrier
+ * dédié, que l'utilisateur efface d'un geste s'il le souhaite.
+ */
 export async function disconnectGoogle(userId: string): Promise<void> {
-  // Les blocs déjà posés restent dans l'agenda : ils sont dans un calendrier
-  // dédié, que l'utilisateur efface d'un geste s'il le souhaite.
   await revokeCredential(userId, PROVIDER_GOOGLE)
 }
 

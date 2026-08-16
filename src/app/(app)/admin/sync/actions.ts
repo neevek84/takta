@@ -45,7 +45,14 @@ export async function rejouer(rowId: string): Promise<boolean> {
   return r
 }
 
-export async function revoquerGoogle(): Promise<void> {
+/**
+ * Déconnecte le compte Google de la session — au sens strict : les jetons
+ * stockés ici sont effacés, rien de plus. Elle ne s'appelle pas
+ * `revoquerGoogle` : l'autorisation accordée par l'utilisateur reste active
+ * côté compte Google (voir `disconnectGoogle`), et un nom de révocation le
+ * cacherait. `SyncClient` porte l'explication à l'écran.
+ */
+export async function deconnecterGoogle(): Promise<void> {
   const user = await requireUser()
   await disconnectGoogle(user.id)
   revalidatePath('/admin/sync')

@@ -4,13 +4,13 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import type { OpenConflict } from '@/services/sync/conflicts'
 import type { FailedSyncRow } from '@/services/sync/queue'
 
-const { arbitrer, synchroniserMaintenant, rejouer, revoquerGoogle } = vi.hoisted(() => ({
+const { arbitrer, synchroniserMaintenant, rejouer, deconnecterGoogle } = vi.hoisted(() => ({
   arbitrer: vi.fn(),
   synchroniserMaintenant: vi.fn(),
   rejouer: vi.fn(),
-  revoquerGoogle: vi.fn(),
+  deconnecterGoogle: vi.fn(),
 }))
-vi.mock('./actions', () => ({ arbitrer, synchroniserMaintenant, rejouer, revoquerGoogle }))
+vi.mock('./actions', () => ({ arbitrer, synchroniserMaintenant, rejouer, deconnecterGoogle }))
 
 import { SyncClient } from './SyncClient'
 
@@ -53,7 +53,7 @@ beforeEach(() => {
   arbitrer.mockReset()
   synchroniserMaintenant.mockReset()
   rejouer.mockReset()
-  revoquerGoogle.mockReset()
+  deconnecterGoogle.mockReset()
 })
 afterEach(cleanup)
 
@@ -64,13 +64,53 @@ describe('état de la connexion', () => {
     })
     const lien = screen.getByRole('link', { name: 'Connecter Google Calendar' })
     expect(lien.getAttribute('href')).toBe('/api/google/connect')
-    expect(screen.queryByRole('button', { name: 'Révoquer la connexion' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Déconnecter' })).toBeNull()
   })
 
-  it('affiche le calendrier dédié et propose de révoquer', () => {
+  it('affiche le calendrier dédié et propose de se déconnecter', () => {
     renderSync()
     expect(screen.getByText(/cra@group\.calendar\.google\.com/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Révoquer la connexion' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Déconnecter' })).toBeTruthy()
+  })
+})
+
+/**
+ * `deconnecterGoogle` n'appelle aucun point de révocation chez Google : elle
+ * n'efface que ce qui est stocké ici (voir `disconnectGoogle`). Sans ce
+ * message, l'utilisateur croirait avoir tout coupé alors que l'application
+ * reste autorisée dans son compte Google jusqu'à ce qu'il l'y retire
+ * lui-même.
+ */
+describe('déconnexion Google', () => {
+  it('dit que l’autorisation reste active côté Google, et comment la retirer', async () => {
+    deconnecterGoogle.mockResolvedValue(undefined)
+    renderSync()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Déconnecter' }))
+
+    const bandeau = await screen.findByRole('alert')
+    // Deux vérifications indépendantes plutôt qu'un fragment court : l'une ne
+    // suffit pas à distinguer ce message d'un message générique de succès.
+    expect(bandeau.textContent).toContain('myaccount.google.com/permissions')
+    expect(bandeau.textContent).toContain('autorise toujours cette application')
+    expect(deconnecterGoogle).toHaveBeenCalledTimes(1)
+
+    // Signalement, pas une erreur : le geste a bien réussi.
+    expect(bandeau.className).toContain('bg-warning')
+    expect(bandeau.className).not.toContain('bg-danger')
+  })
+
+  it('annonce l’échec de la déconnexion au lieu de ne rien dire', async () => {
+    deconnecterGoogle.mockRejectedValue(new Error('connexion perdue'))
+    renderSync()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Déconnecter' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(/échoué|impossible/i)
+    })
+    // Et le message d'avertissement Google ne s'affiche pas sur un échec.
+    expect(screen.queryByText(/myaccount\.google\.com/)).toBeNull()
   })
 })
 

@@ -23,7 +23,7 @@ vi.mock('@/services/sync/conflicts', () => ({ resolveConflict }))
 vi.mock('@/services/sync/queue', () => ({ retrySyncRow }))
 vi.mock('@/services/google/connect', () => ({ disconnectGoogle }))
 
-import { arbitrer, rejouer, revoquerGoogle, synchroniserMaintenant } from './actions'
+import { arbitrer, deconnecterGoogle, rejouer, synchroniserMaintenant } from './actions'
 
 const RAPPORT = { nonConnecte: false, traitees: 1, reussies: 1, conflits: 0, echecs: 0, reste: 0 }
 
@@ -47,7 +47,7 @@ describe('chaque action exige une session', () => {
     ['synchroniserMaintenant', () => synchroniserMaintenant()],
     ['arbitrer', () => arbitrer('c1', 'RETABLIR')],
     ['rejouer', () => rejouer('r1')],
-    ['revoquerGoogle', () => revoquerGoogle()],
+    ['deconnecterGoogle', () => deconnecterGoogle()],
   ]
 
   for (const [nom, appeler] of actions) {
@@ -99,8 +99,8 @@ describe('chaque action agit sur le seul compte de la session', () => {
     expect(retrySyncRow).toHaveBeenCalledWith('u1', 'r1')
   })
 
-  it('révoque la connexion de la session', async () => {
-    await revoquerGoogle()
+  it('déconnecte le compte Google de la session', async () => {
+    await deconnecterGoogle()
     expect(disconnectGoogle).toHaveBeenCalledWith('u1')
   })
 })
