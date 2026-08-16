@@ -51,11 +51,17 @@ beforeAll(async () => {
 beforeEach(async () => {
   file.seuil = null
   file.appels = 0
+  // Scopé sur les données de ce fichier, jamais sur la table entière : ces
+  // trois `deleteMany` étaient sans filtre, et tant que la suite tournait sur
+  // la base de développement, chaque exécution effaçait toutes les saisies et
+  // tous les CRA de l'utilisateur. L'isolation de la base l'empêche désormais,
+  // mais une suppression sans filtre reste une arme chargée.
+  //
   // La file n'a aucune clé étrangère sur `entityId` : elle survit à la saisie
   // qu'elle vise, et doit donc être purgée avant elle.
-  await prisma.syncOutbox.deleteMany({})
-  await prisma.timeEntry.deleteMany({})
-  await prisma.cra.deleteMany({})
+  await prisma.syncOutbox.deleteMany({ where: { userId } })
+  await prisma.timeEntry.deleteMany({ where: { userId } })
+  await prisma.cra.deleteMany({ where: { userId } })
   await updateSettings({
     minutesParJour: 480,
     capacityMode: 'DESACTIVE',
@@ -67,9 +73,9 @@ beforeEach(async () => {
 })
 
 afterAll(async () => {
-  await prisma.syncOutbox.deleteMany({})
-  await prisma.timeEntry.deleteMany({})
-  await prisma.cra.deleteMany({})
+  await prisma.syncOutbox.deleteMany({ where: { userId } })
+  await prisma.timeEntry.deleteMany({ where: { userId } })
+  await prisma.cra.deleteMany({ where: { userId } })
   await prisma.user.deleteMany({ where: { email: 'fill@test.local' } })
   await prisma.client.deleteMany({ where: { name: 'FILL client' } })
   await prisma.settings.deleteMany({})
