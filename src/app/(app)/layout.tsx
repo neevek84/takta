@@ -10,6 +10,9 @@ const LIENS = [
   { href: '/cra', label: 'CRA' },
   { href: '/admin/saisie', label: 'Admin' },
   { href: '/admin/theme', label: 'Thème' },
+  // La clé d'API Dolibarr se saisit sur cet écran, et nulle part ailleurs :
+  // sans lien, le connecteur ne peut pas être configuré du tout.
+  { href: '/admin/dolibarr', label: 'Dolibarr' },
   // Un écran de supervision qu'aucun lien n'atteint ne supervise rien.
   { href: '/admin/sync', label: 'Synchro' },
 ]

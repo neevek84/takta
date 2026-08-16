@@ -23,4 +23,13 @@ describe('navigation de l application', () => {
     const lien = screen.getByRole('link', { name: 'Synchro' })
     expect(lien.getAttribute('href')).toBe('/admin/sync')
   })
+
+  it('mène à l écran de connexion et de rattachement Dolibarr', async () => {
+    // C'est l'écran par lequel la clé d'API se saisit : sans lien, le
+    // connecteur ne peut pas être configuré du tout.
+    render(await AppLayout({ children: null }))
+
+    const lien = screen.getByRole('link', { name: 'Dolibarr' })
+    expect(lien.getAttribute('href')).toBe('/admin/dolibarr')
+  })
 })

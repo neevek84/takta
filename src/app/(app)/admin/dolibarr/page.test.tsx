@@ -1,0 +1,210 @@
+// @vitest-environment happy-dom
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, cleanup, within } from '@testing-library/react'
+import type { ImportCandidates } from '@/services/dolibarr/import'
+
+const {
+  requireUser,
+  getInstanceCredential,
+  getDolibarrApi,
+  listImportCandidates,
+  listClients,
+  listMissionsForUser,
+} = vi.hoisted(() => ({
+  requireUser: vi.fn(),
+  getInstanceCredential: vi.fn(),
+  getDolibarrApi: vi.fn(),
+  listImportCandidates: vi.fn(),
+  listClients: vi.fn(),
+  listMissionsForUser: vi.fn(),
+}))
+
+vi.mock('@/auth', () => ({ requireUser }))
+vi.mock('@/services/credentials', () => ({ getInstanceCredential }))
+vi.mock('@/services/dolibarr/resolve', () => ({ getDolibarrApi }))
+vi.mock('@/services/dolibarr/import', () => ({ listImportCandidates }))
+vi.mock('@/services/clients', () => ({ listClients }))
+vi.mock('@/services/missions', () => ({ listMissionsForUser }))
+// Les server actions tireraient `next/cache` et l'authentification : le
+// formulaire les reçoit, il ne les exécute pas ici.
+vi.mock('./actions', () => ({
+  rattacherTiers: vi.fn(),
+  rattacherProjet: vi.fn(),
+  detacher: vi.fn(),
+  pousserClient: vi.fn(),
+}))
+
+// Témoin : ce test porte sur le **câblage** de la page, pas sur le rendu du
+// formulaire de connexion, qui a ses propres tests.
+const recu = vi.hoisted(() => ({ props: null as unknown }))
+vi.mock('./ConnexionForm', () => ({
+  ConnexionForm: (props: unknown) => {
+    recu.props = props
+    return <div data-testid="connexion" />
+  },
+}))
+
+import AdminDolibarrPage from './page'
+
+const API = { marqueur: 'api' }
+
+const CANDIDATS: ImportCandidates = {
+  tiers: [
+    { id: 1, name: 'ACME distant', clientId: null, clientName: null },
+    { id: 2, name: 'BETA distant', clientId: 'c9', clientName: 'BETA local' },
+  ],
+  projets: [
+    { id: 10, ref: 'PJ001', title: 'ITSM distant', socid: 1, missionId: null, missionLabel: null },
+    {
+      id: 11,
+      ref: 'PJ002',
+      title: 'RUN distant',
+      socid: 2,
+      missionId: 'm9',
+      missionLabel: 'RUN local',
+    },
+  ],
+}
+
+const CREDENTIAL = {
+  provider: 'DOLIBARR',
+  baseUrl: 'https://erp.invalid/api/index.php',
+  metadata: { dolibarrUserId: '7' },
+  connectedAt: new Date('2026-08-15T08:00:00.000Z'),
+}
+
+const MISSIONS = [
+  {
+    id: 'm1',
+    label: 'ITSM local',
+    clientName: 'ACME local',
+    minutesParJourEffectif: 480,
+    minutesParJourSurcharge: null,
+    lines: [],
+  },
+]
+
+beforeEach(() => {
+  recu.props = null
+  requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
+  getInstanceCredential.mockReset().mockResolvedValue(CREDENTIAL)
+  getDolibarrApi.mockReset().mockResolvedValue(API)
+  listImportCandidates.mockReset().mockResolvedValue(CANDIDATS)
+  listClients.mockReset().mockResolvedValue([{ id: 'c1', name: 'ACME local' }])
+  listMissionsForUser.mockReset().mockResolvedValue(MISSIONS)
+})
+afterEach(cleanup)
+
+async function rendre(params: { message?: string } = {}) {
+  render(await AdminDolibarrPage({ searchParams: Promise.resolve(params) }))
+}
+
+describe('page Administration · Dolibarr — câblage', () => {
+  it('lit les identifiants d instance et les transmet au formulaire, sans secret', async () => {
+    await rendre()
+
+    expect(getInstanceCredential).toHaveBeenCalledWith('DOLIBARR')
+    expect(recu.props).toEqual({
+      baseUrl: CREDENTIAL.baseUrl,
+      dolibarrUserId: '7',
+      connecte: true,
+      connectedAt: CREDENTIAL.connectedAt,
+    })
+    // Le secret n'a aucune raison de traverser la page : la vue n'en porte pas.
+    expect(Object.keys(recu.props as object)).not.toContain('apiKey')
+  })
+
+  it('dit au formulaire que Dolibarr n est pas connecté quand aucune clé n existe', async () => {
+    getInstanceCredential.mockResolvedValue(null)
+    getDolibarrApi.mockResolvedValue(null)
+
+    await rendre()
+
+    expect(recu.props).toEqual({
+      baseUrl: '',
+      dolibarrUserId: '',
+      connecte: false,
+      connectedAt: null,
+    })
+  })
+
+  it('interroge Dolibarr pour la session, et affiche ce qu il rend', async () => {
+    await rendre()
+
+    expect(listImportCandidates).toHaveBeenCalledWith('u1', API)
+    // Câblée sur un tableau vide, la page annoncerait « rien à rattacher »
+    // pendant que l'instance propose des tiers.
+    expect(screen.getByText('ACME distant')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Rattacher « ACME distant »' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Rattacher « PJ001 »' })).toBeTruthy()
+  })
+
+  it('propose les clients et les missions de la session comme cibles', async () => {
+    await rendre()
+
+    expect(listClients).toHaveBeenCalledWith('u1')
+    expect(listMissionsForUser).toHaveBeenCalledWith('u1')
+
+    const rattachement = screen.getByLabelText('Client local pour « ACME distant »')
+    expect(within(rattachement).getByRole('option', { name: /ACME local/ })).toBeTruthy()
+
+    const mission = screen.getByLabelText('Mission locale pour « PJ001 »')
+    expect(within(mission).getByRole('option', { name: /ITSM local/ })).toBeTruthy()
+  })
+
+  it('signale ce qui est déjà rattaché et propose de le détacher', async () => {
+    await rendre()
+
+    expect(screen.getByText(/BETA local/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Détacher « BETA distant »' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Détacher « PJ002 »' })).toBeTruthy()
+    // Ce qui est rattaché ne propose plus de l'être une seconde fois.
+    expect(screen.queryByLabelText('Client local pour « BETA distant »')).toBeNull()
+  })
+
+  it('ne propose pas de créer une mission tant qu aucun client local n existe', async () => {
+    // Sans client, la création échouerait sur la clé étrangère : mieux vaut
+    // dire par où commencer que laisser un bouton qui ne fait rien.
+    listClients.mockResolvedValue([])
+
+    await rendre()
+
+    expect(screen.queryByLabelText('Mission locale pour « PJ001 »')).toBeNull()
+    expect(document.body.textContent ?? '').toContain(
+      'Rattachez d’abord un tiers pour obtenir un client local',
+    )
+  })
+
+  it('ne touche pas Dolibarr quand il n est pas connecté, et reste utilisable', async () => {
+    getDolibarrApi.mockResolvedValue(null)
+
+    await rendre()
+
+    expect(listImportCandidates).not.toHaveBeenCalled()
+    expect(screen.getByTestId('connexion')).toBeTruthy()
+  })
+
+  it('reste debout quand Dolibarr est en panne, et le dit', async () => {
+    // La page porte le formulaire de connexion : c'est justement l'écran
+    // qu'on veut atteindre quand la connexion ne marche pas.
+    listImportCandidates.mockRejectedValue(new Error('Dolibarr est injoignable (/projects).'))
+
+    await rendre()
+
+    const alerte = screen.getByRole('alert')
+    expect(alerte.textContent).toContain('injoignable')
+    expect(alerte.textContent).toContain('La saisie et la validation des CRA fonctionnent')
+    expect(screen.getByTestId('connexion')).toBeTruthy()
+    expect(screen.queryByText('ACME distant')).toBeNull()
+  })
+
+  it('affiche le message rapporté par une action', async () => {
+    await rendre({ message: 'Le tiers a été créé dans Dolibarr.' })
+    expect(screen.getByRole('status').textContent).toContain('Le tiers a été créé dans Dolibarr.')
+  })
+
+  it('n annonce rien quand aucune action n a laissé de message', async () => {
+    await rendre()
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+})
