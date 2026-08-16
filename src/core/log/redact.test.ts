@@ -110,3 +110,23 @@ describe('estCleSensible', () => {
     },
   )
 })
+
+// Constaté en exerçant la fonction, pas déduit : dans « Dolibarr : api_key=X »,
+// l'expression capture `Dolibarr` comme clé et avale `api_key=X` entier comme
+// sa valeur. `Dolibarr` n'étant pas sensible, tout ressort intact — et la vraie
+// paire n'est jamais examinée. Le même secret, placé en tête, était bien effacé.
+describe('une paire sensible imbriquée dans une paire anodine', () => {
+  it('rédige un secret nommé en second dans la phrase', () => {
+    const sortie = redige('Echec Dolibarr : api_key=cle-secrete-de-test')
+    expect(sortie).not.toContain('cle-secrete-de-test')
+  })
+
+  it('rédige aussi bien le même secret placé en tête', () => {
+    const sortie = redige('api_key=cle-secrete-de-test sur Dolibarr')
+    expect(sortie).not.toContain('cle-secrete-de-test')
+  })
+
+  it('laisse intacte une valeur anodine imbriquée', () => {
+    expect(redige('Contexte mission : projet=refonte-site')).toContain('refonte-site')
+  })
+})

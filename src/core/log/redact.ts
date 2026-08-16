@@ -66,6 +66,43 @@ const CHAINE_OPAQUE = /[A-Za-z0-9+_-]{24,}={0,2}/g
  * effacées par recherche littérale — jamais par expression régulière : une clé
  * base64 contient `+`, `/` et `=`, qui sont des métacaractères.
  */
+/**
+ * Les paires `clé: valeur`, réexaminées en profondeur.
+ *
+ * Sans la récursion, « Dolibarr : api_key=SECRET » ressortait intact : la
+ * capture prend `Dolibarr` comme clé et avale `api_key=SECRET` **entier**
+ * comme sa valeur. `Dolibarr` n'étant pas sensible, tout était rendu tel quel
+ * et la vraie paire n'était jamais examinée — alors que le même secret placé
+ * en tête de phrase était bien effacé. Constaté en exerçant la fonction.
+ *
+ * La profondeur est bornée : une valeur ne contient pas indéfiniment des
+ * paires imbriquées, et une récursion sans plafond sur une entrée hostile
+ * coûterait plus cher que ce qu'elle protège.
+ */
+function redigePairesNommees(texte: string, profondeur: number): string {
+  if (profondeur > 3) return texte
+
+  return texte.replace(
+    PAIRE_NOMMEE,
+    (tout, guillemet, cle, separateur, bearer, entreDoubles, entreSimples, nu) => {
+      if (!estCleSensible(cle as string)) {
+        // La clé est anodine, mais sa valeur peut porter une paire qui ne l'est
+        // pas : on la réexamine au lieu de la considérer consommée.
+        if (typeof nu !== 'string') return tout as string
+        const reexaminee = redigePairesNommees(nu, profondeur + 1)
+        if (reexaminee === nu) return tout as string
+        return `${guillemet}${cle}${guillemet}${separateur}${bearer ?? ''}${reexaminee}`
+      }
+
+      const prefixe = `${guillemet}${cle}${guillemet}${separateur}${bearer ?? ''}`
+      if (entreDoubles !== undefined) return `${prefixe}"${JETON_REDIGE}"`
+      if (entreSimples !== undefined) return `${prefixe}'${JETON_REDIGE}'`
+      if (nu === JETON_REDIGE) return tout as string
+      return `${prefixe}${JETON_REDIGE}`
+    },
+  )
+}
+
 export function redige(texte: string, secrets: readonly string[] = []): string {
   if (texte === '') return ''
 
@@ -76,17 +113,7 @@ export function redige(texte: string, secrets: readonly string[] = []): string {
     sortie = sortie.split(secret).join(JETON_REDIGE)
   }
 
-  sortie = sortie.replace(
-    PAIRE_NOMMEE,
-    (tout, guillemet, cle, separateur, bearer, entreDoubles, entreSimples, nu) => {
-      if (!estCleSensible(cle as string)) return tout as string
-      const prefixe = `${guillemet}${cle}${guillemet}${separateur}${bearer ?? ''}`
-      if (entreDoubles !== undefined) return `${prefixe}"${JETON_REDIGE}"`
-      if (entreSimples !== undefined) return `${prefixe}'${JETON_REDIGE}'`
-      if (nu === JETON_REDIGE) return tout as string
-      return `${prefixe}${JETON_REDIGE}`
-    },
-  )
+  sortie = redigePairesNommees(sortie, 0)
 
   sortie = sortie.replace(BEARER_NU, (tout, valeur) =>
     valeur === JETON_REDIGE ? (tout as string) : `Bearer ${JETON_REDIGE}`,
