@@ -2,7 +2,12 @@ import { prisma } from '@/db/client'
 import { PROVIDER_GOOGLE } from '@/core/sync/policy'
 import { ensureDedicatedCalendar, type FetchLike } from '@/integrations/google/calendar'
 import { exchangeCode } from '@/integrations/google/oauth'
-import { revokeCredential, saveCredential, setCalendarId } from '@/services/credentials'
+import {
+  OWNER_SCOPE_USER,
+  revokeCredential,
+  saveCredential,
+  setCalendarId,
+} from '@/services/credentials'
 import { journalErreur } from '@/services/log'
 
 /** Libellé du calendrier dédié — jamais l'agenda principal. */
@@ -64,7 +69,13 @@ export async function getConnectionState(userId: string): Promise<{
   connectedAt: Date | null
 }> {
   const row = await prisma.providerCredential.findUnique({
-    where: { userId_provider: { userId, provider: PROVIDER_GOOGLE } },
+    where: {
+      ownerScope_userId_provider: {
+        ownerScope: OWNER_SCOPE_USER,
+        userId,
+        provider: PROVIDER_GOOGLE,
+      },
+    },
     select: { calendarId: true, scope: true, connectedAt: true },
   })
 

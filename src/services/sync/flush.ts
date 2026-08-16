@@ -4,6 +4,7 @@ import { buildCalendarEvent } from '@/core/calendar/event'
 import { abandon, nextAttempt, PROVIDER_GOOGLE, type ConflictKind } from '@/core/sync/policy'
 import type { TimeEntryKind } from '@/core/types'
 import type { FetchLike } from '@/integrations/google/calendar'
+import { OWNER_SCOPE_USER } from '@/services/credentials'
 import { getSettings } from '@/services/settings'
 import { toIsoDate } from '@/services/time-entries'
 import { resolveConnector, TIME_ZONE } from './connector'
@@ -339,7 +340,9 @@ export async function flushAllSyncOutboxes(
 ): Promise<{ comptes: number; traitees: number }> {
   const now = deps.now ?? new Date()
   const comptes = await prisma.providerCredential.findMany({
-    where: { provider: PROVIDER_GOOGLE, calendarId: { not: '' } },
+    // La portée fait partie du filtre : la table accueille aussi des clés
+    // d'instance, dont le `userId` vide ne draine la file de personne.
+    where: { ownerScope: OWNER_SCOPE_USER, provider: PROVIDER_GOOGLE, calendarId: { not: '' } },
     select: { userId: true },
   })
 

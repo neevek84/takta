@@ -20,7 +20,6 @@ model User {
   cras        Cra[]
   outbox      SyncOutbox[]
   conflicts   SyncConflict[]
-  credentials ProviderCredential[]
   links       ExternalLink[]
 }
 
@@ -263,30 +262,57 @@ model SyncConflict {
   @@index([entityType, entityId, provider])
 }
 
-/// Les jetons, chiffrés au repos (AES-256-GCM). La clé vient de
-/// l'environnement : la perdre impose de reconnecter le compte.
+/// Les secrets d'un fournisseur externe, chiffrés au repos (AES-256-GCM). La
+/// clé vient de l'environnement : la perdre impose de reconnecter le compte.
 ///
-/// `userId` n'est PAS nullable, bien qu'une clé d'instance (Dolibarr) n'ait
-/// pas de propriétaire personnel : la colonne entre dans `@@unique([userId,
-/// provider])`, et un NULL n'étant jamais égal à lui-même, deux clés
-/// d'instance du même fournisseur passeraient sans que rien ne les arrête —
-/// exactement la panne corrigée sur `TimeEntry.slotId` au lot 0. Un
-/// identifiant conventionnel (ligne dédiée) portera la clé d'instance le
-/// jour où le lot 2 en aura besoin.
+/// **Deux natures de propriétaire cohabitent ici.** Un jeton Google appartient
+/// à une personne ; une clé d'API Dolibarr appartient à l'instance — elle est
+/// saisie une fois par l'exploitant et vaut pour tous. C'est `ownerScope` qui
+/// les sépare, et il entre DANS la clé d'unicité.
+///
+/// `userId` n'est PAS nullable, et c'est le cœur du dispositif : la colonne
+/// entre dans la clé d'unicité, et un NULL n'étant jamais égal à un autre
+/// NULL, deux clés d'instance du même fournisseur y seraient passées sans que
+/// rien ne les arrête — la contrainte aurait cessé de contraindre en silence,
+/// exactement la panne corrigée sur `TimeEntry.slotId` au lot 0. Une ligne
+/// d'instance porte donc `userId = ''`, sentinelle non nulle, comme `slotId`.
+///
+/// Conséquence assumée : **plus de clé étrangère vers `User`**. Elle ne
+/// pourrait pas tenir avec la sentinelle, et la seule autre issue — une ligne
+/// `User` conventionnelle pour porter la clé d'instance — a été écartée : un
+/// faux compte devrait être filtré par tous les écrans qui listent des
+/// utilisateurs, et se ferait oublier une fois sur deux. Ce qui se perd avec
+/// la clé étrangère, c'est la cascade de suppression d'un compte ; l'inverse
+/// se gagne, une clé d'instance qui ne meurt pas avec l'exploitant qui l'a
+/// saisie. Le jour où l'application supprimera des comptes, le chemin de
+/// suppression devra appeler `revokeCredential` explicitement.
 model ProviderCredential {
   id              String   @id @default(cuid())
+  /// 'USER' | 'INSTANCE'. Le défaut porte la portée historique : les lignes
+  /// Google déjà en base restent personnelles sans qu'on les réécrive.
+  ownerScope      String   @default("USER")
+  /// propriétaire personnel ; chaîne vide — jamais NULL — en portée instance.
   userId          String
   provider        String
+  /// secret principal scellé : jeton d'accès Google, clé d'API Dolibarr…
   accessTokenEnc  String
+  /// secret de renouvellement scellé ; scellé d'une chaîne vide si le
+  /// fournisseur n'en a pas.
   refreshTokenEnc String
-  expiresAt       DateTime
+  /// échéance du secret principal. NULL quand le fournisseur n'en donne pas
+  /// (une clé d'API Dolibarr n'expire pas) : inventer une date lointaine
+  /// ferait porter la décision de rafraîchissement sur une donnée fausse.
+  expiresAt       DateTime?
   scope           String   @default("")
   /// le calendrier dédié, exclu de toute lecture d'occupation
   calendarId      String   @default("")
+  /// URL de base du fournisseur ; vide si sans objet
+  baseUrl         String   @default("")
+  /// ce qui est propre à un fournisseur (identifiant d'utilisateur Dolibarr…).
+  /// JSON lu et écrit en bloc uniquement.
+  metadataJson    String   @default("{}")
   connectedAt     DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, provider])
+  @@unique([ownerScope, userId, provider])
   @@index([userId])
 }

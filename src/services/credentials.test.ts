@@ -8,6 +8,10 @@ import {
   updateAccessToken,
   setCalendarId,
   revokeCredential,
+  saveInstanceCredential,
+  getInstanceCredential,
+  readInstanceSecret,
+  revokeInstanceCredential,
 } from './credentials'
 
 let userId = ''
@@ -211,5 +215,167 @@ describe('credentials', () => {
     expect(await prisma.providerCredential.count({})).toBe(0)
 
     process.env.CREDENTIALS_KEY = ancienne
+  })
+})
+
+// Une clé d'API Dolibarr appartient à l'instance, pas à une personne : elle
+// est saisie une fois par l'exploitant et vaut pour tous. Elle partage
+// néanmoins la table, le chiffrement et le contrat de dégradation des jetons
+// personnels — un seul endroit sait déchiffrer, un seul endroit peut fuir.
+describe('identifiants d instance', () => {
+  // Valeur manifestement factice : rien de ce fichier ne doit ressembler à une
+  // vraie clé d'API.
+  const CLE_API = 'DOLAPIKEY-factice-0000'
+
+  it('stocke la clé chiffrée, jamais en clair', async () => {
+    await saveInstanceCredential({
+      provider: 'DOLIBARR',
+      secret: CLE_API,
+      baseUrl: 'https://erp.exemple.test',
+    })
+
+    const row = await prisma.providerCredential.findFirstOrThrow({
+      where: { provider: 'DOLIBARR' },
+    })
+    expect(row.accessTokenEnc).not.toContain(CLE_API)
+    expect(row.accessTokenEnc.startsWith('v1.')).toBe(true)
+    // La portée est ce qui rend la contrainte d'unicité effective : une clé
+    // d'instance rangée en portée personnelle se dupliquerait par utilisateur.
+    expect({ ownerScope: row.ownerScope, userId: row.userId }).toEqual({
+      ownerScope: 'INSTANCE',
+      userId: '',
+    })
+  })
+
+  it('rend la clé à la lecture', async () => {
+    await saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API })
+    expect(await readInstanceSecret('DOLIBARR')).toBe(CLE_API)
+  })
+
+  it('n expose aucun secret dans la vue', async () => {
+    await saveInstanceCredential({
+      provider: 'DOLIBARR',
+      secret: CLE_API,
+      baseUrl: 'https://erp.exemple.test',
+      metadata: { dolibarrUserId: '7' },
+    })
+
+    const vue = await getInstanceCredential('DOLIBARR')
+    expect(Object.keys(vue!).sort()).toEqual(['baseUrl', 'connectedAt', 'metadata', 'provider'])
+    expect(JSON.stringify(vue)).not.toContain(CLE_API)
+    expect(vue!.baseUrl).toBe('https://erp.exemple.test')
+    expect(vue!.metadata).toEqual({ dolibarrUserId: '7' })
+  })
+
+  it('rend des métadonnées vides plutôt que de casser sur un JSON illisible', async () => {
+    await saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API })
+    await prisma.providerCredential.updateMany({
+      where: { provider: 'DOLIBARR' },
+      data: { metadataJson: 'pas-du-json' },
+    })
+    expect((await getInstanceCredential('DOLIBARR'))!.metadata).toEqual({})
+  })
+
+  it('remplace la clé existante au lieu d en empiler une seconde', async () => {
+    await saveInstanceCredential({ provider: 'DOLIBARR', secret: 'ancienne-factice' })
+    await saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API })
+
+    expect(await prisma.providerCredential.count({ where: { provider: 'DOLIBARR' } })).toBe(1)
+    expect(await readInstanceSecret('DOLIBARR')).toBe(CLE_API)
+  })
+
+  it('rend null pour un fournisseur non configuré', async () => {
+    expect(await getInstanceCredential('DOLIBARR')).toBeNull()
+    expect(await readInstanceSecret('DOLIBARR')).toBeNull()
+  })
+
+  it('supprime la clé', async () => {
+    await saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API })
+    await revokeInstanceCredential('DOLIBARR')
+    expect(await getInstanceCredential('DOLIBARR')).toBeNull()
+    expect(await prisma.providerCredential.count({})).toBe(0)
+  })
+
+  // Le pendant du test qui compte le plus côté personnel : sans clé, un repli
+  // sur une valeur par défaut poserait en base une clé d'API « chiffrée » avec
+  // un secret que tout le monde connaît, et rien ne le signalerait.
+  it("refuse d'enregistrer la clé quand CREDENTIALS_KEY est absente", async () => {
+    const ancienne = process.env.CREDENTIALS_KEY
+    delete process.env.CREDENTIALS_KEY
+
+    await expect(
+      saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API }),
+    ).rejects.toThrow(SecretBoxError)
+    await expect(
+      saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API }),
+    ).rejects.toThrow(/CREDENTIALS_KEY/)
+    expect(await prisma.providerCredential.count({})).toBe(0)
+
+    process.env.CREDENTIALS_KEY = ancienne
+  })
+
+  it('se lit comme non configuré quand la clé de chiffrement a changé, sans se taire', async () => {
+    await saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API })
+    const ancienne = process.env.CREDENTIALS_KEY
+    const journal: string[] = []
+    const espion = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      journal.push(a.map(String).join(' '))
+    })
+
+    process.env.CREDENTIALS_KEY = randomBytes(32).toString('base64')
+    expect(await readInstanceSecret('DOLIBARR')).toBeNull()
+    process.env.CREDENTIALS_KEY = ancienne
+
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toContain('credentials.lecture')
+    expect(journal[0]).toContain('provider=DOLIBARR')
+    expect(journal[0]).not.toContain(CLE_API)
+    espion.mockRestore()
+  })
+
+  // Les deux portées partagent la table : chacune doit être aveugle à l'autre,
+  // sans quoi la clé d'instance serait rendue à qui demande son jeton
+  // personnel — et réciproquement.
+  it('ne rend jamais la clé d instance à une lecture personnelle', async () => {
+    await saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API })
+    expect(await getCredential(userId, 'DOLIBARR')).toBeNull()
+  })
+
+  // Le cas qui justifie que `ownerScope` entre dans la clé, et pas seulement
+  // la sentinelle : sans lui, la ligne d'instance se lit par `('', provider)`,
+  // et tout chemin appelant avec un `userId` vide — session absente, argument
+  // oublié — recevrait la clé d'API de l'instance au lieu de rien.
+  it('ne rend pas la clé d instance à une lecture personnelle au userId vide', async () => {
+    await saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API })
+    expect(await getCredential('', 'DOLIBARR')).toBeNull()
+  })
+
+  it('ne rend jamais un jeton personnel à une lecture d instance', async () => {
+    await saveCredential(userId, 'GOOGLE', TOKENS)
+    expect(await getInstanceCredential('GOOGLE')).toBeNull()
+    expect(await readInstanceSecret('GOOGLE')).toBeNull()
+  })
+
+  it('laisse cohabiter la clé d instance et les jetons personnels', async () => {
+    await saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API })
+    await saveCredential(userId, 'GOOGLE', TOKENS)
+    await saveCredential(autreId, 'GOOGLE', TOKENS)
+
+    expect(await prisma.providerCredential.count({})).toBe(3)
+    expect(await readInstanceSecret('DOLIBARR')).toBe(CLE_API)
+    expect((await getCredential(userId, 'GOOGLE'))?.accessToken).toBe(TOKENS.accessToken)
+  })
+
+  // Révoquer la clé d'instance ne doit pas déconnecter les comptes personnels :
+  // `deleteMany` accepte un filtre partiel sans que rien dans le typage ne
+  // l'exige.
+  it('ne révoque que la clé d instance visée', async () => {
+    await saveInstanceCredential({ provider: 'DOLIBARR', secret: CLE_API })
+    await saveCredential(userId, 'DOLIBARR', TOKENS)
+
+    await revokeInstanceCredential('DOLIBARR')
+
+    expect(await getInstanceCredential('DOLIBARR')).toBeNull()
+    expect(await getCredential(userId, 'DOLIBARR')).not.toBeNull()
   })
 })

@@ -175,7 +175,16 @@ de la base (voir ci-dessous).
 ## Google Calendar
 
 Les jetons OAuth sont chiffrés au repos (AES-256-GCM) avec `CREDENTIALS_KEY`,
-lue dans l'environnement et jamais stockée en base.
+lue dans l'environnement et jamais stockée en base. La même clé protège la clé
+d'API Dolibarr : la perdre impose de reconnecter Google **et** de ressaisir la
+clé d'API Dolibarr, sans aucune perte de données de CRA.
+
+Les deux secrets partagent la table `ProviderCredential` mais pas la même
+nature de propriétaire : un jeton Google appartient à une personne, une clé
+d'API Dolibarr à l'instance. C'est la colonne `ownerScope` (`USER` /
+`INSTANCE`) qui les sépare, et elle entre dans la contrainte d'unicité — une
+ligne d'instance porte `userId = ''`, jamais `NULL`, faute de quoi deux clés
+d'instance du même fournisseur auraient coexisté sans que rien ne le signale.
 
 **Perdre `CREDENTIALS_KEY` impose de reconnecter le compte Google.** Aucun jeton
 n'est récupérable sans elle : l'application se comportera comme un compte non

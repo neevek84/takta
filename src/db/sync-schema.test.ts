@@ -148,6 +148,74 @@ describe('ProviderCredential', () => {
     })
     expect({ calendarId: c.calendarId, scope: c.scope }).toEqual({ calendarId: '', scope: '' })
   })
+
+  // Une clé d'API Dolibarr appartient à l'instance, un jeton Google à une
+  // personne. La tentation était de rendre `userId` nullable ; elle entre dans
+  // la clé d'unicité, et un NULL n'étant jamais égal à un autre NULL, deux
+  // clés d'instance du même fournisseur y seraient passées sans que rien ne
+  // les arrête — la contrainte aurait cessé de contraindre en silence,
+  // exactement la panne corrigée sur `TimeEntry.slotId` au lot 0. D'où
+  // `ownerScope`, DANS la clé d'unicité, et un `userId` vide plutôt que nul.
+  it("n'accepte qu'une seule clé d'instance par fournisseur", async () => {
+    const base = {
+      ownerScope: 'INSTANCE',
+      userId: '',
+      provider: 'DOLIBARR',
+      accessTokenEnc: 'v1.a.b.c',
+      refreshTokenEnc: 'v1.d.e.f',
+    }
+    await prisma.providerCredential.create({ data: base })
+    await expect(prisma.providerCredential.create({ data: base })).rejects.toThrow()
+    expect(await prisma.providerCredential.count()).toBe(1)
+  })
+
+  // Le pendant : la portée doit séparer, pas seulement interdire. Sans
+  // `ownerScope` dans la clé, la clé d'instance et le jeton personnel du même
+  // fournisseur se disputeraient la même ligne.
+  it("laisse cohabiter une clé d'instance et un jeton personnel du même fournisseur", async () => {
+    const base = {
+      provider: 'DOLIBARR',
+      accessTokenEnc: 'v1.a.b.c',
+      refreshTokenEnc: 'v1.d.e.f',
+    }
+    await prisma.providerCredential.create({
+      data: { ...base, ownerScope: 'INSTANCE', userId: '' },
+    })
+    await prisma.providerCredential.create({ data: { ...base, ownerScope: 'USER', userId } })
+    await prisma.providerCredential.create({
+      data: { ...base, ownerScope: 'USER', userId: autreId },
+    })
+
+    expect(await prisma.providerCredential.count()).toBe(3)
+  })
+
+  // Une clé d'API Dolibarr n'expire pas : la colonne doit accepter l'absence
+  // d'échéance, sinon le connecteur devrait inventer une date lointaine et le
+  // rafraîchissement se déclencherait sur une donnée fausse.
+  it("accepte l'absence d'échéance, et naît personnelle", async () => {
+    const c = await prisma.providerCredential.create({
+      data: {
+        userId: '',
+        ownerScope: 'INSTANCE',
+        provider: 'DOLIBARR',
+        accessTokenEnc: 'v1.a.b.c',
+        refreshTokenEnc: 'v1.d.e.f',
+      },
+    })
+    expect(c.expiresAt).toBeNull()
+
+    const personnel = await prisma.providerCredential.create({
+      data: {
+        userId,
+        provider: 'GOOGLE',
+        accessTokenEnc: 'v1.a.b.c',
+        refreshTokenEnc: 'v1.d.e.f',
+      },
+    })
+    // Le défaut porte la portée historique : les lignes Google déjà en base
+    // restent personnelles sans qu'on ait à les réécrire.
+    expect(personnel.ownerScope).toBe('USER')
+  })
 })
 
 describe('ExternalLink', () => {
