@@ -247,6 +247,37 @@ describe('applyCellState', () => {
     ])
   })
 
+  // Le gel porte sur l'**écriture**, pas sur l'identifiant : depuis que la case
+  // retouchée conserve sa saisie, celle-ci est *mise à jour* et doit donc
+  // refiger le facteur du moment, comme le fait `saveEntry`. L'oublier
+  // laisserait une saisie de 600 minutes marquée `minutesParJour: 480` — une
+  // journée entière qui se relit en 1,25 j et se réaffiche en saisie libre.
+  // Les deux moitiés de la règle tiennent ici : ce que personne ne retouche ne
+  // bouge pas, ce qu'on retouche refige.
+  it('refige le facteur quand elle met à jour une saisie, sans toucher à celle que personne ne retouche', async () => {
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-14', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-15', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+
+    await updateSettings({ minutesParJour: 600 })
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-15', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+
+    // Retouchée : la saisie survit sous son identifiant, mais refige le facteur
+    // du moment — minutes et facteur restent cohérents entre eux.
+    expect(await saisiesDu(ligneJour, '2026-03-15')).toEqual([
+      { minutes: 600, slotId: '', kind: 'REALISE', minutesParJour: 600, userId },
+    ])
+    // Jamais retouchée : rien n'a bougé, réglage global changé ou non.
+    expect(await saisiesDu(ligneJour, '2026-03-14')).toEqual([
+      { minutes: 480, slotId: '', kind: 'REALISE', minutesParJour: 480, userId },
+    ])
+  })
+
   it('refuse un dépassement réel malgré des facteurs différents dans la journée', async () => {
     await updateSettings({ capacityMode: 'BLOCAGE', capacityCentiemes: 100, minutesParJour: 420 })
     // Une journée pleine figée à 420 : 1,00 j.
@@ -502,6 +533,106 @@ describe('applyCellState et la file de synchronisation', () => {
     expect(lignes.every((l) => l.userId === userId)).toBe(true)
   })
 
+  // Arbitrage du porteur (suite de l'inquiétude 1 de la tâche 13) : une case
+  // retouchée ne doit **pas** faire tourner l'identifiant de sa saisie, sans
+  // quoi l'événement de l'agenda est supprimé puis recréé à chaque correction
+  // — et dix corrections laissent dix lignes en file là où `saveEntry` n'en
+  // laisse qu'une, la file dédoublonnant par (entityType, entityId, provider).
+  it('garde le même identifiant et une seule ligne en file après dix retouches de la même case', async () => {
+    let premierId = ''
+    for (let i = 1; i <= 10; i++) {
+      const r = await applyCellState({
+        userId, lineId: ligneJour, date: '2026-03-30', kind: 'REALISE',
+        state: { kind: 'LIBRE', minutes: 60 * i, slotId: 'matin', eclatee: false },
+      })
+      expect(r.ok).toBe(true)
+
+      const saisies = await prisma.timeEntry.findMany({
+        where: { userId, lineId: ligneJour, date: new Date('2026-03-30T00:00:00.000Z') },
+      })
+      expect(saisies).toHaveLength(1)
+      if (i === 1) premierId = saisies[0]!.id
+      // L'identifiant est vérifié à **chaque** tour : le constater seulement à
+      // la fin laisserait passer une rotation qui reviendrait par hasard.
+      expect(saisies[0]!.id).toBe(premierId)
+      expect(saisies[0]!.minutes).toBe(60 * i)
+    }
+
+    expect(await file_(userId)).toEqual([cible(premierId, 'UPSERT')])
+  })
+
+  // Ce qui doit continuer de disparaître : la cible qui n'existe plus. Deux
+  // créneaux ramenés à une journée entière, c'est un changement de forme —
+  // les deux saisies partent pour de bon, avec leurs deux blocs d'agenda.
+  it('supprime réellement les saisies dont la cible disparaît lors d un changement de forme', async () => {
+    const matin = await prisma.timeEntry.create({
+      data: {
+        lineId: ligneJour, userId, date: new Date('2026-03-31T00:00:00.000Z'),
+        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'matin',
+      },
+    })
+    const apresMidi = await prisma.timeEntry.create({
+      data: {
+        lineId: ligneJour, userId, date: new Date('2026-03-31T00:00:00.000Z'),
+        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'apres-midi',
+      },
+    })
+
+    const r = await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-31', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    expect(r.ok).toBe(true)
+
+    const restantes = await prisma.timeEntry.findMany({
+      where: { userId, lineId: ligneJour, date: new Date('2026-03-31T00:00:00.000Z') },
+    })
+    expect(restantes).toHaveLength(1)
+    expect(restantes[0]!.slotId).toBe('')
+    expect([matin.id, apresMidi.id]).not.toContain(restantes[0]!.id)
+
+    const lignes = await file_(userId)
+    expect(lignes).toHaveLength(3)
+    expect(lignes).toContainEqual(cible(matin.id, 'DELETE'))
+    expect(lignes).toContainEqual(cible(apresMidi.id, 'DELETE'))
+    expect(lignes).toContainEqual(cible(restantes[0]!.id, 'UPSERT'))
+  })
+
+  // Le cas mixte, celui qui départage vraiment les deux règles : sur la même
+  // case, une saisie dont la cible survit et une dont la cible disparaît.
+  it('met à jour la saisie dont la cible survit tout en supprimant l autre', async () => {
+    const matin = await prisma.timeEntry.create({
+      data: {
+        lineId: ligneJour, userId, date: new Date('2026-04-01T00:00:00.000Z'),
+        minutes: 120, kind: 'PREVISIONNEL', minutesParJour: 480, slotId: 'matin',
+      },
+    })
+    const apresMidi = await prisma.timeEntry.create({
+      data: {
+        lineId: ligneJour, userId, date: new Date('2026-04-01T00:00:00.000Z'),
+        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'apres-midi',
+      },
+    })
+
+    const r = await applyCellState({
+      userId, lineId: ligneJour, date: '2026-04-01', kind: 'REALISE',
+      state: { kind: 'DEMI', slotId: 'matin' },
+    })
+    expect(r.ok).toBe(true)
+
+    expect(await saisiesDu(ligneJour, '2026-04-01')).toEqual([
+      { minutes: 240, slotId: 'matin', kind: 'REALISE', minutesParJour: 480, userId },
+    ])
+    const restantes = await prisma.timeEntry.findMany({
+      where: { userId, lineId: ligneJour, date: new Date('2026-04-01T00:00:00.000Z') },
+    })
+    expect(restantes.map((e) => e.id)).toEqual([matin.id])
+
+    const lignes = await file_(userId)
+    expect(lignes).toHaveLength(2)
+    expect(lignes).toContainEqual(cible(apresMidi.id, 'DELETE'))
+    expect(lignes).toContainEqual(cible(matin.id, 'UPSERT'))
+  })
+
   // Pas d'écriture sans mise en file — le sens que seule la file indisponible
   // révèle, et le seul qui tombe quand la mise en file sort de la transaction.
   it('une mise en file en échec annule l écriture de la case', async () => {
@@ -514,6 +645,36 @@ describe('applyCellState et la file de synchronisation', () => {
     ).rejects.toThrow(/file indisponible/)
 
     expect(await saisiesDu(ligneJour, '2026-03-26')).toEqual([])
+    expect(await prisma.syncOutbox.count()).toBe(0)
+  })
+
+  // La mise à jour est un chemin d'écriture à part entière, et son annulation
+  // ne se déduit pas de celle d'une création : les deux tests voisins ne
+  // couvrent que des saisies *créées*. Ici la saisie préexiste et c'est sa
+  // valeur qui doit revenir en arrière.
+  it('une mise en file en échec annule la mise à jour de la saisie qu elle accompagne', async () => {
+    const avant = await prisma.timeEntry.create({
+      data: {
+        lineId: ligneJour, userId, date: new Date('2026-04-02T00:00:00.000Z'),
+        minutes: 120, kind: 'PREVISIONNEL', minutesParJour: 480, slotId: 'matin',
+      },
+    })
+    file.indisponible = true
+
+    await expect(
+      applyCellState({
+        userId, lineId: ligneJour, date: '2026-04-02', kind: 'REALISE',
+        state: { kind: 'DEMI', slotId: 'matin' },
+      }),
+    ).rejects.toThrow(/file indisponible/)
+
+    const restantes = await prisma.timeEntry.findMany({
+      where: { lineId: ligneJour, date: new Date('2026-04-02T00:00:00.000Z') },
+    })
+    expect(restantes).toHaveLength(1)
+    expect(restantes[0]!.id).toBe(avant.id)
+    expect(restantes[0]!.minutes).toBe(120)
+    expect(restantes[0]!.kind).toBe('PREVISIONNEL')
     expect(await prisma.syncOutbox.count()).toBe(0)
   })
 
