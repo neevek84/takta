@@ -6,6 +6,7 @@ import { createClient } from '@/services/clients'
 import {
   createMission,
   createLine,
+  updateLine,
   updateMissionSignataire,
   type SignataireResult,
 } from '@/services/missions'
@@ -79,6 +80,74 @@ export async function saveSignataire(
   revalidatePath('/missions')
   revalidatePath('/cra')
   return resultat
+}
+
+/**
+ * Un entier, ou `undefined` quand le formulaire ne porte pas le champ.
+ *
+ * La distinction compte : le formulaire d'une prestation reprise d'une propale
+ * ne soumet ni les jours vendus ni le TJM. Les fabriquer quand même enverrait
+ * `Math.round(Number(null) * 100)`, c'est-à-dire `NaN` — refusé par la base
+ * dans le meilleur des cas, écrit comme un zéro dans le pire.
+ */
+function entierOuAbsent(brut: FormDataEntryValue | null, facteur: number): number | undefined {
+  if (brut === null) return undefined
+  const s = String(brut).trim()
+  if (s === '') return undefined
+  const n = Number(s)
+  if (!Number.isFinite(n)) return undefined
+  return Math.round(n * facteur)
+}
+
+/** `null` = rien n'a encore été soumis. */
+export type UpdateLineState = { ok: true } | { ok: false; message: string } | null
+
+/**
+ * Modifie une prestation, et **rend son verdict**.
+ *
+ * Le refus doit remonter jusqu'à l'écran, comme pour le signataire : un
+ * formulaire qui se recompose à l'identique laisserait l'utilisateur
+ * convaincu d'avoir enregistré.
+ *
+ * Rien n'est revalidé quand rien n'a été écrit : un refus ne change aucune
+ * page.
+ */
+export async function modifierLigne(
+  _prevState: UpdateLineState,
+  formData: FormData,
+): Promise<UpdateLineState> {
+  const user = await requireUser()
+
+  const label = formData.get('label')
+  const displayUnit = formData.get('displayUnit')
+  const soldCentiemes = entierOuAbsent(formData.get('joursVendus'), 100)
+  const tjmCents = entierOuAbsent(formData.get('tjmEuros'), 100)
+
+  const r = await updateLine({
+    userId: user.id,
+    lineId: String(formData.get('lineId') ?? ''),
+    ...(label !== null && { label: String(label) }),
+    ...(displayUnit !== null && { displayUnit: String(displayUnit) as DisplayUnit }),
+    ...(soldCentiemes !== undefined && { soldCentiemes }),
+    ...(tjmCents !== undefined && { tjmCents }),
+  })
+
+  if (!r.ok) {
+    return {
+      ok: false,
+      message:
+        r.reason === 'ENGAGEMENT_EXTERNE'
+          ? r.message
+          : 'Cette prestation ne vous est pas affectée.',
+    }
+  }
+
+  revalidatePath('/missions')
+  // La grille de saisie lit les jours vendus, l'unité d'affichage et le
+  // libellé de chaque prestation : la laisser sur l'ancienne version afficherait
+  // un engagement faux jusqu'au prochain passage.
+  revalidatePath('/saisie')
+  return { ok: true }
 }
 
 export async function addLine(formData: FormData) {

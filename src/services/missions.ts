@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { prisma } from '@/db/client'
 import { getSettings } from './settings'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
-import type { DisplayUnit } from '@/core/types'
+import type { DisplayUnit, EngagementSource } from '@/core/types'
 import { appendAudit, actorOf } from './audit'
 
 export interface LineForGrid {
@@ -131,6 +131,11 @@ export interface MissionForUser {
     soldCentiemes: number
     tjmCents: number
     displayUnit: DisplayUnit
+    /**
+     * D'où vient l'engagement de cette ligne. L'écran s'en sert pour ne pas
+     * proposer de modifier des chiffres dont la source de vérité est ailleurs.
+     */
+    engagementSource: EngagementSource
   }>
 }
 
@@ -177,8 +182,90 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
       soldCentiemes: l.soldCentiemes,
       tjmCents: l.tjmCents,
       displayUnit: l.displayUnit as DisplayUnit,
+      engagementSource: l.engagementSource as EngagementSource,
     })),
   }))
+}
+
+export type UpdateLineResult =
+  | { ok: true }
+  | { ok: false; reason: 'ENGAGEMENT_EXTERNE'; message: string }
+  | { ok: false; reason: 'NON_AFFECTE' }
+
+/**
+ * Modifie une prestation.
+ *
+ * Le verrou de lecture seule sur les lignes issues d'une propale vit **ici**,
+ * dans le service, et pas dans l'écran : le formulaire n'est qu'un des
+ * appelants possibles, et le serveur est la seule barrière qui compte.
+ *
+ * Le verrou ne porte que sur les deux chiffres dont la source de vérité est
+ * chez Dolibarr — jours vendus et TJM. Le libellé, l'unité d'affichage et les
+ * créneaux autorisés restent locaux et modifiables.
+ *
+ * Un refus refuse **tout** le patch, y compris ce qui aurait pu passer : un
+ * enregistrement partiel laisserait croire que le reste est passé aussi.
+ */
+export async function updateLine(args: {
+  userId: string
+  lineId: string
+  label?: string
+  soldCentiemes?: number
+  tjmCents?: number
+  displayUnit?: DisplayUnit
+  allowedSlotIds?: string[]
+}): Promise<UpdateLineResult> {
+  const affectation = await prisma.assignment.findUnique({
+    where: { lineId_userId: { lineId: args.lineId, userId: args.userId } },
+    select: { line: { select: { engagementSource: true, soldCentiemes: true, tjmCents: true } } },
+  })
+  if (affectation === null) return { ok: false, reason: 'NON_AFFECTE' }
+
+  const ligne = affectation.line
+  // Renvoyer la valeur affichée n'est pas la modifier : le formulaire repose
+  // les deux champs à chaque soumission, y compris quand ils sont en lecture
+  // seule. Comparer, plutôt que refuser toute présence, évite un refus devant
+  // lequel l'utilisateur n'aurait rien changé.
+  const toucheEngagement =
+    (args.soldCentiemes !== undefined && args.soldCentiemes !== ligne.soldCentiemes) ||
+    (args.tjmCents !== undefined && args.tjmCents !== ligne.tjmCents)
+
+  if (ligne.engagementSource === 'DOLIBARR_PROPALE' && toucheEngagement) {
+    return {
+      ok: false,
+      reason: 'ENGAGEMENT_EXTERNE',
+      message:
+        'Les jours vendus et le TJM de cette prestation proviennent de la propale Dolibarr ' +
+        'à laquelle elle est rattachée. Modifiez-les dans Dolibarr : l’application ne ' +
+        'modifie jamais une propale.',
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.missionLine.update({
+      where: { id: args.lineId },
+      data: {
+        ...(args.label !== undefined && { label: args.label }),
+        ...(args.soldCentiemes !== undefined && { soldCentiemes: args.soldCentiemes }),
+        ...(args.tjmCents !== undefined && { tjmCents: args.tjmCents }),
+        ...(args.displayUnit !== undefined && { displayUnit: args.displayUnit }),
+        ...(args.allowedSlotIds !== undefined && {
+          allowedSlotIds: args.allowedSlotIds.join(','),
+        }),
+      },
+    })
+
+    // La part affectée suit les jours vendus : `createLine` les initialise
+    // égaux, les laisser diverger ici ferait mentir l'engagement affiché.
+    if (args.soldCentiemes !== undefined) {
+      await tx.assignment.update({
+        where: { lineId_userId: { lineId: args.lineId, userId: args.userId } },
+        data: { soldCentiemes: args.soldCentiemes },
+      })
+    }
+  })
+
+  return { ok: true }
 }
 
 export type SignataireResult = { ok: true } | { ok: false; erreur: string }

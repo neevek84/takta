@@ -6,10 +6,16 @@ import {
   createLine,
   listActiveLines,
   listMissionsForUser,
+  updateLine,
   updateMissionSignataire,
 } from './missions'
 import { updateSettings } from './settings'
 import { readAuditSince } from './audit'
+import { attachPropalLine } from './dolibarr/propal'
+import { attachClient } from './dolibarr/import'
+import { FakeDolibarr } from './dolibarr/fake'
+import { DOLIBARR } from './dolibarr/api'
+import { saveEntry, getLineEngagementTotals } from './time-entries'
 
 let userId = ''
 
@@ -39,6 +45,11 @@ afterAll(async () => {
   await prisma.client.deleteMany({ where: { name: { startsWith: 'CASCADE' } } })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'SIGNATAIRE' } } })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'JOURNAL' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'PROPALE' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'MANUEL' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'AFFECTATION' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'NON AFFECTE' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'SOURCE' } } })
   await prisma.$disconnect()
 })
 
@@ -433,5 +444,561 @@ describe('consignation du référentiel', () => {
     await listMissionsForUser(userId)
     await listActiveLines(userId)
     expect(await readAuditSince({ since: 0 })).toHaveLength(0)
+  })
+})
+
+describe('engagement issu d une propale', () => {
+  // La suite partage une seule base : un autre fichier a pu laisser d'autres
+  // réglages derrière lui, et ces tests parlent de conversion.
+  beforeEach(async () => {
+    await updateSettings({
+      minutesParJour: 480,
+      defaultEngagementSource: 'MANUEL',
+      capacityMode: 'AVERTISSEMENT',
+    })
+  })
+
+  /**
+   * Le décor minimal d'une reprise licite : un client local rattaché à un
+   * tiers Dolibarr, une mission, une prestation, et une propale du **même**
+   * tiers.
+   */
+  async function decor(args: {
+    nom: string
+    lignes?: Array<{ label: string; qty: number; subpriceCents: number }>
+    minutesParJourClient?: number | null
+    label?: string
+  }) {
+    const api = new FakeDolibarr()
+    const tiers = api.seedThirdparty(args.nom)
+    const c = await createClient(args.nom, args.minutesParJourClient ?? null)
+    await attachClient({ userId, clientId: c.id, dolibarrThirdpartyId: tiers.id })
+    const m = await createMission({ clientId: c.id, label: `${args.nom} mission` })
+    const ligne = await createLine({
+      missionId: m.id,
+      userId,
+      label: args.label ?? 'Dev',
+      soldCentiemes: 0,
+      tjmCents: 0,
+    })
+    const propale = api.seedProposal({
+      ref: `PR-${args.nom}`,
+      socid: tiers.id,
+      lines: args.lignes ?? [{ label: 'Développement', qty: 30, subpriceCents: 80_000 }],
+    })
+    return { api, tiers, client: c, mission: m, ligne, propale }
+  }
+
+  it('reprend les jours vendus et le TJM depuis la ligne de propale', async () => {
+    const d = await decor({ nom: 'PROPALE reprise' })
+
+    const r = await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+
+    expect(r).toEqual({ soldCentiemes: 3000, tjmCents: 80_000 })
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.soldCentiemes).toBe(3000)
+    expect(relue.tjmCents).toBe(80_000)
+    expect(relue.engagementSource).toBe('DOLIBARR_PROPALE')
+
+    const lien = await prisma.externalLink.findUniqueOrThrow({
+      where: {
+        entityType_entityId_provider: {
+          entityType: 'MissionLinePropalLine',
+          entityId: d.ligne.id,
+          provider: DOLIBARR,
+        },
+      },
+    })
+    expect(lien.externalId).toBe(`${d.propale.id}:${d.propale.lines[0]!.id}`)
+    expect(lien.userId).toBe(userId)
+  })
+
+  it('reprend deux lignes de la même propale sous deux engagements distincts', async () => {
+    // Le cas réel : « Consultant ITSM 30 j TJM 800 » et « Consultant ITSM Nuit
+    // 10 j TJM 1200 » sur la même propale. Reprendre un total les confondrait.
+    const d = await decor({
+      nom: 'PROPALE deux lignes',
+      lignes: [
+        { label: 'Consultant ITSM', qty: 30, subpriceCents: 80_000 },
+        { label: 'Consultant ITSM Nuit', qty: 10, subpriceCents: 120_000 },
+      ],
+    })
+    const nuit = await createLine({
+      missionId: d.mission.id,
+      userId,
+      label: 'Nuit',
+      soldCentiemes: 0,
+      tjmCents: 0,
+    })
+
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+    await attachPropalLine({
+      userId,
+      lineId: nuit.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[1]!.id,
+      api: d.api,
+    })
+
+    const jour = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    const relueNuit = await prisma.missionLine.findUniqueOrThrow({ where: { id: nuit.id } })
+    expect([jour.soldCentiemes, jour.tjmCents]).toEqual([3000, 80_000])
+    expect([relueNuit.soldCentiemes, relueNuit.tjmCents]).toEqual([1000, 120_000])
+  })
+
+  it('refuse la propale d un autre tiers — la facture partirait chez le mauvais client', async () => {
+    const d = await decor({ nom: 'PROPALE tiers A' })
+    const autreTiers = d.api.seedThirdparty('Tiers B')
+    const propaleDeB = d.api.seedProposal({
+      ref: 'PR-B',
+      socid: autreTiers.id,
+      lines: [{ label: 'Dev', qty: 30, subpriceCents: 80_000 }],
+    })
+
+    await expect(
+      attachPropalLine({
+        userId,
+        lineId: d.ligne.id,
+        proposalId: propaleDeB.id,
+        propalLineId: propaleDeB.lines[0]!.id,
+        api: d.api,
+      }),
+    ).rejects.toThrow(/PR-B.*tiers Dolibarr/s)
+
+    // Et rien n'a été écrit : un refus qui laisse passer l'écriture ne refuse rien.
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.soldCentiemes).toBe(0)
+    expect(relue.engagementSource).toBe('MANUEL')
+    expect(
+      await prisma.externalLink.count({
+        where: { entityType: 'MissionLinePropalLine', entityId: d.ligne.id },
+      }),
+    ).toBe(0)
+  })
+
+  it('refuse la propale d un tiers quand le client local n est rattaché à aucun tiers', async () => {
+    const api = new FakeDolibarr()
+    const tiers = api.seedThirdparty('PROPALE orphelin tiers')
+    const c = await createClient('PROPALE orphelin')
+    const m = await createMission({ clientId: c.id, label: 'M' })
+    const ligne = await createLine({
+      missionId: m.id,
+      userId,
+      label: 'Dev',
+      soldCentiemes: 0,
+      tjmCents: 0,
+    })
+    const propale = api.seedProposal({
+      ref: 'PR-ORPHELIN',
+      socid: tiers.id,
+      lines: [{ label: 'Dev', qty: 30, subpriceCents: 80_000 }],
+    })
+
+    await expect(
+      attachPropalLine({
+        userId,
+        lineId: ligne.id,
+        proposalId: propale.id,
+        propalLineId: propale.lines[0]!.id,
+        api,
+      }),
+    ).rejects.toThrow(/Rattachez d'abord/)
+
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: ligne.id } })
+    expect(relue.engagementSource).toBe('MANUEL')
+  })
+
+  it('ne convertit pas les jours vendus avec la durée d une journée', async () => {
+    // Une propale vend des JOURS. Les repasser par le facteur de conversion
+    // (480 min globales contre 420 côté client) donnerait 2625 centièmes au
+    // lieu de 3000, et l'engagement affiché mentirait de trois jours et demi.
+    const d = await decor({ nom: 'PROPALE facteur', minutesParJourClient: 420 })
+
+    const r = await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+    expect(r.soldCentiemes).toBe(3000)
+
+    // Et le chiffre repris ne bouge pas quand le réglage global change : le
+    // gel se casse en lecture, pas en écriture.
+    await updateSettings({ minutesParJour: 420 })
+    const mission = (await listMissionsForUser(userId)).find((x) => x.id === d.mission.id)
+    expect(mission!.lines[0]!.soldCentiemes).toBe(3000)
+  })
+
+  it('ne touche pas les saisies déjà enregistrées sur la prestation reprise', async () => {
+    const d = await decor({ nom: 'PROPALE saisie', label: 'Dev' })
+
+    const saisie = await saveEntry({
+      userId,
+      lineId: d.ligne.id,
+      date: '2026-03-02',
+      minutes: 480,
+      kind: 'REALISE',
+    })
+    expect(saisie.ok).toBe(true)
+
+    const avant = await prisma.timeEntry.findFirstOrThrow({ where: { lineId: d.ligne.id } })
+    expect(avant.minutesParJour).toBe(480)
+
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+
+    const apres = await prisma.timeEntry.findMany({ where: { lineId: d.ligne.id } })
+    expect(apres).toHaveLength(1)
+    expect(apres[0]!.minutes).toBe(480)
+    // Le facteur figé à l'écriture reste celui de l'écriture, quoi qu'il
+    // arrive ensuite à la prestation.
+    expect(apres[0]!.minutesParJour).toBe(480)
+
+    // La reprise ne porte que sur les deux chiffres vendus : le libellé local
+    // et l'unité d'affichage ne sont pas écrasés par ceux de la propale.
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.label).toBe('Dev')
+    expect(relue.displayUnit).toBe('JOUR')
+
+    // Et le cumul relu après un changement de réglage reste ventilé au facteur
+    // figé, jamais reconverti au réglage courant.
+    await updateSettings({ minutesParJour: 420 })
+    const totaux = await getLineEngagementTotals(userId, [d.ligne.id])
+    expect(totaux[d.ligne.id]).toEqual([{ kind: 'REALISE', minutes: 480, minutesParJour: 480 }])
+  })
+
+  it('remplace la correspondance quand la prestation est reprise sur une autre ligne', async () => {
+    const d = await decor({
+      nom: 'PROPALE reprise 2',
+      lignes: [
+        { label: 'Jour', qty: 30, subpriceCents: 80_000 },
+        { label: 'Nuit', qty: 10, subpriceCents: 120_000 },
+      ],
+    })
+
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[1]!.id,
+      api: d.api,
+    })
+
+    const liens = await prisma.externalLink.findMany({
+      where: { entityType: 'MissionLinePropalLine', entityId: d.ligne.id },
+    })
+    expect(liens).toHaveLength(1)
+    expect(liens[0]!.externalId).toBe(`${d.propale.id}:${d.propale.lines[1]!.id}`)
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.soldCentiemes).toBe(1000)
+  })
+
+  it('refuse de reprendre une propale sur une prestation qui ne vous est pas affectée', async () => {
+    const autre = await prisma.user.create({
+      data: { email: 'propale-autre@test.local', name: 'A', passwordHash: 'x' },
+    })
+    const d = await decor({ nom: 'PROPALE intrus' })
+
+    await expect(
+      attachPropalLine({
+        userId: autre.id,
+        lineId: d.ligne.id,
+        proposalId: d.propale.id,
+        propalLineId: d.propale.lines[0]!.id,
+        api: d.api,
+      }),
+    ).rejects.toThrow(/affect/i)
+
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.soldCentiemes).toBe(0)
+    await prisma.user.delete({ where: { id: autre.id } })
+  })
+
+  it('n écrit rien quand la ligne de propale n existe pas', async () => {
+    const d = await decor({ nom: 'PROPALE ligne absente' })
+
+    await expect(
+      attachPropalLine({
+        userId,
+        lineId: d.ligne.id,
+        proposalId: d.propale.id,
+        propalLineId: 999_999,
+        api: d.api,
+      }),
+    ).rejects.toThrow(/introuvable/)
+
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.engagementSource).toBe('MANUEL')
+  })
+
+  it('refuse la modification locale des jours vendus et du TJM', async () => {
+    const d = await decor({ nom: 'PROPALE verrou' })
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+
+    const jours = await updateLine({ userId, lineId: d.ligne.id, soldCentiemes: 4000 })
+    expect(jours).toEqual({
+      ok: false,
+      reason: 'ENGAGEMENT_EXTERNE',
+      message: expect.stringContaining('propale'),
+    })
+
+    const tjm = await updateLine({ userId, lineId: d.ligne.id, tjmCents: 90_000 })
+    expect(tjm.ok).toBe(false)
+
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.soldCentiemes).toBe(3000)
+    expect(relue.tjmCents).toBe(80_000)
+    const affectation = await prisma.assignment.findUniqueOrThrow({
+      where: { lineId_userId: { lineId: d.ligne.id, userId } },
+    })
+    expect(affectation.soldCentiemes).toBe(3000)
+  })
+
+  it('refuse aussi un libellé passé en même temps qu un chiffre verrouillé', async () => {
+    // Un refus partiel — le libellé passe, les jours non — laisserait croire
+    // que tout est enregistré.
+    const d = await decor({ nom: 'PROPALE refus entier' })
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+
+    const r = await updateLine({
+      userId,
+      lineId: d.ligne.id,
+      label: 'Autre libellé',
+      soldCentiemes: 4000,
+    })
+    expect(r.ok).toBe(false)
+
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.label).toBe('Dev')
+  })
+
+  it('laisse modifier le libellé et l unité d une ligne issue d une propale', async () => {
+    // Le verrou porte sur les deux chiffres qui ont une source de vérité
+    // ailleurs, pas sur toute la ligne.
+    const d = await decor({
+      nom: 'PROPALE libelle',
+      lignes: [{ label: 'Dev', qty: 10, subpriceCents: 70_000 }],
+    })
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+
+    expect(
+      await updateLine({
+        userId,
+        lineId: d.ligne.id,
+        label: 'Développement V2',
+        displayUnit: 'HEURE',
+      }),
+    ).toEqual({ ok: true })
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.label).toBe('Développement V2')
+    expect(relue.displayUnit).toBe('HEURE')
+    // Et les chiffres verrouillés n'ont pas bougé au passage.
+    expect([relue.soldCentiemes, relue.tjmCents]).toEqual([1000, 70_000])
+  })
+
+  it('laisse repasser à l identique les chiffres d une ligne issue d une propale', async () => {
+    // Le formulaire renvoie la valeur affichée : la renvoyer telle quelle
+    // n'est pas une tentative de modification.
+    const d = await decor({ nom: 'PROPALE identique' })
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+
+    expect(
+      await updateLine({
+        userId,
+        lineId: d.ligne.id,
+        label: 'Dev renommé',
+        soldCentiemes: 3000,
+        tjmCents: 80_000,
+      }),
+    ).toEqual({ ok: true })
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.label).toBe('Dev renommé')
+  })
+
+  it('laisse tout modifier sur une ligne manuelle', async () => {
+    const c = await createClient('MANUEL client')
+    const m = await createMission({ clientId: c.id, label: 'M' })
+    const ligne = await createLine({
+      missionId: m.id,
+      userId,
+      label: 'Dev',
+      soldCentiemes: 1000,
+      tjmCents: 50_000,
+    })
+
+    expect(
+      await updateLine({ userId, lineId: ligne.id, soldCentiemes: 2000, tjmCents: 60_000 }),
+    ).toEqual({ ok: true })
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: ligne.id } })
+    expect(relue.soldCentiemes).toBe(2000)
+    expect(relue.tjmCents).toBe(60_000)
+  })
+
+  it('met à jour la part affectée en même temps que les jours vendus', async () => {
+    const c = await createClient('AFFECTATION client')
+    const m = await createMission({ clientId: c.id, label: 'M' })
+    const ligne = await createLine({
+      missionId: m.id,
+      userId,
+      label: 'Dev',
+      soldCentiemes: 1000,
+      tjmCents: 0,
+    })
+
+    await updateLine({ userId, lineId: ligne.id, soldCentiemes: 2500 })
+    const affectation = await prisma.assignment.findUniqueOrThrow({
+      where: { lineId_userId: { lineId: ligne.id, userId } },
+    })
+    expect(affectation.soldCentiemes).toBe(2500)
+  })
+
+  it('n emprunte rien à la prestation voisine du même utilisateur', async () => {
+    // Deux prestations existent bel et bien : une mise à jour qui oublierait
+    // son `where` écrirait sur les deux.
+    const c = await createClient('AFFECTATION voisine')
+    const m = await createMission({ clientId: c.id, label: 'M' })
+    const cible = await createLine({
+      missionId: m.id,
+      userId,
+      label: 'Cible',
+      soldCentiemes: 1000,
+      tjmCents: 50_000,
+    })
+    const voisine = await createLine({
+      missionId: m.id,
+      userId,
+      label: 'Voisine',
+      soldCentiemes: 700,
+      tjmCents: 40_000,
+    })
+
+    await updateLine({ userId, lineId: cible.id, label: 'Cible modifiée', soldCentiemes: 2000 })
+
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: voisine.id } })
+    expect(relue.label).toBe('Voisine')
+    expect(relue.soldCentiemes).toBe(700)
+    const affectation = await prisma.assignment.findUniqueOrThrow({
+      where: { lineId_userId: { lineId: voisine.id, userId } },
+    })
+    expect(affectation.soldCentiemes).toBe(700)
+  })
+
+  it('refuse de modifier la ligne d une mission non affectée', async () => {
+    const autre = await prisma.user.create({
+      data: { email: 'autre-line@test.local', name: 'A', passwordHash: 'x' },
+    })
+    const c = await createClient('NON AFFECTE client')
+    const m = await createMission({ clientId: c.id, label: 'M' })
+    const ligne = await createLine({
+      missionId: m.id,
+      userId,
+      label: 'Dev',
+      soldCentiemes: 1000,
+      tjmCents: 0,
+    })
+
+    expect(await updateLine({ userId: autre.id, lineId: ligne.id, label: 'X' })).toEqual({
+      ok: false,
+      reason: 'NON_AFFECTE',
+    })
+
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: ligne.id } })
+    expect(relue.label).toBe('Dev')
+
+    await prisma.user.delete({ where: { id: autre.id } })
+  })
+
+  it('expose la source d engagement de chaque ligne', async () => {
+    const c = await createClient('SOURCE client')
+    const m = await createMission({ clientId: c.id, label: 'SOURCE mission' })
+    await createLine({ missionId: m.id, userId, label: 'Dev', soldCentiemes: 100, tjmCents: 0 })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.label === 'SOURCE mission')
+    expect(mission!.lines[0]!.engagementSource).toBe('MANUEL')
+  })
+
+  it('expose DOLIBARR_PROPALE dès qu une ligne est reprise', async () => {
+    const d = await decor({ nom: 'PROPALE source' })
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.id === d.mission.id)
+    expect(mission!.lines[0]!.engagementSource).toBe('DOLIBARR_PROPALE')
+  })
+
+  it('ne bloque jamais la saisie manuelle quand Dolibarr est en panne', async () => {
+    // « C'est un complément, pas une obligation. »
+    const d = await decor({ nom: 'PROPALE panne' })
+    d.api.panne = true
+
+    await expect(
+      attachPropalLine({
+        userId,
+        lineId: d.ligne.id,
+        proposalId: d.propale.id,
+        propalLineId: d.propale.lines[0]!.id,
+        api: d.api,
+      }),
+    ).rejects.toThrow()
+
+    expect(await updateLine({ userId, lineId: d.ligne.id, soldCentiemes: 1500 })).toEqual({
+      ok: true,
+    })
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect(relue.soldCentiemes).toBe(1500)
   })
 })

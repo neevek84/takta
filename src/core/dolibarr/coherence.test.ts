@@ -49,6 +49,20 @@ describe('verifierCoherenceTiers', () => {
     ).not.toThrow()
   })
 
+  it('nomme la nature de l élément refusé — une propale n est pas un projet', () => {
+    // Le même refus sert la reprise de propale : un message qui parle de
+    // « projet » devant un écran de propales envoie chercher au mauvais endroit.
+    expect(() =>
+      verifierCoherenceTiers({
+        elementLabel: 'La propale',
+        projectRef: 'PR001',
+        projectSocid: 5,
+        clientLabel: 'ACME',
+        expectedThirdpartyId: 7,
+      }),
+    ).toThrow(/La propale « PR001 »/)
+  })
+
   it('refuse un projet portant un tiers quand le client n est pas encore rattaché', () => {
     // L'ordre des opérations : rattacher la mission avant le client ne
     // laisse aucun tiers attendu à comparer. Ce n'est pas silencieusement

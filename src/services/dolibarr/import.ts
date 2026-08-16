@@ -180,8 +180,12 @@ export async function createClientFromDolibarr(args: {
  *
  * Filtré sur `provider: DOLIBARR` pour la même raison que
  * `liensParExternalId` : `ExternalLink` est générique depuis la tâche 6.
+ *
+ * Exporté : la reprise de propale (`./propal.ts`) doit comparer exactement le
+ * même tiers attendu que le rattachement des projets. Deux lectures parallèles
+ * de la même correspondance finiraient par diverger.
  */
-async function tiersAttendu(clientId: string): Promise<number | null> {
+export async function tiersAttendu(clientId: string): Promise<number | null> {
   const lien = await prisma.externalLink.findUnique({
     where: {
       entityType_entityId_provider: { entityType: 'Client', entityId: clientId, provider: DOLIBARR },

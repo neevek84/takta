@@ -3,6 +3,7 @@ import { listClients } from '@/services/clients'
 import { listMissionsForUser } from '@/services/missions'
 import { getSettings } from '@/services/settings'
 import { addClient, addMission, addLine } from './actions'
+import { LigneForm } from './LigneForm'
 import { SignataireForm } from './SignataireForm'
 import { PageShell } from '@/components/ui/PageShell'
 import { Card } from '@/components/ui/Card'
@@ -83,11 +84,20 @@ export default async function MissionsPage() {
 
           <ul className="mb-4 text-sm">
             {m.lines.map((l) => (
-              <li key={l.id} className="flex gap-4 border-b border-rule py-1 last:border-0">
-                <span className="flex-1">{l.label}</span>
-                <span>{l.soldCentiemes / 100} j</span>
-                <span>{l.tjmCents / 100} €</span>
-                <span className="text-muted">{l.displayUnit}</span>
+              <li key={l.id} className="border-b border-rule py-2 last:border-0">
+                <div className="flex gap-4">
+                  <span className="flex-1">{l.label}</span>
+                  <span>{l.soldCentiemes / 100} j</span>
+                  <span>{l.tjmCents / 100} €</span>
+                  <span className="text-muted">{l.displayUnit}</span>
+                  {/* La source est écrite, jamais seulement teintée. */}
+                  <span className="text-muted">
+                    {l.engagementSource === 'DOLIBARR_PROPALE'
+                      ? 'Engagement : propale Dolibarr'
+                      : 'Engagement : saisi ici'}
+                  </span>
+                </div>
+                <LigneForm line={l} />
               </li>
             ))}
             {m.lines.length === 0 && <li className="text-muted">Aucune ligne</li>}
