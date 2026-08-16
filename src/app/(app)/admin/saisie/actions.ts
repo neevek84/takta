@@ -9,6 +9,14 @@ import type { Slot } from '@/core/time/slots'
 
 export type SaveSettingsState = { ok: true } | { ok: false; errors: string[] } | null
 
+/** 'HH:MM' -> minutes depuis minuit. NaN si illisible : la validation du
+ *  service refusera le patch avec un message en français. */
+function timeInputToMinutes(value: string): number {
+  const match = /^(\d{2}):(\d{2})$/.exec(value)
+  if (!match) return NaN
+  return Number(match[1]) * 60 + Number(match[2])
+}
+
 function parseSlotsField(raw: FormDataEntryValue | null): Slot[] | null {
   if (typeof raw !== 'string' || raw.trim() === '') return []
   try {
@@ -58,6 +66,8 @@ export async function saveSettings(
       defaultEngagementSource: String(formData.get('defaultEngagementSource')) as EngagementSource,
       objectifCaExerciceCents: Math.round(Number(formData.get('objectifCaEuros')) * 100),
       debutExerciceMois: Number(formData.get('debutExerciceMois')),
+      journeeDebutMinute: timeInputToMinutes(String(formData.get('journeeDebut') ?? '')),
+      journeeFinMinute: timeInputToMinutes(String(formData.get('journeeFin') ?? '')),
     })
   } catch (err) {
     if (err instanceof SettingsValidationError) {

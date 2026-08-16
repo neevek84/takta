@@ -224,7 +224,11 @@ function applyMigrationSql(sql: string, state: MigratedState): void {
     let am: RegExpExecArray | null
 
     // ADD COLUMN "col" TYPE [NOT NULL] [DEFAULT ...] — jusqu'à la virgule ou au ';' suivant.
-    const addColRe = /ADD COLUMN "([^"]+)"\s+([^,]+)/g
+    // `\s+` après ADD COLUMN et non une espace unique : Prisma aligne les noms de
+    // colonnes d'un même ALTER (`ADD COLUMN     "etag" TEXT ...`). Exiger une seule
+    // espace rendait ce garde-fou aveugle à TOUTE colonne ajoutée par une migration
+    // régénérée — il la signalait alors comme absente, migration à jour ou non.
+    const addColRe = /ADD COLUMN\s+"([^"]+)"\s+([^,]+)/g
     while ((am = addColRe.exec(clauses))) {
       const col = parseColumnDef(`"${am[1]!}" ${am[2]!}`)
       if (col) cols.set(col.name, { type: col.type, nullable: col.nullable })

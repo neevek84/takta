@@ -120,8 +120,34 @@ const settingsPatchSchema = z
       .int('Le mois de début d’exercice doit être un entier.')
       .min(1, 'Le mois de début d’exercice doit être compris entre 1 et 12.')
       .max(12, 'Le mois de début d’exercice doit être compris entre 1 et 12.'),
+    journeeDebutMinute: z
+      .number({ message: 'Le début de la plage journée est requis.' })
+      .int('Le début de la plage journée doit être un nombre entier de minutes.')
+      .min(0, 'Le début de la plage journée est invalide.')
+      .max(1439, 'Le début de la plage journée est invalide.'),
+    journeeFinMinute: z
+      .number({ message: 'La fin de la plage journée est requise.' })
+      .int('La fin de la plage journée doit être un nombre entier de minutes.')
+      .min(1, 'La fin de la plage journée est invalide.')
+      .max(1440, 'La fin de la plage journée est invalide.'),
   })
   .partial()
+  // La plage journée ne franchit jamais minuit, contrairement à un créneau :
+  // elle sert à borner un bloc d'agenda dans la journée qu'il décrit. La
+  // vérification croisée ne s'applique que si le patch porte les deux bornes,
+  // un patch partiel n'ayant rien à comparer.
+  .superRefine((patch, ctx) => {
+    if (
+      patch.journeeDebutMinute !== undefined &&
+      patch.journeeFinMinute !== undefined &&
+      patch.journeeFinMinute <= patch.journeeDebutMinute
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'La fin de la plage journée doit être postérieure à son début.',
+      })
+    }
+  })
 
 /**
  * Valide un patch de réglages sans l'appliquer. Utilisé par `updateSettings`
@@ -152,6 +178,10 @@ export interface AppSettings {
   objectifCaExerciceCents: number
   /** mois de début d'exercice, 1-12 */
   debutExerciceMois: number
+  /** début de la plage journée, minutes depuis minuit */
+  journeeDebutMinute: number
+  /** fin de la plage journée, minutes depuis minuit */
+  journeeFinMinute: number
 }
 
 function parseDays(raw: string): number[] {
@@ -176,6 +206,8 @@ function toAppSettings(row: Row): AppSettings {
     defaultEngagementSource: row.defaultEngagementSource as EngagementSource,
     objectifCaExerciceCents: row.objectifCaExerciceCents,
     debutExerciceMois: row.debutExerciceMois,
+    journeeDebutMinute: row.journeeDebutMinute,
+    journeeFinMinute: row.journeeFinMinute,
   }
 }
 
@@ -244,6 +276,10 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
         objectifCaExerciceCents: patch.objectifCaExerciceCents,
       }),
       ...(patch.debutExerciceMois !== undefined && { debutExerciceMois: patch.debutExerciceMois }),
+      ...(patch.journeeDebutMinute !== undefined && {
+        journeeDebutMinute: patch.journeeDebutMinute,
+      }),
+      ...(patch.journeeFinMinute !== undefined && { journeeFinMinute: patch.journeeFinMinute }),
     },
   })
   return toAppSettings(row)

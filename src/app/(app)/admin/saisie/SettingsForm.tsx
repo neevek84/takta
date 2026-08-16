@@ -296,6 +296,31 @@ export function SettingsForm({
 
       <Card>
         <fieldset>
+          <legend className="mb-2 font-medium">Plage journée</legend>
+          <p className="mb-2 text-sm text-muted">
+            Un bloc d’agenda sans créneau démarre au début de cette plage et n’en déborde jamais.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field
+              label="Début"
+              name="journeeDebut"
+              type="time"
+              required
+              defaultValue={minutesToTimeInput(settings.journeeDebutMinute)}
+            />
+            <Field
+              label="Fin"
+              name="journeeFin"
+              type="time"
+              required
+              defaultValue={minutesToTimeInput(settings.journeeFinMinute)}
+            />
+          </div>
+        </fieldset>
+      </Card>
+
+      <Card>
+        <fieldset>
           <legend className="mb-2 font-medium">Unité d’affichage par défaut des nouvelles lignes</legend>
           <Select label="Unité" name="defaultDisplayUnit" defaultValue={settings.defaultDisplayUnit}>
             {DISPLAY_UNITS.map((u) => (

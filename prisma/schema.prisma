@@ -18,6 +18,9 @@ model User {
   timeEntries TimeEntry[]
   assignments Assignment[]
   cras        Cra[]
+  outbox      SyncOutbox[]
+  conflicts   SyncConflict[]
+  credentials ProviderCredential[]
 }
 
 model Client {
@@ -147,6 +150,9 @@ model ExternalLink {
   externalId String
   syncedAt   DateTime?
   syncState  String    @default("PENDING")
+  /// empreinte de l'événement distant ; toute la détection de divergence repose dessus.
+  /// Vide tant que rien n'a été poussé.
+  etag       String    @default("")
 
   @@unique([entityType, entityId, provider])
   @@index([provider, externalId])
@@ -178,4 +184,85 @@ model Settings {
   /// palette du thème, JSON lu et écrit en bloc uniquement.
   /// "{}" = jamais configuré, le thème par défaut s'applique.
   themeJson String @default("{}")
+
+  /// début de la plage journée, minutes depuis minuit (9 h -> 540)
+  journeeDebutMinute Int @default(540)
+  /// fin de la plage journée, minutes depuis minuit (18 h -> 1080)
+  journeeFinMinute   Int @default(1080)
+}
+
+/// Un **ensemble** d'entités à synchroniser, jamais un journal : l'unicité du
+/// triplet fait que dix modifications d'une même cellule avant le prochain
+/// passage produisent une ligne, pas dix.
+model SyncOutbox {
+  id            String   @id @default(cuid())
+  userId        String
+  entityType    String
+  entityId      String
+  provider      String
+  /// 'UPSERT' | 'DELETE'
+  operation     String
+  /// 'PENDING' | 'FAILED'
+  state         String   @default("PENDING")
+  attempts      Int      @default(0)
+  lastError     String   @default("")
+  nextAttemptAt DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([entityType, entityId, provider])
+  @@index([state, nextAttemptAt])
+  @@index([userId])
+}
+
+/// Les divergences à arbitrer. Aucune n'est jamais écrasée en silence.
+model SyncConflict {
+  id         String @id @default(cuid())
+  userId     String
+  entityType String
+  entityId   String
+  provider   String
+  /// 'REMOTE_MODIFIED' | 'REMOTE_DELETED'
+  kind       String
+  /// instantané de l'événement distant au moment de la détection.
+  /// JSON lu et écrit en bloc uniquement — jamais interrogé finement.
+  remoteSnapshotJson String   @default("{}")
+  detectedAt         DateTime @default(now())
+  resolvedAt         DateTime?
+  /// '' tant que non arbitré, puis 'RETABLIR' | 'ACCEPTER' | 'DETACHER'
+  resolution         String   @default("")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, resolvedAt])
+  @@index([entityType, entityId, provider])
+}
+
+/// Les jetons, chiffrés au repos (AES-256-GCM). La clé vient de
+/// l'environnement : la perdre impose de reconnecter le compte.
+///
+/// `userId` n'est PAS nullable, bien qu'une clé d'instance (Dolibarr) n'ait
+/// pas de propriétaire personnel : la colonne entre dans `@@unique([userId,
+/// provider])`, et un NULL n'étant jamais égal à lui-même, deux clés
+/// d'instance du même fournisseur passeraient sans que rien ne les arrête —
+/// exactement la panne corrigée sur `TimeEntry.slotId` au lot 0. Un
+/// identifiant conventionnel (ligne dédiée) portera la clé d'instance le
+/// jour où le lot 2 en aura besoin.
+model ProviderCredential {
+  id              String   @id @default(cuid())
+  userId          String
+  provider        String
+  accessTokenEnc  String
+  refreshTokenEnc String
+  expiresAt       DateTime
+  scope           String   @default("")
+  /// le calendrier dédié, exclu de toute lecture d'occupation
+  calendarId      String   @default("")
+  connectedAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@index([userId])
 }

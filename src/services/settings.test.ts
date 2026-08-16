@@ -230,3 +230,36 @@ describe('réglages d exercice', () => {
   })
 })
 
+describe('plage journée', () => {
+  it('vaut 9 h – 18 h par défaut', async () => {
+    await prisma.settings.deleteMany({})
+    const s = await getSettings()
+    expect({ debut: s.journeeDebutMinute, fin: s.journeeFinMinute }).toEqual({
+      debut: 540,
+      fin: 1080,
+    })
+  })
+
+  it('enregistre une plage explicite', async () => {
+    const s = await updateSettings({ journeeDebutMinute: 480, journeeFinMinute: 960 })
+    expect({ debut: s.journeeDebutMinute, fin: s.journeeFinMinute }).toEqual({
+      debut: 480,
+      fin: 960,
+    })
+  })
+
+  it('refuse une fin antérieure ou égale au début', () => {
+    expect(
+      validateSettingsPatch({ journeeDebutMinute: 600, journeeFinMinute: 600 }),
+    ).toEqual({
+      ok: false,
+      errors: ['La fin de la plage journée doit être postérieure à son début.'],
+    })
+  })
+
+  it('refuse une borne hors des 24 heures', () => {
+    expect(validateSettingsPatch({ journeeDebutMinute: -1 }).ok).toBe(false)
+    expect(validateSettingsPatch({ journeeFinMinute: 1441 }).ok).toBe(false)
+  })
+})
+
