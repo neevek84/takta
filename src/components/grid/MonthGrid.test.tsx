@@ -2,7 +2,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { MonthGrid } from './MonthGrid'
-import { colorForLine } from '@/core/saisie/colors'
+// L'autre vue du même écran : ce test-ci compare ce que les deux peignent du
+// prévisionnel, il ne la modifie pas.
+import { MonthCalendar } from '@/components/calendar/MonthCalendar'
+import { colorForLine, PREVU_COLOR } from '@/core/saisie/colors'
 import { DEFAULT_SLOTS } from '@/services/settings'
 import { buildMonthDays } from '@/core/month/build'
 import type { LineForGrid } from '@/services/missions'
@@ -179,10 +182,11 @@ describe('MonthGrid', () => {
       expect(prevu.getAttribute('data-saisie')).toBe('previsionnel')
       expect(vide.getAttribute('data-saisie')).toBe('vide')
 
-      // Hachures et italique : le prévisionnel se lit en vision monochrome.
-      expect(prevu.className).toContain('pattern-hatch')
+      // Contour tireté et italique : le prévisionnel se lit en vision
+      // monochrome — la hachure a laissé la place au tireté du calendrier.
+      expect(prevu.className).toContain('border-dashed')
       expect(prevu.className).toContain('italic')
-      expect(realise.className).not.toContain('pattern-hatch')
+      expect(realise.className).not.toContain('border-dashed')
     })
 
     // I3 — le calendrier et le tableau déduisaient le prévisionnel de deux
@@ -198,7 +202,7 @@ describe('MonthGrid', () => {
 
       const mixte = cell('Consultant ITSM', '2026-03-17')
       expect(mixte.getAttribute('data-saisie')).toBe('previsionnel')
-      expect(mixte.className).toContain('pattern-hatch')
+      expect(mixte.className).toContain('border-dashed')
     })
 
     it('ne dépend pas de l ordre des saisies pour lire une journée mixte', () => {
@@ -892,9 +896,9 @@ describe('MonthGrid', () => {
     })
 
     // Le prévisionnel garde ce qui le distingue en vision monochrome : le
-    // remplacement de l'encre grise par l'encre pleine ne lui retire ni ses
-    // hachures ni son italique.
-    it('garde les hachures et l italique du prévisionnel sous l aplat', () => {
+    // remplacement de l'encre grise par l'encre pleine ne lui retire ni son
+    // contour tireté ni son italique.
+    it('garde le contour tireté et l italique du prévisionnel sous l aplat', () => {
       renderGrid({
         entries: [
           { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480 },
@@ -902,8 +906,108 @@ describe('MonthGrid', () => {
       })
       const champ = cell('Consultant ITSM', '2026-03-13')
       expect(remplissage('l1', '2026-03-13')).not.toBeNull()
-      expect(classes(champ)).toContain('pattern-hatch')
+      expect(classes(champ)).toContain('border-dashed')
       expect(classes(champ)).toContain('italic')
+    })
+  })
+
+  /**
+   * Le même fait, sur le même écran, dessiné une seule façon.
+   *
+   * `/saisie/[month]` porte deux vues de la même journée, et l'on bascule de
+   * l'une à l'autre sans changer de page. Le lot 1g a donné au calendrier la
+   * teinte ambre et le contour tireté du prévisionnel ; le tableau était resté
+   * aux hachures du lot 1f. Basculer montrait alors **deux apparences du même
+   * fait** — exactement ce que le lot 1f avait corrigé pour le code couleur.
+   *
+   * Le test rend donc les deux vues sur la même saisie et compare ce qu'elles
+   * peignent, plutôt que d'affirmer deux fois la même intention de deux côtés.
+   */
+  describe('le prévisionnel, le même des deux côtés de la bascule', () => {
+    const PREVU: MonthEntry = {
+      id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL',
+      slotId: '', ...BORNES, minutesParJour: 480,
+    }
+    const REALISE: MonthEntry = { ...PREVU, id: 'r', kind: 'REALISE' }
+
+    function classesDe(el: Element): string[] {
+      return el.className.split(/\s+/).filter((c) => c !== '')
+    }
+
+    function rendreCalendrier(entries: MonthEntry[]): void {
+      render(
+        <MonthCalendar
+          days={days}
+          line={lines[0]!}
+          slots={DEFAULT_SLOTS}
+          entries={entries}
+          autresLignes={[]}
+          toutLeMois={false}
+          onApply={vi.fn(async () => true)}
+          onRange={vi.fn(async () => {})}
+          onFormulaire={vi.fn()}
+        />,
+      )
+    }
+
+    /** La teinte de l'aplat et le tireté de la case, tels que la vue les rend. */
+    interface Rendu {
+      teinte: string | undefined
+      tirete: boolean
+      hachure: boolean
+    }
+
+    function auCalendrier(entries: MonthEntry[]): Rendu {
+      rendreCalendrier(entries)
+      const aplat = screen.queryByTestId('remplissage-2026-03-13')
+      const laCase = classesDe(screen.getByTestId('case-2026-03-13'))
+      const rendu = {
+        teinte: aplat === null ? undefined : classesDe(aplat).find((c) => c.startsWith('bg-')),
+        tirete: laCase.includes('border-dashed'),
+        hachure: laCase.includes('pattern-hatch'),
+      }
+      cleanup()
+      return rendu
+    }
+
+    function auTableau(entries: MonthEntry[]): Rendu {
+      renderGrid({ entries })
+      const aplat = screen.queryByTestId('remplissage-l1-2026-03-13')
+      const champ = classesDe(cell('Consultant ITSM', '2026-03-13'))
+      const rendu = {
+        teinte: aplat === null ? undefined : classesDe(aplat).find((c) => c.startsWith('bg-')),
+        tirete: champ.includes('border-dashed'),
+        hachure: champ.includes('pattern-hatch'),
+      }
+      cleanup()
+      return rendu
+    }
+
+    it('peint la même teinte et le même contour dans les deux vues', () => {
+      const calendrier = auCalendrier([PREVU])
+      const tableau = auTableau([PREVU])
+
+      expect(tableau).toEqual(calendrier)
+      // Et ce que les deux vues peignent est bien la loi du lot : ambre et
+      // tireté, jamais la hachure — sans quoi elles pourraient être d'accord
+      // sur autre chose.
+      expect(tableau.teinte).toBe(PREVU_COLOR.bg)
+      expect(tableau.tirete).toBe(true)
+      expect(tableau.hachure).toBe(false)
+    })
+
+    it('laisse le réalisé à la teinte de sa prestation, des deux côtés', () => {
+      const calendrier = auCalendrier([REALISE])
+      const tableau = auTableau([REALISE])
+
+      // Le calendrier est en portée « Cette prestation » : sa teinte de réalisé
+      // est `saisie`, celle du tableau est catégorielle — c'est voulu, le
+      // tableau montre toutes les lignes. Ce qui doit coïncider, c'est
+      // l'**absence** d'ambre et de tireté.
+      expect(tableau.teinte).not.toBe(PREVU_COLOR.bg)
+      expect(calendrier.teinte).not.toBe(PREVU_COLOR.bg)
+      expect(tableau.tirete).toBe(false)
+      expect(calendrier.tirete).toBe(false)
     })
   })
 

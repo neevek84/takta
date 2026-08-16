@@ -512,6 +512,59 @@ describe('distinction de la palette catégorielle', () => {
     })
   })
 
+  /**
+   * Le chiffre que le commentaire de `MIN_CATEGORY_DISTANCE` annonce est celui
+   * qu'on mesure — vérifié, pas relu.
+   *
+   * Dans un fichier où chaque valeur est présentée comme mesurée, un nombre
+   * périmé est un piège : il a la même autorité qu'un nombre juste. Le
+   * commentaire a annoncé « 20,97 au pire couple » après que la palette
+   * entière eut été remplacée — 20,97 était la valeur de la palette chaude du
+   * lot 1e, mesurée plus bas dans ce fichier, et elle a survécu à deux
+   * refontes. Ce test lit le commentaire dans la source et le confronte au
+   * calcul : la prochaine palette fera tomber l'un ou l'autre.
+   */
+  describe('le commentaire de MIN_CATEGORY_DISTANCE dit la mesure', () => {
+    /** Le pire couple, toutes paires dérivées et tous préréglages confondus. */
+    function pireCouple(): { distance: number; ou: string } {
+      let distance = Infinity
+      let ou = ''
+      for (const preset of THEME_PRESETS) {
+        for (const { a, b } of DISTINCTION_PAIRS) {
+          const d = colorDistance(preset.tokens[a], preset.tokens[b])
+          if (d < distance) {
+            distance = d
+            ou = `${preset.id} ${a}/${b}`
+          }
+        }
+      }
+      return { distance, ou }
+    }
+
+    /**
+     * Deux décimales, tronquées — jamais arrondies au-dessus : le commentaire
+     * ne doit pas pouvoir annoncer une marge que la palette n'a pas.
+     */
+    function auCentieme(valeur: number): string {
+      return (Math.floor(valeur * 100) / 100).toFixed(2).replace('.', ',')
+    }
+
+    it('mesure 24,11 au pire couple, sur les versants sombres', () => {
+      const { distance, ou } = pireCouple()
+      expect(auCentieme(distance)).toBe('24,11')
+      // Nommé : une valeur juste sur le mauvais couple ne dirait rien.
+      expect(ou).toBe('ENCRE_SOMBRE catA/catF')
+      expect(distance).toBeGreaterThanOrEqual(MIN_CATEGORY_DISTANCE)
+    })
+
+    it('annonce dans la source exactement ce chiffre-là', () => {
+      const source = readFileSync(join(process.cwd(), 'src/core/theme/tokens.ts'), 'utf8')
+      const annonce = /tient (\d+,\d+) au pire couple/.exec(source)
+      expect(annonce, 'le commentaire n’annonce plus de pire couple').not.toBeNull()
+      expect(annonce![1]).toBe(auCentieme(pireCouple().distance))
+    })
+  })
+
   // Le soupçon du porteur, mis en calcul : les six teintes ont été étalonnées
   // dans une fenêtre chaude, sur un fond crème. Leur écart *deux à deux* ne
   // dépend pas du fond — c'est une distance entre deux teintes — et tient donc

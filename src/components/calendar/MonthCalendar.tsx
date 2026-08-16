@@ -856,7 +856,15 @@ function Case({
           // Le tireté dit le prévisionnel sans la teinte : deux aplats opaques
           // ne se distingueraient pas en vision monochrome.
           previsionnel && 'border-dashed',
-          etat.kind === 'LIBRE' && etat.eclatee && 'ring-1 ring-inset ring-warning-edge',
+          // Anneau **intérieur** et non `ring-*` : `ring-1 ring-warning-edge`
+          // et le `ring-2 ring-focus` de la sélection tombent dans les mêmes
+          // groupes `ring-w` et `ring-color`, et `cn()` ne garde alors que le
+          // dernier — l'avertissement disparaissait à l'instant précis où la
+          // case est sélectionnée pour être corrigée. `inset-ring-*` compose
+          // dans `--tw-inset-ring-shadow`, une couche distincte de
+          // `--tw-ring-shadow` : les deux marqueurs se voient ensemble, le
+          // liseré d'éclatement par-dessus la bague de sélection.
+          etat.kind === 'LIBRE' && etat.eclatee && 'inset-ring-1 inset-ring-warning-edge',
           remplie ? 'text-ink' : 'text-muted',
           previsionnel && 'italic',
           selected && 'ring-2 ring-inset ring-focus',

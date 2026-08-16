@@ -49,17 +49,26 @@ export function ChargeTable({ matrix }: { matrix: ChargeMatrix }) {
                 {cell.realiseCentiemes > 0 && (
                   <span title="Réalisé">{jours(cell.realiseCentiemes)}</span>
                 )}
-                {/* Hachure, italique et souligné pointillé : le prévisionnel se
-                    distingue sans la teinte et sans rien ajouter au texte, que
-                    les tests comparent au caractère près. */}
+                {/* La teinte du prévisionnel et son contour tireté — les mêmes
+                    qu'au calendrier et qu'à la grille de saisie : le passé est
+                    froid, le futur est chaud, et le même fait ne peut pas avoir
+                    deux apparences selon l'écran. Le tireté porte l'état sans
+                    la teinte, et rien n'est ajouté au texte, que les tests
+                    comparent au caractère près. */}
                 {cell.prevuCentiemes > 0 && (
-                  <span
-                    title="Prévisionnel"
-                    className="pattern-hatch italic text-muted underline decoration-dotted"
-                  >
+                  <>
+                    {/* Le séparateur sort de l'aplat : il joint les deux
+                        nombres, il n'appartient pas au prévisionnel — et un
+                        « + » peint en ambre le laisserait croire. Le texte de
+                        la cellule, lui, ne bouge pas d'un caractère. */}
                     {cell.realiseCentiemes > 0 ? ' + ' : ''}
-                    {jours(cell.prevuCentiemes)}
-                  </span>
+                    <span
+                      title="Prévisionnel"
+                      className="rounded-sm border border-dashed border-prevu-edge bg-prevu px-1 italic text-prevu-ink"
+                    >
+                      {jours(cell.prevuCentiemes)}
+                    </span>
+                  </>
                 )}
               </td>
             ))}

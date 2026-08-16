@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { readCellState } from '@/core/saisie/cell-state'
 import type { CellEntry } from '@/core/saisie/cell-state'
-import { colorForLine } from '@/core/saisie/colors'
+import { colorForLine, PREVU_COLOR } from '@/core/saisie/colors'
 import { formeDeLaCase } from '@/core/saisie/forme'
 import type { Forme } from '@/core/saisie/forme'
 import { kindDeLaJournee } from '@/core/saisie/kind'
@@ -16,7 +16,10 @@ import type { CapacityMode, TimeEntryKind } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
 import { Aplat } from '@/components/ui/Aplat'
-import { SegmentLegend } from '@/components/ui/SegmentLegend'
+// `SEGMENT_PREVU_BORDURE` et non un tireté réécrit ici : la légende, les
+// bandeaux d'engagement et cette cellule doivent porter **les mêmes classes**,
+// sinon l'un des trois dérive sans que rien ne le dise.
+import { SegmentLegend, SEGMENT_PREVU_BORDURE } from '@/components/ui/SegmentLegend'
 import { EngagementBar } from './EngagementBar'
 import { TotalsRow } from './TotalsRow'
 import { useDragSelect } from './useDragSelect'
@@ -167,8 +170,8 @@ function formeDeLaCellule(
  * les fonds de la palette catégorielle (`TEXT_PAIRS`, `core/theme/tokens.ts`).
  * `muted` — que le prévisionnel posait — et `warning-ink` — que la journée par
  * créneaux pose — tombent sous 4,5:1 sur les teintes les plus claires de cette
- * palette. Le prévisionnel et les créneaux ne perdent rien : leurs hachures,
- * leur italique et leur liseré se lisent en vision monochrome, ce qu'une
+ * palette. Le prévisionnel et les créneaux ne perdent rien : le contour
+ * tireté, l'italique et le liseré se lisent en vision monochrome, ce qu'une
  * nuance d'encre n'a jamais fait.
  */
 function encreCellule(remplie: boolean, previsionnel: boolean, parCreneaux: boolean): string {
@@ -487,7 +490,17 @@ export function MonthGrid({
                       drag.isSelected(l.id, d.date) ? 'ring-2 ring-inset ring-focus' : ''
                     }`}
                   >
-                    <Aplat cle={`${l.id}-${d.date}`} forme={forme} couleur={colorForLine(l.id)} />
+                    {/* La même règle que le calendrier, et prise au même
+                        endroit : le passé est froid, le futur est chaud. Un
+                        jour prévisionnel prend `PREVU_COLOR` au lieu de la
+                        teinte de sa prestation — sans quoi basculer entre les
+                        deux vues du même écran montrerait deux apparences du
+                        même fait. */}
+                    <Aplat
+                      cle={`${l.id}-${d.date}`}
+                      forme={forme}
+                      couleur={previsionnel ? PREVU_COLOR : colorForLine(l.id)}
+                    />
                     <input
                       aria-label={`${l.label} ${d.date}`}
                       data-saisie={etatSaisie(cell)}
@@ -519,11 +532,18 @@ export function MonthGrid({
                       // `relative` : le champ passe **au-dessus** de l'aplat,
                       // qui est le seul nœud positionné en absolu de la
                       // cellule. Sans cela, l'aplat recouvrirait le chiffre.
-                      className={`touch-target relative w-11 border-0 bg-transparent text-center text-xs ${encreCellule(
+                      // Le contour tireté remplace la hachure, comme au
+                      // calendrier : deux aplats opaques ne se distinguent pas
+                      // en vision monochrome, et le tireté porte l'état sans
+                      // la teinte. Il se pose sur le champ et non sur la
+                      // cellule — le champ la recouvre exactement, et la
+                      // bordure reste alors *dans* les 44 points (`box-sizing:
+                      // border-box`), sans rien coûter au budget des colonnes.
+                      className={`touch-target relative w-11 bg-transparent text-center text-xs ${encreCellule(
                         forme.kind !== 'AUCUNE',
                         previsionnel,
                         parCreneaux,
-                      )} ${previsionnel ? 'pattern-hatch italic' : ''} ${
+                      )} ${previsionnel ? `${SEGMENT_PREVU_BORDURE} italic` : 'border-0'} ${
                         parCreneaux ? 'ring-1 ring-inset ring-warning-edge' : ''
                       }`}
                     />

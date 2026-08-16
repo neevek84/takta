@@ -569,6 +569,32 @@ describe('MonthCalendar', () => {
       glisserAvec('mouse', de, versLesDates)
     }
 
+    /**
+     * La capture implicite, simulée là où le navigateur l'installe.
+     *
+     * `happy-dom` implémente bien `setPointerCapture` / `hasPointerCapture` /
+     * `releasePointerCapture` — et leur état réel, pas un décor : ce qu'il
+     * n'implémente pas, c'est la capture **implicite** qu'un navigateur pose
+     * lui-même au `pointerdown` d'un doigt. On la pose donc à sa place, avec la
+     * vraie API, avant que le geste ne parte. Sans cette pose, la ligne qui la
+     * relâche n'était couverte par aucun test : la retirer laissait toute la
+     * suite verte, alors que le glissement au doigt cesse de fonctionner sur un
+     * appareil réel — tous les événements restant adressés à la case de départ,
+     * aucune autre ne verrait le doigt passer.
+     */
+    it('relâche la capture implicite du doigt, sans quoi le glissement tactile n existe pas', () => {
+      renderCalendar()
+      const depart = caseDu('2026-03-09')
+      depart.setPointerCapture(1)
+      expect(depart.hasPointerCapture(1)).toBe(true)
+
+      fireEvent.pointerDown(depart, {
+        pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10,
+      })
+
+      expect(depart.hasPointerCapture(1)).toBe(false)
+    })
+
     it('n affiche aucune barre tant qu un seul jour est sélectionné', () => {
       renderCalendar()
       glisser('2026-03-09', [])
@@ -918,6 +944,34 @@ describe('MonthCalendar', () => {
         expect(classes(caseDu('2026-03-09'))).toContain('ring-focus')
         expect(classes(caseDu('2026-03-10'))).toContain('ring-focus')
         expect(classes(caseDu('2026-03-11'))).not.toContain('ring-focus')
+      })
+
+      // Le liseré d'éclatement et la bague de sélection se disputaient les
+      // mêmes propriétés : `ring-1 ring-warning-edge` et `ring-2 ring-focus`
+      // appartiennent aux groupes `ring-w` et `ring-color` de `tailwind-merge`,
+      // et le dernier déclaré effaçait le premier. Une journée saisie en
+      // plusieurs créneaux perdait donc son avertissement au moment précis où
+      // on la sélectionne pour agir dessus. Les deux marqueurs portent
+      // désormais des propriétés distinctes — anneau intérieur pour
+      // l'éclatement, bague pour la sélection — et coexistent.
+      it('garde le liseré d une journée éclatée quand la case est sélectionnée', () => {
+        renderCalendar({
+          entries: [
+            entree({ id: 'e1', date: '2026-03-09', minutes: 120, startMinute: 540, endMinute: 660 }),
+            entree({ id: 'e2', date: '2026-03-09', minutes: 120, startMinute: 840, endMinute: 960 }),
+          ],
+        })
+
+        // Hors sélection, le liseré est là — sinon le test qui suit passerait
+        // sur une case qui n'a jamais rien porté.
+        expect(classes(caseDu('2026-03-09'))).toContain('inset-ring-warning-edge')
+
+        glisser('2026-03-09', ['2026-03-10'])
+
+        const marqueurs = classes(caseDu('2026-03-09'))
+        expect(marqueurs).toContain('inset-ring-1')
+        expect(marqueurs).toContain('inset-ring-warning-edge')
+        expect(marqueurs).toContain('ring-focus')
       })
     })
   })
