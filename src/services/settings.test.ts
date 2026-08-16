@@ -264,6 +264,42 @@ describe('plage journée', () => {
   })
 })
 
+describe('délai de relance', () => {
+  it('vaut sept jours par défaut', async () => {
+    await prisma.settings.deleteMany({})
+    expect((await getSettings()).relanceJours).toBe(7)
+  })
+
+  it('se met à jour', async () => {
+    expect((await updateSettings({ relanceJours: 14 })).relanceJours).toBe(14)
+  })
+
+  it('accepte zéro, qui désactive les relances', async () => {
+    expect((await updateSettings({ relanceJours: 0 })).relanceJours).toBe(0)
+  })
+
+  it('refuse un délai négatif, non entier ou déraisonnable', async () => {
+    expect(validateSettingsPatch({ relanceJours: -1 }).ok).toBe(false)
+    expect(validateSettingsPatch({ relanceJours: 1.5 }).ok).toBe(false)
+    expect(validateSettingsPatch({ relanceJours: 365 }).ok).toBe(false)
+  })
+
+  it('ne persiste jamais un délai hors bornes', async () => {
+    // La borne haute n'est pas décorative : sans elle, `runSignatureReminders`
+    // calculerait une échéance à des siècles et ne relancerait plus jamais,
+    // sans qu'aucun écran ne montre d'échec.
+    await updateSettings({ relanceJours: 14 })
+    await expect(updateSettings({ relanceJours: 365 })).rejects.toThrow(SettingsValidationError)
+    expect((await getSettings()).relanceJours).toBe(14)
+  })
+
+  it('remonte un message en français', () => {
+    const r = validateSettingsPatch({ relanceJours: -1 })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toContain('délai de relance')
+  })
+})
+
 
 describe('consignation des réglages', () => {
   beforeEach(async () => {

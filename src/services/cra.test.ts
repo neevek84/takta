@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { randomBytes } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { prisma } from '@/db/client'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import { createClient } from './clients'
@@ -365,5 +367,75 @@ describe('consignation du CRA', () => {
     await listCras(userId, '2027-03')
 
     expect(await readAuditSince({ since: 0 })).toHaveLength(0)
+  })
+})
+
+describe('CraView et signature', () => {
+  it('rend une signature nulle tant qu aucune demande n existe', async () => {
+    const cra = await getOrCreateCra(userId, missionId, '2026-09')
+    expect(cra.signature).toBeNull()
+  })
+
+  it('expose le signataire porté par la mission', async () => {
+    await prisma.mission.update({
+      where: { id: missionId },
+      data: { signataireNom: 'Claire Martin', signataireEmail: 'claire@cra.test' },
+    })
+    const cra = await getOrCreateCra(userId, missionId, '2026-09')
+    expect(cra.signataireEmail).toBe('claire@cra.test')
+    expect(cra.signataireNom).toBe('Claire Martin')
+  })
+
+  it('projette la demande de signature en cours', async () => {
+    const cra = await getOrCreateCra(userId, missionId, '2026-08')
+    await prisma.signatureRequest.create({
+      data: {
+        craId: cra.id,
+        provider: 'double',
+        status: 'EN_ATTENTE',
+        sentAt: new Date('2026-09-02T09:00:00.000Z'),
+        relances: 2,
+        lastRelanceAt: new Date('2026-09-16T09:00:00.000Z'),
+        abandoned: true,
+      },
+    })
+
+    const relu = (await listCras(userId, '2026-08')).find((c) => c.id === cra.id)!
+    expect(relu.signature).toEqual({
+      provider: 'double',
+      status: 'EN_ATTENTE',
+      sentAt: new Date('2026-09-02T09:00:00.000Z'),
+      relances: 2,
+      lastRelanceAt: new Date('2026-09-16T09:00:00.000Z'),
+      abandoned: true,
+      archive: false,
+    })
+  })
+
+  it('ne transporte jamais les octets du PDF archivé, seulement le fait qu il existe', async () => {
+    const cra = await getOrCreateCra(userId, missionId, '2026-10')
+    await prisma.signatureRequest.create({
+      data: { craId: cra.id, provider: 'double', signedPdf: Buffer.from('%PDF') },
+    })
+
+    const relu = (await listCras(userId, '2026-10')).find((c) => c.id === cra.id)!
+    expect(relu.signature?.archive).toBe(true)
+    expect(JSON.stringify(relu)).not.toContain('signedPdf')
+  })
+
+  // Le test ci-dessus ne dit rien de la **requête** : `toView` projette champ
+  // par champ, un `signedPdf: true` glissé dans `WITH_MISSION` ne changerait
+  // donc aucune valeur rendue — il ferait seulement traverser des centaines de
+  // kilo-octets par ligne à chaque affichage de la page CRA, sans qu'aucune
+  // assertion de valeur ne s'en aperçoive. La règle porte sur la projection :
+  // elle se vérifie sur la projection.
+  it('NE SÉLECTIONNE JAMAIS signedPdf dans la projection de lecture', async () => {
+    const source = readFileSync(join(process.cwd(), 'src', 'services', 'cra.ts'), 'utf8')
+    const bloc = /const WITH_MISSION = \{[\s\S]*?\n\} as const/.exec(source)
+    expect(bloc, 'WITH_MISSION introuvable dans src/services/cra.ts').not.toBeNull()
+    // Débarrassé de ses commentaires : celui qui *documente* la règle la nomme
+    // forcément, il ne l'enfreint pas. Même parti pris que `design-system.test.ts`.
+    const code = bloc![0].replace(/(^|[^:])\/\/.*$/gm, '$1')
+    expect(code).not.toMatch(/signedPdf/)
   })
 })

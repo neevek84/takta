@@ -1,6 +1,7 @@
 import { prisma } from '@/db/client'
 import { applyTransition, type CraTransition } from '@/core/cra/state-machine'
 import { ENTITY_CRA } from '@/core/sync/policy'
+import type { SignatureStatus } from '@/core/signature/connector'
 import type { CraStatus } from '@/core/types'
 import type { AuditAction } from '@/core/audit/events'
 import { DOLIBARR } from './dolibarr/api'
@@ -25,6 +26,18 @@ const ACTION_PAR_TRANSITION: Record<CraTransition, AuditAction> = {
   ROUVRIR: 'cra.rouvert',
 }
 
+export interface CraSignatureView {
+  provider: string
+  status: SignatureStatus
+  sentAt: Date
+  relances: number
+  lastRelanceAt: Date | null
+  /** trois relances sans réponse : visible dans la liste des CRA en souffrance */
+  abandoned: boolean
+  /** un PDF signé est archivé, et sera servi tel quel au téléchargement */
+  archive: boolean
+}
+
 export interface CraView {
   id: string
   missionId: string
@@ -36,9 +49,31 @@ export interface CraView {
   invoiceNumber: string | null
   invoicedAt: Date | null
   paidAt: Date | null
+  /** signataire porté par la mission, vide tant qu'il n'est pas renseigné */
+  signataireNom: string
+  signataireEmail: string
+  /** null tant qu'aucune demande de signature n'a été ouverte */
+  signature: CraSignatureView | null
 }
 
-const WITH_MISSION = { mission: { include: { client: true } } } as const
+const WITH_MISSION = {
+  mission: { include: { client: true } },
+  signatureRequest: {
+    select: {
+      provider: true,
+      status: true,
+      sentAt: true,
+      relances: true,
+      lastRelanceAt: true,
+      abandoned: true,
+      // `signedPdf` n'est JAMAIS sélectionné ici : un blob de plusieurs
+      // centaines de kilo-octets par ligne traverserait chaque affichage de
+      // la page CRA pour un booléen. Sa présence se lit par un compte —
+      // `craAvecArchive` — et `cra.test.ts` interdit statiquement de
+      // l'ajouter à cette projection.
+    },
+  },
+} as const
 
 type Row = {
   id: string
@@ -48,10 +83,28 @@ type Row = {
   invoiceNumber: string | null
   invoicedAt: Date | null
   paidAt: Date | null
-  mission: { label: string; client: { name: string } }
+  mission: { label: string; signataireNom: string; signataireEmail: string; client: { name: string } }
+  signatureRequest: {
+    provider: string
+    status: string
+    sentAt: Date
+    relances: number
+    lastRelanceAt: Date | null
+    abandoned: boolean
+  } | null
 }
 
-function toView(row: Row): CraView {
+/** Identifiants des CRA dont le PDF signé est archivé, sans charger les octets. */
+async function craAvecArchive(craIds: string[]): Promise<Set<string>> {
+  if (craIds.length === 0) return new Set()
+  const lignes = await prisma.signatureRequest.findMany({
+    where: { craId: { in: craIds }, NOT: { signedPdf: null } },
+    select: { craId: true },
+  })
+  return new Set(lignes.map((l) => l.craId))
+}
+
+function toView(row: Row, archives: Set<string>): CraView {
   return {
     id: row.id,
     missionId: row.missionId,
@@ -62,6 +115,20 @@ function toView(row: Row): CraView {
     invoiceNumber: row.invoiceNumber,
     invoicedAt: row.invoicedAt,
     paidAt: row.paidAt,
+    signataireNom: row.mission.signataireNom,
+    signataireEmail: row.mission.signataireEmail,
+    signature:
+      row.signatureRequest === null
+        ? null
+        : {
+            provider: row.signatureRequest.provider,
+            status: row.signatureRequest.status as SignatureStatus,
+            sentAt: row.signatureRequest.sentAt,
+            relances: row.signatureRequest.relances,
+            lastRelanceAt: row.signatureRequest.lastRelanceAt,
+            abandoned: row.signatureRequest.abandoned,
+            archive: archives.has(row.id),
+          },
   }
 }
 
@@ -83,7 +150,7 @@ export async function getOrCreateCra(
   const cle = { missionId_userId_month: { missionId, userId, month: monthStart(month) } }
 
   const existant = await prisma.cra.findUnique({ where: cle, include: WITH_MISSION })
-  if (existant !== null) return toView(existant)
+  if (existant !== null) return toView(existant, await craAvecArchive([existant.id]))
 
   let row
   try {
@@ -96,7 +163,7 @@ export async function getOrCreateCra(
     // et il n'a été « ouvert » qu'une fois — c'est l'autre rendu qui l'a
     // consigné.
     const relu = await prisma.cra.findUniqueOrThrow({ where: cle, include: WITH_MISSION })
-    return toView(relu)
+    return toView(relu, await craAvecArchive([relu.id]))
   }
 
   await appendAudit({
@@ -107,7 +174,7 @@ export async function getOrCreateCra(
     payload: { missionId, month, status: row.status },
   })
 
-  return toView(row)
+  return toView(row, await craAvecArchive([row.id]))
 }
 
 /**
@@ -192,7 +259,7 @@ export async function transitionCra(
     },
   })
 
-  return toView(row)
+  return toView(row, await craAvecArchive([row.id]))
 }
 
 /**
@@ -237,7 +304,7 @@ export async function updateInvoiceTracking(
     },
   })
 
-  return toView(row)
+  return toView(row, await craAvecArchive([row.id]))
 }
 
 export async function listCras(userId: string, month: string): Promise<CraView[]> {
@@ -246,5 +313,22 @@ export async function listCras(userId: string, month: string): Promise<CraView[]
     include: WITH_MISSION,
     orderBy: { mission: { label: 'asc' } },
   })
-  return rows.map(toView)
+  const archives = await craAvecArchive(rows.map((r) => r.id))
+  return rows.map((row) => toView(row, archives))
+}
+
+/**
+ * Les CRA envoyés que trois relances n'ont pas fait revenir.
+ *
+ * Ils restent `ENVOYE` — on ne les annule pas de force : c'est un problème
+ * humain, et le rendre visible est tout ce que le logiciel peut faire.
+ */
+export async function listCrasEnSouffrance(userId: string): Promise<CraView[]> {
+  const rows = await prisma.cra.findMany({
+    where: { userId, signatureRequest: { abandoned: true, status: 'EN_ATTENTE' } },
+    include: WITH_MISSION,
+    orderBy: { month: 'asc' },
+  })
+  const archives = await craAvecArchive(rows.map((r) => r.id))
+  return rows.map((row) => toView(row, archives))
 }

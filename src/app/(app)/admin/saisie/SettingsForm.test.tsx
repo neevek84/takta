@@ -28,6 +28,7 @@ const REGLAGES: AppSettings = {
   debutExerciceMois: 1,
   journeeDebutMinute: 540,
   journeeFinMinute: 1080,
+  relanceJours: 7,
 }
 
 beforeEach(() => {

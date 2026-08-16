@@ -7,20 +7,27 @@ import { canTransition, type CraTransition } from '@/core/cra/state-machine'
 // La page est un composant serveur : elle appelle la session et les services
 // avant de rendre. On leur substitue des doubles, le sujet du test étant le
 // contrat de formulaire et le respect de la machine à états, pas la base.
-const { cras, missions } = vi.hoisted(() => ({
+const { cras, missions, souffrance } = vi.hoisted(() => ({
   cras: [] as unknown[],
   missions: [] as unknown[],
+  souffrance: [] as unknown[],
 }))
 
 vi.mock('@/auth', () => ({
   requireUser: async () => ({ id: 'u1', role: 'ADMIN' as const }),
 }))
-vi.mock('@/services/cra', () => ({ listCras: async () => cras }))
+vi.mock('@/services/cra', () => ({
+  listCras: async () => cras,
+  listCrasEnSouffrance: async () => souffrance,
+}))
 vi.mock('@/services/missions', () => ({ listMissionsForUser: async () => missions }))
 vi.mock('./actions', () => ({
   openCra: vi.fn(),
   moveCra: vi.fn(),
   saveTracking: vi.fn(),
+  envoyerPourSignature: vi.fn(),
+  rafraichirSignature: vi.fn(),
+  lancerRelances: vi.fn(),
 }))
 
 // eslint-disable-next-line import/first -- `vi.mock` est hissé au-dessus des imports.
@@ -36,7 +43,11 @@ const LIBELLES: Record<CraTransition, string> = {
 const TOUTES: CraTransition[] = ['ENVOYER', 'VALIDER', 'REFUSER', 'ROUVRIR']
 const STATUTS: CraStatus[] = ['BROUILLON', 'ENVOYE', 'VALIDE', 'REFUSE']
 
-function unCra(status: CraStatus, id = 'cra-1'): Record<string, unknown> {
+function unCra(
+  status: CraStatus,
+  id = 'cra-1',
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     id,
     missionId: 'm1',
@@ -47,6 +58,23 @@ function unCra(status: CraStatus, id = 'cra-1'): Record<string, unknown> {
     invoiceNumber: null,
     invoicedAt: null,
     paidAt: null,
+    signataireNom: 'Claire Martin',
+    signataireEmail: 'claire@acme.test',
+    signature: null,
+    ...extra,
+  }
+}
+
+function uneSignature(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    provider: 'documenso',
+    status: 'EN_ATTENTE',
+    sentAt: new Date('2026-03-05T09:00:00.000Z'),
+    relances: 0,
+    lastRelanceAt: null,
+    abandoned: false,
+    archive: false,
+    ...extra,
   }
 }
 
@@ -54,13 +82,21 @@ async function rendre(
   jeu: {
     cras?: unknown[]
     missions?: unknown[]
+    souffrance?: unknown[]
+    erreur?: string
   } = {},
 ): Promise<ReturnType<typeof render>> {
   cras.length = 0
   cras.push(...(jeu.cras ?? []))
   missions.length = 0
   missions.push(...(jeu.missions ?? [{ id: 'm1', clientName: 'ACME', label: 'ITSM' }]))
-  return render(await CraPage({ searchParams: Promise.resolve({ month: '2026-03' }) }))
+  souffrance.length = 0
+  souffrance.push(...(jeu.souffrance ?? []))
+  return render(
+    await CraPage({
+      searchParams: Promise.resolve({ month: '2026-03', erreur: jeu.erreur }),
+    }),
+  )
 }
 
 describe('page CRA', () => {
@@ -156,5 +192,108 @@ describe('page CRA', () => {
     const badge = screen.getByTestId('cra-statut')
     expect(badge.querySelector('[aria-hidden="true"]')!.textContent).not.toBe('')
     expect(badge.textContent).toContain('Refusé')
+  })
+})
+
+describe('signature du CRA', () => {
+  afterEach(cleanup)
+
+  it('propose le téléchargement du PDF quel que soit l état', async () => {
+    for (const statut of STATUTS) {
+      await rendre({ cras: [unCra(statut)] })
+      const lien = screen.getByRole('link', { name: /télécharger le pdf/i })
+      expect(lien.getAttribute('href')).toBe('/cra/cra-1/pdf')
+      cleanup()
+    }
+  })
+
+  // Un lien de téléchargement qui servirait le PDF d'un autre CRA est une fuite
+  // — nominative, et invisible tant qu'un seul CRA est affiché. La page en
+  // affiche autant qu'il y a de missions : le contrôle porte sur plusieurs.
+  it('DONNE À CHAQUE CARTE LE LIEN DE SON PROPRE PDF', async () => {
+    await rendre({
+      cras: [unCra('BROUILLON', 'cra-aa'), unCra('ENVOYE', 'cra-bb'), unCra('VALIDE', 'cra-cc')],
+    })
+    const liens = screen
+      .getAllByRole('link', { name: /télécharger le pdf/i })
+      .map((a) => a.getAttribute('href'))
+    expect(liens).toEqual(['/cra/cra-aa/pdf', '/cra/cra-bb/pdf', '/cra/cra-cc/pdf'])
+  })
+
+  it('LAISSE LES TRANSITIONS MANUELLES DISPONIBLES en permanence', async () => {
+    // La garantie que rien d extérieur ne peut rendre l application inutilisable.
+    for (const statut of STATUTS) {
+      await rendre({ cras: [unCra(statut, 'cra-1', { signature: uneSignature() })] })
+      for (const t of TOUTES.filter((t) => canTransition(statut, t))) {
+        expect(screen.getByRole('button', { name: LIBELLES[t] })).toBeTruthy()
+      }
+      cleanup()
+    }
+  })
+
+  it('propose l envoi pour signature sur un brouillon', async () => {
+    await rendre({ cras: [unCra('BROUILLON')] })
+    const bouton = screen.getByRole('button', { name: /envoyer pour signature/i })
+    expect(bouton.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('désactive l envoi et l explique quand la mission n a pas de signataire', async () => {
+    await rendre({ cras: [unCra('BROUILLON', 'cra-1', { signataireNom: '', signataireEmail: '' })] })
+    const bouton = screen.getByRole('button', { name: /envoyer pour signature/i })
+    expect(bouton.hasAttribute('disabled')).toBe(true)
+    expect(document.body.textContent).toContain('signataire')
+  })
+
+  it('ne propose pas l envoi quand la transition est impossible', async () => {
+    await rendre({ cras: [unCra('VALIDE')] })
+    expect(screen.queryByRole('button', { name: /envoyer pour signature/i })).toBeNull()
+  })
+
+  it('affiche l état de la signature en cours, sans dépendre de la seule couleur', async () => {
+    await rendre({
+      cras: [unCra('ENVOYE', 'cra-1', { signature: uneSignature({ relances: 2 }) })],
+    })
+    const texte = document.body.textContent ?? ''
+    expect(texte).toContain('En attente de signature')
+    expect(texte).toContain('2 relance')
+  })
+
+  it('propose le rafraîchissement dès qu une demande existe', async () => {
+    await rendre({ cras: [unCra('ENVOYE', 'cra-1', { signature: uneSignature() })] })
+    expect(screen.getByRole('button', { name: /rafraîchir l’état/i })).toBeTruthy()
+  })
+
+  it('ne propose pas le rafraîchissement sans demande', async () => {
+    await rendre({ cras: [unCra('ENVOYE')] })
+    expect(screen.queryByRole('button', { name: /rafraîchir l’état/i })).toBeNull()
+  })
+
+  it('signale un document signé archivé', async () => {
+    await rendre({
+      cras: [
+        unCra('VALIDE', 'cra-1', { signature: uneSignature({ status: 'SIGNE', archive: true }) }),
+      ],
+    })
+    expect(document.body.textContent).toContain('signé archivé')
+  })
+
+  it('remonte les CRA en souffrance, et rien quand il n y en a pas', async () => {
+    await rendre({ cras: [unCra('ENVOYE')] })
+    expect(screen.queryByRole('heading', { name: /en souffrance/i })).toBeNull()
+    cleanup()
+
+    await rendre({
+      cras: [unCra('ENVOYE')],
+      souffrance: [
+        unCra('ENVOYE', 'cra-1', { signature: uneSignature({ relances: 3, abandoned: true }) }),
+      ],
+    })
+    expect(screen.getByRole('heading', { name: /en souffrance/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /lancer les relances/i })).toBeTruthy()
+  })
+
+  it('affiche le motif d échec remonté par l action', async () => {
+    await rendre({ cras: [unCra('BROUILLON')], erreur: 'PAS_DE_CONNECTEUR' })
+    expect(document.body.textContent).toContain('Aucun outil de signature')
   })
 })

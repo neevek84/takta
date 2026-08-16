@@ -21,6 +21,38 @@ export const ENGAGEMENT_SOURCES: readonly EngagementSource[] = [
   'DOLIBARR_PROJET',
 ]
 
+/**
+ * Le fuseau de la machine, tel qu'`Intl` le rapporte.
+ *
+ * C'est le défaut du réglage de fuseau : personne ne devrait avoir à déclarer
+ * qu'il vit à Paris. `process.env.CRA_TIMEZONE` n'est **pas** consulté, ici ni
+ * ailleurs — une valeur que l'utilisateur tape ne vit plus dans un fichier, et
+ * un repli discret sur l'ancienne variable rendrait le réglage à l'écran
+ * décoratif sur tous les postes qui l'ont conservée.
+ *
+ * `Europe/Paris` en dernier recours seulement : un environnement sans base
+ * ICU ne rapporte parfois rien, et un fuseau vide ferait refuser chaque
+ * événement par Google.
+ */
+export function fuseauSysteme(): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    return typeof tz === 'string' && tz !== '' ? tz : 'Europe/Paris'
+  } catch {
+    return 'Europe/Paris'
+  }
+}
+
+/** Vrai si l'environnement d'exécution sait situer ce fuseau. */
+function fuseauConnu(valeur: string): boolean {
+  try {
+    new Intl.DateTimeFormat('fr-FR', { timeZone: valeur })
+    return true
+  } catch {
+    return false
+  }
+}
+
 // --- Validation ------------------------------------------------------------
 //
 // Le serveur est la seule barrière qui compte : `required`/`min` côté HTML
@@ -131,6 +163,27 @@ const settingsPatchSchema = z
       .int('La fin de la plage journée doit être un nombre entier de minutes.')
       .min(1, 'La fin de la plage journée est invalide.')
       .max(1440, 'La fin de la plage journée est invalide.'),
+    // 0 = relances désactivées. Un délai d'un jour est déjà agressif, au-delà
+    // d'un trimestre le CRA relève de la relance humaine. La borne haute n'est
+    // pas cosmétique : `runSignatureReminders` en tire une échéance, et un
+    // délai non borné repousserait toute relance à un horizon jamais atteint —
+    // silencieusement, puisque le travail de fond rendrait un rapport vide.
+    relanceJours: z
+      .number({ message: 'Le délai de relance est requis.' })
+      .int('Le délai de relance doit être un nombre entier de jours.')
+      .min(0, 'Le délai de relance ne peut pas être négatif.')
+      .max(90, 'Le délai de relance ne peut pas dépasser 90 jours.'),
+    // Vide n'est pas acceptable en écriture : la colonne vide signifie « jamais
+    // choisi, prends celui du système », et l'écrire volontairement rendrait
+    // les deux états indiscernables. Un fuseau inconnu ne se manifesterait, lui,
+    // qu'au moment de poser un bloc dans l'agenda — par un refus de Google.
+    timeZone: z
+      .string({ message: 'Le fuseau horaire est requis.' })
+      .trim()
+      .min(1, 'Le fuseau horaire est requis.')
+      .refine(fuseauConnu, {
+        message: 'Ce fuseau horaire est inconnu de ce serveur (exemple attendu : Europe/Paris).',
+      }),
   })
   .partial()
   // La plage journée ne franchit jamais minuit, contrairement à un créneau :
@@ -183,6 +236,13 @@ export interface AppSettings {
   journeeDebutMinute: number
   /** fin de la plage journée, minutes depuis minuit */
   journeeFinMinute: number
+  /** délai avant relance d'une signature en attente, en jours. 0 = désactivé. */
+  relanceJours: number
+  /**
+   * fuseau IANA des blocs poussés dans l'agenda. Toujours renseigné à la
+   * lecture : une colonne vide se lit comme le fuseau du système.
+   */
+  timeZone: string
 }
 
 function parseDays(raw: string): number[] {
@@ -209,6 +269,12 @@ function toAppSettings(row: Row): AppSettings {
     debutExerciceMois: row.debutExerciceMois,
     journeeDebutMinute: row.journeeDebutMinute,
     journeeFinMinute: row.journeeFinMinute,
+    relanceJours: row.relanceJours,
+    // Le repli est en LECTURE, pas en base : une installation déplacée suit
+    // alors la machine, et « choisi Paris » reste distinct de « jamais
+    // choisi ». Ce repli est celui du système, jamais celui d'une variable
+    // d'environnement.
+    timeZone: row.timeZone === '' ? fuseauSysteme() : row.timeZone,
   }
 }
 
@@ -304,6 +370,8 @@ export async function updateSettings(
         journeeDebutMinute: patch.journeeDebutMinute,
       }),
       ...(patch.journeeFinMinute !== undefined && { journeeFinMinute: patch.journeeFinMinute }),
+      ...(patch.relanceJours !== undefined && { relanceJours: patch.relanceJours }),
+      ...(patch.timeZone !== undefined && { timeZone: patch.timeZone.trim() }),
     },
   })
 
