@@ -63,6 +63,46 @@ async function dolibarrUserId(): Promise<number> {
 }
 
 /**
+ * Le push est-il armé pour cette mission ?
+ *
+ * Deux conditions, et aucune n'est un appel réseau : une clé d'API d'instance
+ * enregistrée, et une mission rattachée à un projet Dolibarr. Sans l'une ou
+ * l'autre, mettre en file remplirait l'écran de synchronisation de lignes
+ * vouées à l'échec — sur une application dont le connecteur est explicitement
+ * additif (spec §1), et où l'immense majorité des installations n'a pas de
+ * Dolibarr du tout.
+ *
+ * Elle vit ici, et non dans `services/cra.ts` qui l'appelle, parce que c'est ce
+ * module qui possède la table de correspondance : `LIEN_MISSION` y est défini,
+ * et le push lève une `DolibarrMappingError` sur exactement cette absence.
+ * Recopier « Mission » chez l'appelant laisserait les deux dériver en silence
+ * — une garde qui regarde une clé que le push n'utilise pas ne lève rien, elle
+ * met en file ou n'y met pas, sans jamais le dire.
+ *
+ * Pas de `userId` : la correspondance mission → projet est de portée instance,
+ * posée par l'écran d'administration pour tout le monde — même lecture, et
+ * même justification, que celle de `pushCraTimes`. Le cloisonnement est fait
+ * en amont par l'appelant, qui n'arrive ici qu'avec le `missionId` d'un CRA
+ * dont il a prouvé le propriétaire.
+ */
+export async function isDolibarrPushArmed(missionId: string): Promise<boolean> {
+  const credential = await getInstanceCredential(DOLIBARR)
+  if (credential === null) return false
+
+  const lienMission = await prisma.externalLink.findUnique({
+    where: {
+      entityType_entityId_provider: {
+        entityType: LIEN_MISSION,
+        entityId: missionId,
+        provider: DOLIBARR,
+      },
+    },
+    select: { id: true },
+  })
+  return lienMission !== null
+}
+
+/**
  * Pousse les temps **réalisés** d'un CRA validé sur les tâches de son projet
  * Dolibarr, et retire de Dolibarr ce qui n'a plus de saisie locale.
  *

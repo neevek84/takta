@@ -1,6 +1,10 @@
 import { prisma } from '@/db/client'
 import { applyTransition, type CraTransition } from '@/core/cra/state-machine'
+import { ENTITY_CRA } from '@/core/sync/policy'
 import type { CraStatus } from '@/core/types'
+import { DOLIBARR } from './dolibarr/api'
+import { isDolibarrPushArmed } from './dolibarr/push'
+import { enqueueSync } from './sync/outbox'
 
 export interface CraView {
   id: string
@@ -60,6 +64,25 @@ export async function getOrCreateCra(
   return toView(row)
 }
 
+/**
+ * Fait passer un CRA d'un état à l'autre — et, quand la transition le valide,
+ * inscrit ses temps dans la file de synchronisation.
+ *
+ * **La validation est le déclencheur, et le seul.** C'est le moment où le mois
+ * est arrêté : le CRA est fait, envoyé, validé par le client, et les temps
+ * consommés peuvent partir chez Dolibarr. Aucun autre passage n'en met en
+ * file — pousser un brouillon enverrait du temps qui n'est pas arrêté, et la
+ * réconciliation du push retirerait de Dolibarr les journées que l'utilisateur
+ * est justement en train de corriger.
+ *
+ * **Rien de Dolibarr n'est appelé ici.** La fonction écrit en base et met en
+ * file, un point : c'est ce qui garantit qu'une instance éteinte ne peut jamais
+ * empêcher de valider un CRA. Le drainage, lui, tourne plus tard et rejouera.
+ *
+ * **Et la facture ?** Elle n'est pas ici, et elle ne sera jamais calculée ici :
+ * Dolibarr facture, pas le CRA. La demande de brouillon de facture est une
+ * mise en file distincte (tâche 12), pas un effet de bord de celle-ci.
+ */
 export async function transitionCra(
   userId: string,
   craId: string,
@@ -69,11 +92,40 @@ export async function transitionCra(
   const current = await prisma.cra.findFirstOrThrow({ where: { id: craId, userId } })
   const next = applyTransition(current.status as CraStatus, t)
 
-  const row = await prisma.cra.update({
-    where: { id: craId },
-    data: { status: next },
-    include: WITH_MISSION,
+  // Lu **avant** la transaction : deux lectures, aucun appel réseau, et rien
+  // qui ait à tenir le verrou d'écriture.
+  const arme = next === 'VALIDE' && (await isDolibarrPushArmed(current.missionId))
+
+  const row = await prisma.$transaction(async (tx) => {
+    const updated = await tx.cra.update({
+      where: { id: craId },
+      data: { status: next },
+      include: WITH_MISSION,
+    })
+
+    // La mise en file est transactionnelle avec le changement d'état, dans les
+    // deux sens. Un CRA validé sans ligne de file, c'est un mois verrouillé
+    // que plus rien ne poussera jamais : Dolibarr resterait vide, l'écran de
+    // synchronisation muet, et personne ne le saurait avant la facture
+    // manquante. Une ligne sans validation, à l'inverse, ferait pousser des
+    // temps que l'utilisateur peut encore modifier.
+    //
+    // Le `payload` reste vide, comme pour l'agenda : la cible est un CRA, et
+    // un CRA se relit. Le drainage retrouve mission, mois et saisies en base
+    // au moment où il pousse — y figer le mois ici ne servirait qu'à porter
+    // une copie qui peut devenir fausse.
+    if (arme) {
+      await enqueueSync(tx, {
+        userId,
+        entityType: ENTITY_CRA,
+        entityId: craId,
+        provider: DOLIBARR,
+      })
+    }
+
+    return updated
   })
+
   return toView(row)
 }
 
