@@ -6,8 +6,8 @@
  *
  * Il refuse ce qu'une instance refuserait : tiers sans nom, tâche sur un projet
  * inexistant, temps passé sur une tâche inconnue, date hors format, durée qui
- * n'est pas un entier de secondes, ligne de facture dont les entiers n'en sont
- * pas. Un double complaisant validerait un connecteur qui ne marcherait pas —
+ * n'est pas un entier de secondes. Un double complaisant validerait un
+ * connecteur qui ne marcherait pas —
  * le double Google a dû être durci deux fois pour cette raison, la seconde
  * ayant laissé plus de mille tests au vert sur un défaut réel.
  *
@@ -23,7 +23,6 @@ import {
   DolibarrRequestError,
   DolibarrUnavailableError,
   type DolibarrApi,
-  type DolibarrInvoiceRequest,
   type DolibarrProject,
   type DolibarrProposal,
   type DolibarrTask,
@@ -43,15 +42,6 @@ export interface FakeTimeSpent {
   note: string
 }
 
-export interface FakeInvoice {
-  id: number
-  ref: string
-  socid: number
-  /** 0 = brouillon. Le double n'en écrit jamais d'autre : l'application ne valide pas. */
-  status: number
-  lines: Array<{ label: string; qty: number; subprice: number }>
-}
-
 /** Le format de date de l'API Dolibarr, et le seul qu'elle interprète. */
 const DATE_ISO = /^\d{4}-\d{2}-\d{2}$/
 
@@ -68,7 +58,6 @@ export class FakeDolibarr implements DolibarrApi {
   readonly tasks: DolibarrTask[] = []
   readonly proposals: DolibarrProposal[] = []
   readonly timespents: FakeTimeSpent[] = []
-  readonly invoices: FakeInvoice[] = []
   setup: Record<string, string> = {}
 
   /** Compteurs d'appels, pour les tests d'idempotence. */
@@ -228,41 +217,6 @@ export class FakeDolibarr implements DolibarrApi {
     // toléré par le client HTTP.
     const i = this.timespents.findIndex((x) => x.id === args.timespentId)
     if (i >= 0) this.timespents.splice(i, 1)
-  }
-
-  async createDraftInvoice(req: DolibarrInvoiceRequest): Promise<{ id: number; ref: string }> {
-    this.garde()
-    if (this.thirdparties.find((t) => t.id === req.socid) === undefined) {
-      throw new DolibarrRequestError(`Bad value for socid : tiers ${req.socid} inconnu.`)
-    }
-    for (const l of req.lines) {
-      if (l.label.trim() === '') {
-        throw new DolibarrRequestError('Dolibarr refuse une ligne de facture sans libellé.')
-      }
-      // Centièmes de jour et centimes d'euro sont des entiers par construction
-      // (contrainte du projet). Une fraction ici signale une conversion faite
-      // deux fois, ou pas du tout.
-      if (!Number.isInteger(l.qteCentiemes) || !Number.isInteger(l.subpriceCents)) {
-        throw new DolibarrRequestError(
-          `Ligne « ${l.label} » : quantité et prix unitaire doivent être des entiers ` +
-            `(centièmes de jour, centimes d'euro).`,
-        )
-      }
-    }
-
-    const id = this.next()
-    this.invoices.push({
-      id,
-      ref: `(PROV${id})`,
-      socid: req.socid,
-      status: 0,
-      lines: req.lines.map((l) => ({
-        label: l.label,
-        qty: l.qteCentiemes / 100,
-        subprice: l.subpriceCents / 100,
-      })),
-    })
-    return { id, ref: `(PROV${id})` }
   }
 
   async getSetupValue(constant: string): Promise<string | null> {

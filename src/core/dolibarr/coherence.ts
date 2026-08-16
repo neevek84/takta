@@ -1,9 +1,10 @@
 /**
  * Le danger fermé ici : rien n'empêchait de rattacher un projet Dolibarr du
- * tiers A à une mission d'un client B. Les temps seraient quand même partis
- * — et la demande de facture avec eux, chez le mauvais client. `socid` porte
- * l'identifiant du tiers auquel Dolibarr rattache le projet ; c'est ce
- * qu'on compare au tiers déjà rattaché au client de la mission.
+ * tiers A à une mission d'un client B. Les temps seraient quand même partis,
+ * chez le mauvais client — et c'est sur eux que la facturation se fait dans
+ * Dolibarr. `socid` porte l'identifiant du tiers auquel Dolibarr rattache le
+ * projet ; c'est ce qu'on compare au tiers déjà rattaché au client de la
+ * mission.
  *
  * Pur : aucune base, aucun réseau. L'appelant (`services/dolibarr/import.ts`)
  * résout les deux identifiants et les libellés avant d'appeler cette
@@ -42,7 +43,7 @@ export function verifierCoherenceTiers(args: {
     throw new Error(
       `Le projet « ${args.projectRef} » appartient au tiers Dolibarr n° ${args.projectSocid}, ` +
         `mais « ${args.clientLabel} » est rattaché au tiers Dolibarr n° ${args.expectedThirdpartyId}. ` +
-        `Rattachement refusé : la demande de facture partirait chez le mauvais client.`,
+        `Rattachement refusé : les temps partiraient chez le mauvais client.`,
     )
   }
 }

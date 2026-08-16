@@ -155,36 +155,6 @@ describe('client HTTP Dolibarr', () => {
     await expect(api.listProjects()).rejects.toThrow(DolibarrUnavailableError)
   })
 
-  it('convertit les centièmes en quantité de jours et les centimes en euros', async () => {
-    let corps: Record<string, unknown> = {}
-    const api = createHttpDolibarrApi({
-      baseUrl: BASE,
-      apiKey: 'k',
-      fetchImpl: async (_input, init) => {
-        if (typeof init?.body === 'string' && init.body.includes('socid')) {
-          corps = JSON.parse(init.body) as Record<string, unknown>
-          return reponse(12)
-        }
-        return reponse({ id: 12, ref: 'PROV-12' })
-      },
-    })
-
-    const facture = await api.createDraftInvoice({
-      socid: 3,
-      lines: [{ label: 'Développement', qteCentiemes: 2000, subpriceCents: 80_000 }],
-    })
-
-    expect(corps.socid).toBe(3)
-    // Brouillon, jamais validée : c'est Dolibarr qui numérote.
-    expect(corps.status).toBe(0)
-    const lignes = corps.lines as Array<Record<string, unknown>>
-    expect(lignes[0]!.qty).toBe(20)
-    expect(lignes[0]!.subprice).toBe(800)
-    // Aucune TVA choisie par l'application.
-    expect(Object.keys(lignes[0]!)).not.toContain('tva_tx')
-    // La référence vient de Dolibarr, jamais de l'application.
-    expect(facture).toEqual({ id: 12, ref: 'PROV-12' })
-  })
 })
 
 // ---------------------------------------------------------------------------

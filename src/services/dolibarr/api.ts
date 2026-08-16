@@ -48,18 +48,17 @@ export interface DolibarrProposal {
   lines: DolibarrPropalLine[]
 }
 
-export interface DolibarrInvoiceRequest {
-  socid: number
-  lines: Array<{ label: string; qteCentiemes: number; subpriceCents: number }>
-}
-
 /**
  * Le port du connecteur. Tout ce que l'application sait faire avec Dolibarr
  * passe par là — ce qui rend le double suffisant pour tester le lot entier
  * sans jamais toucher une instance.
  *
- * Il ne porte aucune méthode de validation, d'émission ni d'envoi de facture :
- * Dolibarr facture, pas le CRA. L'application demande un brouillon, un point.
+ * Il ne porte **aucune** méthode de facturation — ni création, ni validation,
+ * ni émission, ni envoi. Dolibarr facture, pas le CRA : l'application pousse
+ * les temps consommés, et le porteur les facture depuis le projet Dolibarr,
+ * qui est le seul endroit où une ligne de temps passe de « Facturée : Non » à
+ * la référence de sa facture. Une facture créée d'ici serait parallèle à ce
+ * flux et laisserait les temps poussés refacturables sans que rien ne le dise.
  */
 export interface DolibarrApi {
   listThirdparties(): Promise<DolibarrThirdparty[]>
@@ -85,7 +84,6 @@ export interface DolibarrApi {
     note: string
   }): Promise<void>
   deleteTimeSpent(args: { taskId: number; timespentId: number }): Promise<void>
-  createDraftInvoice(req: DolibarrInvoiceRequest): Promise<{ id: number; ref: string }>
   getSetupValue(constant: string): Promise<string | null>
 }
 

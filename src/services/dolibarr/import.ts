@@ -196,8 +196,8 @@ async function tiersAttendu(clientId: string): Promise<number | null> {
  *
  * Refuse si le tiers du projet (`projectSocid`) ne correspond pas au tiers
  * déjà rattaché au client de la mission : rien n'empêcherait sinon de
- * rattacher le projet du tiers A à une mission du client B, et la demande de
- * facture partirait chez le mauvais client une fois les temps poussés.
+ * rattacher le projet du tiers A à une mission du client B, et les temps
+ * poussés atterriraient chez le mauvais client.
  */
 export async function attachMission(args: {
   userId: string

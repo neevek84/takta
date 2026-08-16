@@ -7,10 +7,9 @@ import { canTransition, type CraTransition } from '@/core/cra/state-machine'
 // La page est un composant serveur : elle appelle la session et les services
 // avant de rendre. On leur substitue des doubles, le sujet du test étant le
 // contrat de formulaire et le respect de la machine à états, pas la base.
-const { cras, missions, previewCraInvoice } = vi.hoisted(() => ({
+const { cras, missions } = vi.hoisted(() => ({
   cras: [] as unknown[],
   missions: [] as unknown[],
-  previewCraInvoice: vi.fn(),
 }))
 
 vi.mock('@/auth', () => ({
@@ -18,12 +17,10 @@ vi.mock('@/auth', () => ({
 }))
 vi.mock('@/services/cra', () => ({ listCras: async () => cras }))
 vi.mock('@/services/missions', () => ({ listMissionsForUser: async () => missions }))
-vi.mock('@/services/dolibarr/invoicing', () => ({ previewCraInvoice }))
 vi.mock('./actions', () => ({
   openCra: vi.fn(),
   moveCra: vi.fn(),
   saveTracking: vi.fn(),
-  demanderFacture: vi.fn(),
 }))
 
 // eslint-disable-next-line import/first -- `vi.mock` est hissé au-dessus des imports.
@@ -53,34 +50,17 @@ function unCra(status: CraStatus, id = 'cra-1'): Record<string, unknown> {
   }
 }
 
-/** Un brouillon tel que `previewCraInvoice` le rend : entiers partout. */
-const DRAFT = {
-  socid: 42,
-  month: '2026-03',
-  lines: [
-    { lineId: 'l1', label: 'Développement', qteCentiemes: 2000, tjmCents: 80_000, totalHtCents: 1_600_000 },
-  ],
-  totalHtCents: 1_600_000,
-}
-
 async function rendre(
   jeu: {
     cras?: unknown[]
     missions?: unknown[]
-    draft?: unknown
-    params?: { message?: string; tone?: string }
   } = {},
 ): Promise<ReturnType<typeof render>> {
   cras.length = 0
   cras.push(...(jeu.cras ?? []))
   missions.length = 0
   missions.push(...(jeu.missions ?? [{ id: 'm1', clientName: 'ACME', label: 'ITSM' }]))
-  previewCraInvoice.mockReset().mockResolvedValue(jeu.draft ?? null)
-  return render(
-    await CraPage({
-      searchParams: Promise.resolve({ month: '2026-03', ...(jeu.params ?? {}) }),
-    }),
-  )
+  return render(await CraPage({ searchParams: Promise.resolve({ month: '2026-03' }) }))
 }
 
 describe('page CRA', () => {
@@ -163,86 +143,12 @@ describe('page CRA', () => {
     }
   })
 
-  describe('proposition de facture', () => {
-    const BOUTON = 'Demander la facture à Dolibarr (brouillon)'
-
-    it('propose la facture d un CRA validé, et dit ce qui serait demandé', async () => {
-      await rendre({ cras: [unCra('VALIDE')], draft: DRAFT })
-
-      expect(previewCraInvoice).toHaveBeenCalledWith({ userId: 'u1', craId: 'cra-1' })
-      expect(screen.getByRole('button', { name: BOUTON })).toBeTruthy()
-      // Câblée sur un tableau vide, la section annoncerait un total sans dire
-      // sur quoi il porte.
-      expect(screen.getByText(/Développement/)).toBeTruthy()
-      expect(screen.getByText(/20,00 jour/)).toBeTruthy()
-      expect(screen.getByText(/16 000,00/)).toBeTruthy()
-    })
-
-    it('ne propose rien quand le service n a rien à proposer', async () => {
-      // Dolibarr non connecté, client sans tiers, mois sans réalisé : la page
-      // ne distingue pas, elle n'affiche simplement pas de bouton.
-      await rendre({ cras: [unCra('VALIDE')], draft: null })
-      expect(screen.queryByRole('button', { name: BOUTON })).toBeNull()
-    })
-
-    for (const status of STATUTS.filter((s) => s !== 'VALIDE')) {
-      it(`ne demande même pas de proposition depuis ${status}`, async () => {
-        await rendre({ cras: [unCra(status)], draft: DRAFT })
-        expect(previewCraInvoice).not.toHaveBeenCalled()
-        expect(screen.queryByRole('button', { name: BOUTON })).toBeNull()
-      })
-    }
-
-    it('porte le CRA et le mois affiché sur la demande', async () => {
-      const { container } = await rendre({ cras: [unCra('VALIDE', 'cra-42')], draft: DRAFT })
-      const formulaire = screen
-        .getByRole('button', { name: BOUTON })
-        .closest('form') as HTMLFormElement
-      expect(container.contains(formulaire)).toBe(true)
-
-      const champ = (nom: string) =>
-        (formulaire.querySelector(`input[name="${nom}"]`) as HTMLInputElement | null)?.value
-      expect(champ('craId')).toBe('cra-42')
-      // Sans le mois, répondre ramènerait l'utilisateur sur le mois courant.
-      expect(champ('month')).toBe('2026-03')
-    })
-
-    it('rappelle que Dolibarr facture, pas l application', async () => {
-      await rendre({ cras: [unCra('VALIDE')], draft: DRAFT })
-      expect(screen.getByText(/ne numérote rien/)).toBeTruthy()
-      expect(screen.getByText(/aucune conséquence/)).toBeTruthy()
-    })
-  })
-
-  describe('message de retour', () => {
-    it('rend un refus comme un refus, glyphe compris', async () => {
-      await rendre({ params: { message: 'Dolibarr a refusé la demande.', tone: 'danger' } })
-
-      const bandeau = screen.getByRole('alert')
-      expect(bandeau.textContent).toContain('Dolibarr a refusé la demande.')
-      // Le ton ne peut pas tenir à la seule teinte : le glyphe le porte aussi,
-      // et « ✓ » sur un refus contredirait le texte qu'il accompagne.
-      expect(bandeau.querySelector('[aria-hidden="true"]')!.textContent).toBe('✕')
-    })
-
-    it('rend un succès comme un succès', async () => {
-      await rendre({ params: { message: 'Brouillon (PROV12) créé.', tone: 'success' } })
-      const bandeau = screen.getByRole('status')
-      expect(bandeau.textContent).toContain('Brouillon (PROV12) créé.')
-      expect(bandeau.querySelector('[aria-hidden="true"]')!.textContent).toBe('✓')
-    })
-
-    it('n invente pas de tonalité à partir d une valeur forgée', async () => {
-      await rendre({ params: { message: 'Message.', tone: 'succès-déguisé' } })
-      const bandeau = screen.getByRole('status')
-      expect(bandeau.querySelector('[aria-hidden="true"]')!.textContent).toBe('ℹ')
-    })
-
-    it('n affiche aucun bandeau sans message', async () => {
-      await rendre()
-      expect(screen.queryByRole('alert')).toBeNull()
-      expect(screen.queryByRole('status')).toBeNull()
-    })
+  // L'application ne demande aucune facture : elle pousse les temps, et la
+  // facturation se fait dans Dolibarr, sur ses propres écrans. L'écran ne doit
+  // donc offrir aucun bouton qui prétendrait la déclencher d'ici.
+  it('ne propose jamais de demander une facture, même sur un CRA validé', async () => {
+    await rendre({ cras: [unCra('VALIDE')] })
+    expect(screen.queryByRole('button', { name: /facture/i })).toBeNull()
   })
 
   it('donne au statut un glyphe en plus de sa teinte', async () => {

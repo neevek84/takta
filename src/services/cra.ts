@@ -80,8 +80,11 @@ export async function getOrCreateCra(
  * empêcher de valider un CRA. Le drainage, lui, tourne plus tard et rejouera.
  *
  * **Et la facture ?** Elle n'est pas ici, et elle ne sera jamais calculée ici :
- * Dolibarr facture, pas le CRA. La demande de brouillon de facture est une
- * mise en file distincte (tâche 12), pas un effet de bord de celle-ci.
+ * Dolibarr facture, pas le CRA. L'application ne demande aucune facture — elle
+ * pousse les temps consommés, et le porteur les facture depuis le projet
+ * Dolibarr, là où chaque ligne de temps passe de « Facturée : Non » à la
+ * référence de sa facture. Les champs `invoiceNumber`, `invoicedAt` et `paidAt`
+ * du CRA sont un suivi saisi à la main, pas le produit d'un calcul.
  */
 export async function transitionCra(
   userId: string,

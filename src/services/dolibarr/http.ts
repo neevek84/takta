@@ -2,7 +2,6 @@ import {
   DolibarrRequestError,
   DolibarrUnavailableError,
   type DolibarrApi,
-  type DolibarrInvoiceRequest,
   type DolibarrProject,
   type DolibarrProposal,
   type DolibarrTask,
@@ -225,27 +224,6 @@ export function createHttpDolibarrApi(args: {
         method: 'DELETE',
         statutsToleres: [404],
       })
-    },
-
-    async createDraftInvoice(req: DolibarrInvoiceRequest): Promise<{ id: number; ref: string }> {
-      // `status: 0` = brouillon. L'application ne valide jamais : une facture
-      // validée est numérotée et immuable (spec §8 bis). Aucun taux de TVA
-      // n'est transmis — Dolibarr applique le sien.
-      const id = (await appel(ctx, '/invoices', {
-        method: 'POST',
-        body: JSON.stringify({
-          socid: req.socid,
-          status: 0,
-          lines: req.lines.map((l) => ({
-            desc: l.label,
-            qty: l.qteCentiemes / 100,
-            subprice: l.subpriceCents / 100,
-          })),
-        }),
-      })) as number
-
-      const facture = (await appel(ctx, `/invoices/${Number(id)}`)) as Record<string, unknown>
-      return { id: Number(id), ref: String(facture.ref ?? '') }
     },
 
     async getSetupValue(constant: string): Promise<string | null> {

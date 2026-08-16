@@ -14,7 +14,7 @@ describe('verifierCoherenceTiers', () => {
   })
 
   it('refuse de rattacher le projet du tiers A à une mission du client B', () => {
-    // Le scénario du mauvais client : la facture partirait chez « ACME »
+    // Le scénario du mauvais client : les temps partiraient chez « ACME »
     // alors que le projet appartient au tiers 5, pas au tiers 7 auquel ACME
     // est rattaché.
     expect(() =>
