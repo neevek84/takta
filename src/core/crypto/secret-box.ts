@@ -24,6 +24,23 @@ function assertKey(key: Buffer): void {
 export function parseKey(base64: string): Buffer {
   const key = Buffer.from(base64, 'base64')
   assertKey(key)
+
+  // `Buffer.from(…, 'base64')` ignore silencieusement tout caractère hors
+  // alphabet : « motdepasse treslong quiressemble aunecle AAAAAA » décode à
+  // exactement 32 octets et passerait donc pour une clé, sans en avoir
+  // l'entropie. Ré-encoder démasque ces chaînes-là, les caractères ignorés ne
+  // ressortant pas.
+  //
+  // La limite, assumée : une chaîne lisible composée uniquement de l'alphabet
+  // base64 EST du base64 valide, et rien de syntaxique ne la distingue d'une
+  // clé. D'où la commande de génération donnée dans le message.
+  if (key.toString('base64').replace(/=+$/, '') !== base64.trim().replace(/=+$/, '')) {
+    throw new Error(
+      "CREDENTIALS_KEY n'est pas une clé base64 valide de 32 octets. " +
+        'Générez-en une avec : openssl rand -base64 32',
+    )
+  }
+
   return key
 }
 

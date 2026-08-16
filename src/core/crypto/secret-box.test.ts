@@ -74,4 +74,25 @@ describe('secret-box', () => {
     const key = randomBytes(32)
     expect(parseKey(key.toString('base64')).equals(key)).toBe(true)
   })
+
+  // `Buffer.from(…, 'base64')` ignore silencieusement les caractères hors
+  // alphabet : cette phrase décode à exactement 32 octets et passait donc pour
+  // une clé, avec l'entropie de quelques mots plutôt que celle d'un tirage
+  // aléatoire. Le ré-encodage la démasque, puisque les espaces n'en ressortent
+  // pas.
+  //
+  // Ce que ce contrôle NE fait PAS : une chaîne lisible composée uniquement de
+  // l'alphabet base64 est du base64 valide, et rien de syntaxique ne la
+  // distingue d'une clé. Seule la manière de la produire l'en distingue — d'où
+  // la commande donnée dans le message d'erreur.
+  it('refuse une phrase de passe qui décode fortuitement à 32 octets', () => {
+    const phrase = 'motdepasse treslong quiressemble aunecle AAAAAA'
+    expect(Buffer.from(phrase, 'base64')).toHaveLength(32)
+    expect(() => parseKey(phrase)).toThrow(/base64/)
+  })
+
+  it('accepte une clé bien encodée avec ou sans espaces autour', () => {
+    const key = randomBytes(32)
+    expect(parseKey(`  ${key.toString('base64')}  `).equals(key)).toBe(true)
+  })
 })
