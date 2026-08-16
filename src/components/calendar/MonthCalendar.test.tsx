@@ -4,8 +4,16 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react'
 import { MonthCalendar } from './MonthCalendar'
-import { colorForLine } from '@/core/saisie/colors'
-import { TEXT_PAIRS, THEME_TOKEN_KEYS, type ThemeTokens } from '@/core/theme/tokens'
+import { colorForLine, LINE_COLORS } from '@/core/saisie/colors'
+import {
+  lightness,
+  MIN_LIGHTNESS_GAP,
+  TEXT_PAIRS,
+  THEME_PRESETS,
+  THEME_TOKEN_KEYS,
+  type ThemeTokens,
+} from '@/core/theme/tokens'
+import { AA_TEXT_RATIO, contrastRatio } from '@/core/theme/contrast'
 import { buildMonthDays } from '@/core/month/build'
 import { DEFAULT_SLOTS } from '@/services/settings'
 import type { LineForGrid } from '@/services/missions'
@@ -1740,5 +1748,222 @@ describe('MonthCalendar — la plage plutôt que la case', () => {
     renderCalendar({ entries: [journeeLe('2026-03-10', 'b')] })
     const aplat = classes(screen.getByTestId('remplissage-2026-03-10'))
     expect(aplat.filter((c) => /^-m/.test(c))).toEqual([])
+  })
+})
+
+/**
+ * Le marqueur d'une journée éclatée — une journée saisie en plusieurs créneaux.
+ *
+ * C'est un avertissement, et il doit se voir sur **n'importe quel** fond de
+ * case : `surface`, `off`, `off-strong`, l'aplat de saisie, l'aplat du
+ * prévisionnel et les six aplats catégoriels, dans les cinq préréglages.
+ *
+ * Le liseré `inset-ring-warning-edge` ne le pouvait pas. Mesuré entre
+ * `warningEdge` et `prevu` : ΔL\* = 1,63 en Encre clair — le préréglage par
+ * défaut — contre 3,46 en Neutre clair et 4,90 en KreativPM. Le projet
+ * s'impose `MIN_LIGHTNESS_GAP` = 4 pour qu'un état se lise **sans distinguer
+ * les teintes** ; ce marqueur était à moins de la moitié sur le thème que tout
+ * le monde verra. Aucune valeur de bordure ne pouvait le sauver : elle doit
+ * tenir contre onze fonds inconnus d'avance, dont un ambre et six teintes
+ * catégorielles, et une teinte seule n'y arrive pas — c'est la leçon du lot 1f,
+ * qui a remplacé les hachures du prévisionnel par une horloge.
+ *
+ * Le liseré reste, comme renfort là où il se voit. Ce qui **porte**
+ * l'information est désormais un tracé : un coin plein, peint de l'encre de la
+ * case et non d'un jeton à lui. Il change donc de couleur avec le fond au lieu
+ * de le subir, et cette encre-là est déjà tenue à 4,5:1 sur les onze fonds par
+ * `TEXT_PAIRS` — c'est elle qui écrit le chiffre du jour.
+ */
+describe('MonthCalendar — le marqueur d une journée éclatée', () => {
+  afterEach(cleanup)
+
+  /** Deux créneaux le même jour : la définition même d'une journée éclatée. */
+  function eclateeLe(date: string, prefixe: string, over: Partial<MonthEntry> = {}): MonthEntry[] {
+    return [
+      entree({ id: `${prefixe}1`, date, minutes: 120, startMinute: 540, endMinute: 660, ...over }),
+      entree({ id: `${prefixe}2`, date, minutes: 120, startMinute: 840, endMinute: 960, ...over }),
+    ]
+  }
+
+  function marqueurDu(date: string): SVGElement | null {
+    return screen.queryByTestId(`eclatement-${date}`) as SVGElement | null
+  }
+
+  /**
+   * La signature du dessin : ce qui doit rester identique d'un fond à l'autre.
+   * Le `data-testid` en est exclu — il porte la date, qui change d'un cas au
+   * suivant et masquerait un tracé qui, lui, aurait bougé.
+   */
+  function traceDu(date: string): string {
+    const marqueur = marqueurDu(date)
+    expect(marqueur, `aucun marqueur d’éclatement sur ${date}`).not.toBeNull()
+    const chemin = marqueur!.querySelector('path')
+    expect(chemin, `le marqueur du ${date} ne dessine aucun tracé`).not.toBeNull()
+    return [
+      marqueur!.getAttribute('width'),
+      marqueur!.getAttribute('height'),
+      marqueur!.getAttribute('viewBox'),
+      chemin!.getAttribute('d'),
+      chemin!.getAttribute('fill'),
+    ].join(' ')
+  }
+
+  /** La classe de fond de l'aplat, celle qui change de teinte selon la portée. */
+  function fondDeLAplat(date: string): string | undefined {
+    return classes(screen.getByTestId(`remplissage-${date}`)).find((c) => c.startsWith('bg-'))
+  }
+
+  /** L'encre posée sur la case elle-même, isolée des autres classes. */
+  function encreDeLaCase(date: string): string | undefined {
+    return classes(caseDu(date)).find((c) => c.startsWith('text-') && c !== 'text-sm')
+  }
+
+  const JETON_PAR_CLASSE = new Map<string, keyof ThemeTokens>(
+    THEME_TOKEN_KEYS.flatMap((k) => {
+      const classe = k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
+      return [
+        [`bg-${classe}`, k],
+        [`text-${classe}`, k],
+      ] as [string, keyof ThemeTokens][]
+    }),
+  )
+
+  function jetonDe(classe: string | undefined): keyof ThemeTokens {
+    expect(classe, 'aucune classe de jeton lue sur la case').toBeDefined()
+    const jeton = JETON_PAR_CLASSE.get(classe!)
+    expect(jeton, `${classe} n’est pas un jeton du thème`).toBeDefined()
+    return jeton!
+  }
+
+  /**
+   * Les cas qui font varier la teinte sous le marqueur, et rien d'autre.
+   * Le 1er mars 2026 est un dimanche, le 2 est le férié du mois de test.
+   */
+  const CAS: { nom: string; date: string; props: Parameters<typeof renderCalendar>[0] }[] = [
+    {
+      nom: 'un jour ouvré, portée « Cette prestation »',
+      date: '2026-03-10',
+      props: { entries: eclateeLe('2026-03-10', 'a'), toutLeMois: false },
+    },
+    {
+      nom: 'un jour ouvré, portée « Toutes les prestations »',
+      date: '2026-03-10',
+      props: { entries: eclateeLe('2026-03-10', 'b'), toutLeMois: true },
+    },
+    {
+      nom: 'un jour prévisionnel, qui prend sa propre teinte',
+      date: '2026-03-10',
+      props: { entries: eclateeLe('2026-03-10', 'c', { kind: 'PREVISIONNEL' }) },
+    },
+    {
+      nom: 'un dimanche',
+      date: '2026-03-01',
+      props: { entries: eclateeLe('2026-03-01', 'd') },
+    },
+    {
+      nom: 'un jour férié',
+      date: '2026-03-02',
+      props: { entries: eclateeLe('2026-03-02', 'e') },
+    },
+  ]
+
+  it('dessine un tracé sur la journée éclatée, et sur elle seule', () => {
+    renderCalendar({
+      entries: [
+        ...eclateeLe('2026-03-10', 'a'),
+        entree({ id: 'seul', date: '2026-03-11', minutes: 240, startMinute: 540, endMinute: 780 }),
+        entree({ id: 'plein', date: '2026-03-12', minutes: 480, slotId: '' }),
+      ],
+    })
+
+    const marqueur = marqueurDu('2026-03-10')
+    expect(marqueur).not.toBeNull()
+    expect(marqueur!.tagName.toLowerCase()).toBe('svg')
+    expect(marqueur!.querySelector('path')).not.toBeNull()
+
+    // Un seul créneau, une journée entière : rien à signaler.
+    expect(marqueurDu('2026-03-11')).toBeNull()
+    expect(marqueurDu('2026-03-12')).toBeNull()
+    expect(marqueurDu('2026-03-13')).toBeNull()
+  })
+
+  it('pose le tracé hors du flux : il ne coûte rien au budget des sept colonnes', () => {
+    // À 375 points la colonne vaut 45,0 pour une cible de 44. La ligne du
+    // numéro du jour porte déjà le losange d'occupation et l'horloge du
+    // prévisionnel ; un troisième glyphe dans ce flux ferait tomber le test de
+    // budget. Le coin est posé en absolu dans la case, comme l'aplat.
+    renderCalendar({ entries: eclateeLe('2026-03-10', 'a') })
+    const marqueur = marqueurDu('2026-03-10')!
+    expect(classes(marqueur)).toContain('absolute')
+    expect(marqueur.parentElement).toBe(caseDu('2026-03-10'))
+  })
+
+  it('garde exactement le même tracé quand la teinte de la case change', () => {
+    // Le cœur du correctif : ce n'est pas un rapport de clarté contre un fond
+    // inconnu qui porte l'avertissement, c'est une forme. Elle doit donc
+    // survivre au changement de teinte — et les teintes doivent bien changer,
+    // sans quoi ce test ne mesurerait rien.
+    const traces = new Set<string>()
+    const fonds = new Set<string>()
+
+    for (const cas of CAS) {
+      renderCalendar(cas.props)
+      traces.add(traceDu(cas.date))
+      const fond = fondDeLAplat(cas.date)
+      expect(fond, `aucun aplat sous ${cas.nom}`).toBeDefined()
+      fonds.add(`${fond} sur ${encreDeLaCase(cas.date)}`)
+      cleanup()
+    }
+
+    expect(fonds.size, 'les cas balayés ne font pas varier la teinte').toBeGreaterThan(1)
+    expect([...traces], 'le tracé change avec la teinte').toHaveLength(1)
+  })
+
+  it('ne déclare aucune teinte à lui : il prend l encre de la case', () => {
+    renderCalendar({ entries: eclateeLe('2026-03-10', 'a') })
+    const marqueur = marqueurDu('2026-03-10')!
+
+    // `currentColor` et non un jeton : un marqueur qui porterait sa propre
+    // couleur retomberait dans le défaut qu'il corrige — une teinte figée
+    // confrontée à onze fonds dont elle ne sait rien.
+    expect(marqueur.querySelector('path')!.getAttribute('fill')).toBe('currentColor')
+    expect(classes(marqueur).filter((c) => /^(text|fill|stroke)-/.test(c))).toEqual([])
+  })
+
+  it('tient le plancher de clarté sur les onze fonds, dans les cinq préréglages', () => {
+    // La mesure, pas l'affirmation. L'encre est lue sur la case rendue, les
+    // fonds sont lus sur le DOM pour les trois états de jour et sur
+    // `colors.ts` pour les huit aplats — jamais recopiés à la main.
+    renderCalendar({ entries: eclateeLe('2026-03-10', 'a') })
+    const encre = jetonDe(encreDeLaCase('2026-03-10'))
+    cleanup()
+
+    const fonds = new Set<keyof ThemeTokens>()
+    for (const cas of CAS) {
+      renderCalendar(cas.props)
+      fonds.add(jetonDe(classes(caseDu(cas.date)).find((c) => c.startsWith('bg-'))))
+      fonds.add(jetonDe(fondDeLAplat(cas.date)))
+      cleanup()
+    }
+    // Les six teintes catégorielles : une seule sort du hachage à l'écran,
+    // mais l'aplat peut prendre n'importe laquelle des six.
+    for (const couleur of LINE_COLORS) fonds.add(jetonDe(couleur.bg))
+
+    // surface, off, offStrong, saisie, prevu et les six catégorielles.
+    expect(fonds.size).toBe(11)
+
+    for (const preset of THEME_PRESETS) {
+      for (const fond of fonds) {
+        const ecart = Math.abs(lightness(preset.tokens[encre]) - lightness(preset.tokens[fond]))
+        expect(
+          ecart,
+          `${preset.label} : ${encre} sur ${fond} n’écarte que ${ecart.toFixed(2)} de L*`,
+        ).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP)
+        expect(
+          contrastRatio(preset.tokens[encre], preset.tokens[fond]),
+          `${preset.label} : ${encre} sur ${fond}`,
+        ).toBeGreaterThanOrEqual(AA_TEXT_RATIO)
+      }
+    }
   })
 })

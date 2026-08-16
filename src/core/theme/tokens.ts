@@ -880,11 +880,14 @@ export function chroma(hex: string): number {
  * palette livrée ci-dessous tient 24,11 au pire couple, largement au-dessus.
  *
  * Le chiffre est **mesuré**, sur toutes les `DISTINCTION_PAIRS` des cinq
- * préréglages : 24,11 est `catA`/`catF` sur les versants sombres, qui
- * partagent `CATEGORIES_SOMBRE`. Le 20,97 qu'annonçait ce commentaire datait
- * du lot 1f — c'était l'écart de la palette chaude du lot 1e, et il a survécu
- * au remplacement complet de la palette. `tokens.test.ts` confronte désormais
- * ce nombre-ci au calcul : il ne peut plus se périmer en silence.
+ * préréglages, et il n'est annoncé qu'**une fois** ci-dessus : une seconde
+ * copie se périmerait sans que le garde-fou la voie, ce qui est exactement ce
+ * qui est arrivé. Le pire couple est `catA`/`catF` sur les deux versants
+ * sombres, qui partagent `CATEGORIES_SOMBRE`. Le 20,97 qu'annonçait ce
+ * commentaire datait du lot 1f — c'était l'écart de la palette chaude du lot
+ * 1e, et il a survécu au remplacement complet de la palette. `tokens.test.ts`
+ * confronte désormais ce nombre-ci au calcul, et refuse tout autre décimal
+ * dans ce commentaire : il ne peut plus se périmer en silence.
  */
 export const MIN_CATEGORY_DISTANCE = 15
 

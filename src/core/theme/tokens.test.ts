@@ -525,20 +525,33 @@ describe('distinction de la palette catégorielle', () => {
    * calcul : la prochaine palette fera tomber l'un ou l'autre.
    */
   describe('le commentaire de MIN_CATEGORY_DISTANCE dit la mesure', () => {
-    /** Le pire couple, toutes paires dérivées et tous préréglages confondus. */
-    function pireCouple(): { distance: number; ou: string } {
-      let distance = Infinity
-      let ou = ''
+    /**
+     * Le pire couple, toutes paires dérivées et tous préréglages confondus —
+     * et **tous** ceux qui atteignent ce minimum, jamais le premier rencontré.
+     *
+     * Le minimum est atteint deux fois : `ENCRE_SOMBRE` et `SOMBRE` partagent
+     * `CATEGORIES_SOMBRE` et mesurent donc exactement la même distance. Nommer
+     * « le » pire couple revenait alors à nommer celui que l'ordre de
+     * `THEME_PRESETS` place en premier : réordonner les préréglages faisait
+     * tomber le test sans qu'aucune couleur ait bougé, et le test annonçait
+     * une mesure en vérifiant un ordre de déclaration.
+     */
+    function pireCouple(): { distance: number; ou: string[] } {
+      const mesures: { d: number; ou: string }[] = []
       for (const preset of THEME_PRESETS) {
         for (const { a, b } of DISTINCTION_PAIRS) {
-          const d = colorDistance(preset.tokens[a], preset.tokens[b])
-          if (d < distance) {
-            distance = d
-            ou = `${preset.id} ${a}/${b}`
-          }
+          mesures.push({
+            d: colorDistance(preset.tokens[a], preset.tokens[b]),
+            ou: `${preset.id} ${a}/${b}`,
+          })
         }
       }
-      return { distance, ou }
+      const distance = Math.min(...mesures.map((m) => m.d))
+      // À l'epsilon près : deux palettes qui partagent leurs teintes donnent le
+      // même flottant, mais une égalité stricte ferait dépendre le résultat du
+      // dernier bit d'un calcul en virgule flottante.
+      const ou = mesures.filter((m) => m.d - distance < 1e-9).map((m) => m.ou)
+      return { distance, ou: [...ou].sort() }
     }
 
     /**
@@ -552,16 +565,49 @@ describe('distinction de la palette catégorielle', () => {
     it('mesure 24,11 au pire couple, sur les versants sombres', () => {
       const { distance, ou } = pireCouple()
       expect(auCentieme(distance)).toBe('24,11')
-      // Nommé : une valeur juste sur le mauvais couple ne dirait rien.
-      expect(ou).toBe('ENCRE_SOMBRE catA/catF')
+      // Nommés, et tous : une valeur juste sur le mauvais couple ne dirait
+      // rien, et n'en nommer qu'un parmi deux ex æquo ne mesurerait que
+      // l'ordre de `THEME_PRESETS`. Trié, donc insensible à cet ordre.
+      expect(ou).toEqual(['ENCRE_SOMBRE catA/catF', 'SOMBRE catA/catF'])
       expect(distance).toBeGreaterThanOrEqual(MIN_CATEGORY_DISTANCE)
     })
 
-    it('annonce dans la source exactement ce chiffre-là', () => {
+    /**
+     * Le commentaire de `MIN_CATEGORY_DISTANCE` seul — du `/**` qui l'ouvre à
+     * la déclaration qu'il documente. Lire toute la source laisserait passer
+     * un chiffre écrit ailleurs dans le fichier, et surtout n'aurait aucun
+     * moyen de compter les occurrences *de ce commentaire-ci*.
+     */
+    function commentaireDuSeuil(): string {
       const source = readFileSync(join(process.cwd(), 'src/core/theme/tokens.ts'), 'utf8')
-      const annonce = /tient (\d+,\d+) au pire couple/.exec(source)
+      const fin = source.indexOf('export const MIN_CATEGORY_DISTANCE')
+      const debut = source.lastIndexOf('/**', fin)
+      return source.slice(debut, fin)
+    }
+
+    /**
+     * Les deux seuls nombres décimaux que ce commentaire porte sans prétendre
+     * mesurer la palette livrée : le seuil de perception de la colorimétrie,
+     * et la valeur périmée qu'il cite précisément comme périmée. Tout autre
+     * décimal y est une mesure de cette palette, et doit donc valoir la
+     * mesure — y compris s'il n'est qu'une seconde copie de la première.
+     */
+    const REPERES_CITES = ['2,3', '20,97']
+
+    it('annonce dans la source exactement ce chiffre-là, et une seule fois', () => {
+      const bloc = commentaireDuSeuil()
+      const mesure = auCentieme(pireCouple().distance)
+
+      const annonce = /tient (\d+,\d+) au pire couple/.exec(bloc)
       expect(annonce, 'le commentaire n’annonce plus de pire couple').not.toBeNull()
-      expect(annonce![1]).toBe(auCentieme(pireCouple().distance))
+      expect(annonce![1]).toBe(mesure)
+
+      // Toutes les occurrences, pas la première : le commentaire a annoncé le
+      // chiffre **deux fois** et cette regex n'en lisait qu'une — muter la
+      // seule seconde en 19,04 laissait les 105 tests verts. Un chiffre
+      // annoncé deux fois est un chiffre qui se périmera une fois.
+      const decimaux = bloc.match(/\d+,\d+/g) ?? []
+      expect(decimaux.filter((n) => !REPERES_CITES.includes(n))).toEqual([mesure])
     })
   })
 

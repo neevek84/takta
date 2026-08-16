@@ -950,10 +950,49 @@ describe('MonthGrid', () => {
       )
     }
 
-    /** La teinte de l'aplat et le tireté de la case, tels que la vue les rend. */
+    /**
+     * Le contour **tel qu'il est peint** : sa largeur, son style et sa teinte,
+     * chacun relevé sur les classes rendues.
+     *
+     * Un booléen `tirete` ne suffisait pas, et c'est ce que la contre-revue a
+     * démontré : `previsionnel && 'border-dashed border-danger-edge'` au
+     * calendrier laissait ce fichier entièrement vert. Le tireté était bien là
+     * — mais peint en rouille, c'est-à-dire dans la teinte que la loi du lot
+     * réserve au hors-engagement. Une divergence de teinte entre les deux vues
+     * passait sous le test.
+     */
+    interface Contour {
+      largeur: string | undefined
+      style: string | undefined
+      teinte: string | undefined
+    }
+
+    /** Les styles de bordure de Tailwind — tout le reste de `border-*` est une teinte. */
+    const STYLES_DE_BORD = new Set([
+      'border-solid',
+      'border-dashed',
+      'border-dotted',
+      'border-double',
+      'border-hidden',
+      'border-none',
+    ])
+
+    /** `border`, `border-2`, `border-0`, `border-x-2`… — jamais une teinte. */
+    const LARGEUR_DE_BORD = /^border(?:-[xytrbl])?(?:-\d+)?$/
+
+    function contourDe(classes: string[]): Contour {
+      const bords = classes.filter((c) => c === 'border' || c.startsWith('border-'))
+      return {
+        largeur: bords.find((c) => LARGEUR_DE_BORD.test(c)),
+        style: bords.find((c) => STYLES_DE_BORD.has(c)),
+        teinte: bords.find((c) => !LARGEUR_DE_BORD.test(c) && !STYLES_DE_BORD.has(c)),
+      }
+    }
+
+    /** La teinte de l'aplat et le contour de la case, tels que la vue les rend. */
     interface Rendu {
       teinte: string | undefined
-      tirete: boolean
+      contour: Contour
       hachure: boolean
     }
 
@@ -963,7 +1002,7 @@ describe('MonthGrid', () => {
       const laCase = classesDe(screen.getByTestId('case-2026-03-13'))
       const rendu = {
         teinte: aplat === null ? undefined : classesDe(aplat).find((c) => c.startsWith('bg-')),
-        tirete: laCase.includes('border-dashed'),
+        contour: contourDe(laCase),
         hachure: laCase.includes('pattern-hatch'),
       }
       cleanup()
@@ -976,7 +1015,7 @@ describe('MonthGrid', () => {
       const champ = classesDe(cell('Consultant ITSM', '2026-03-13'))
       const rendu = {
         teinte: aplat === null ? undefined : classesDe(aplat).find((c) => c.startsWith('bg-')),
-        tirete: champ.includes('border-dashed'),
+        contour: contourDe(champ),
         hachure: champ.includes('pattern-hatch'),
       }
       cleanup()
@@ -986,14 +1025,33 @@ describe('MonthGrid', () => {
     it('peint la même teinte et le même contour dans les deux vues', () => {
       const calendrier = auCalendrier([PREVU])
       const tableau = auTableau([PREVU])
+      // La même vue sur du réalisé : ce que son contour vaut quand il ne dit
+      // rien. Mesuré, jamais écrit en dur — le calendrier garde le filet de sa
+      // case, le tableau n'en a aucun.
+      const calendrierMuet = auCalendrier([REALISE])
+      const tableauMuet = auTableau([REALISE])
 
-      expect(tableau).toEqual(calendrier)
-      // Et ce que les deux vues peignent est bien la loi du lot : ambre et
-      // tireté, jamais la hachure — sans quoi elles pourraient être d'accord
-      // sur autre chose.
+      // L'aplat : la même teinte des deux côtés, et c'est l'ambre du lot.
+      expect(tableau.teinte).toBe(calendrier.teinte)
       expect(tableau.teinte).toBe(PREVU_COLOR.bg)
-      expect(tableau.tirete).toBe(true)
+
+      // Le contour : même largeur, même style, et c'est le tireté — jamais la
+      // hachure, que le lot 1f a retirée.
+      expect(tableau.contour.largeur).toBe(calendrier.contour.largeur)
+      expect(tableau.contour.style).toBe(calendrier.contour.style)
+      expect(tableau.contour.style).toBe('border-dashed')
       expect(tableau.hachure).toBe(false)
+      expect(calendrier.hachure).toBe(false)
+
+      // La teinte du contour, la partie que le booléen laissait passer. Chaque
+      // vue n'a que deux valeurs licites : le filet qu'elle pose déjà quand
+      // elle ne dit rien, ou la teinte propre du prévisionnel. Toute autre —
+      // `danger`, un état, une catégorielle — ferait porter au contour le sens
+      // d'un autre fait.
+      expect([calendrierMuet.contour.teinte, PREVU_COLOR.border]).toContain(
+        calendrier.contour.teinte,
+      )
+      expect([tableauMuet.contour.teinte, PREVU_COLOR.border]).toContain(tableau.contour.teinte)
     })
 
     it('laisse le réalisé à la teinte de sa prestation, des deux côtés', () => {
@@ -1003,11 +1061,13 @@ describe('MonthGrid', () => {
       // Le calendrier est en portée « Cette prestation » : sa teinte de réalisé
       // est `saisie`, celle du tableau est catégorielle — c'est voulu, le
       // tableau montre toutes les lignes. Ce qui doit coïncider, c'est
-      // l'**absence** d'ambre et de tireté.
+      // l'**absence** d'ambre, de tireté et de la teinte du prévisionnel.
       expect(tableau.teinte).not.toBe(PREVU_COLOR.bg)
       expect(calendrier.teinte).not.toBe(PREVU_COLOR.bg)
-      expect(tableau.tirete).toBe(false)
-      expect(calendrier.tirete).toBe(false)
+      expect(tableau.contour.style).toBeUndefined()
+      expect(calendrier.contour.style).toBeUndefined()
+      expect(tableau.contour.teinte).not.toBe(PREVU_COLOR.border)
+      expect(calendrier.contour.teinte).not.toBe(PREVU_COLOR.border)
     })
   })
 
