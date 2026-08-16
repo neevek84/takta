@@ -171,6 +171,49 @@ describe('MonthGrid', () => {
       expect(realise.className).not.toContain('pattern-hatch')
     })
 
+    // I3 — le calendrier et le tableau déduisaient le prévisionnel de deux
+    // façons opposées. La règle unique vit maintenant dans
+    // `core/saisie/kind.ts` : le prévisionnel l'emporte, des deux côtés.
+    it('lit une journée mêlant réalisé et prévisionnel comme prévisionnelle', () => {
+      renderGrid({
+        entries: [
+          { id: 'm', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'REALISE', slotId: 'matin', minutesParJour: 480 },
+          { id: 'a', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', minutesParJour: 480 },
+        ],
+      })
+
+      const mixte = cell('Consultant ITSM', '2026-03-17')
+      expect(mixte.getAttribute('data-saisie')).toBe('previsionnel')
+      expect(mixte.className).toContain('pattern-hatch')
+    })
+
+    it('ne dépend pas de l ordre des saisies pour lire une journée mixte', () => {
+      renderGrid({
+        entries: [
+          { id: 'a', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'REALISE', slotId: 'matin', minutesParJour: 480 },
+        ],
+      })
+
+      expect(cell('Consultant ITSM', '2026-03-17').getAttribute('data-saisie')).toBe('previsionnel')
+    })
+
+    // Chaque saisie porte le facteur figé à son écriture : convertir la somme
+    // des minutes avec le facteur de la ligne donnerait un autre nombre — et
+    // un autre nombre que celui du calendrier pour la même journée.
+    it('convertit chaque saisie sous son propre facteur, jamais la somme', () => {
+      renderGrid({
+        entries: [
+          { id: 'court', lineId: 'l1', date: '2026-03-18', minutes: 105, kind: 'REALISE', slotId: 'matin', minutesParJour: 420 },
+          { id: 'long', lineId: 'l1', date: '2026-03-18', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', minutesParJour: 480 },
+        ],
+      })
+
+      // 105/420 = 0,25 j et 240/480 = 0,50 j, soit 0,75 j.
+      // La somme convertie au facteur de la ligne donnerait 345/480 = 0,72 j.
+      expect(cell('Consultant ITSM', '2026-03-18').value).toBe('0,75')
+    })
+
     it('offre des cellules de 44 points', () => {
       renderGrid()
       expect(cell('Consultant ITSM', '2026-03-12').className).toContain('touch-target')

@@ -44,7 +44,11 @@ export async function fillMonth(args: {
   const vide: FillReport = { poses: 0, sautesCapacite: 0, dejaSaisis: 0, verrouille: false }
 
   // Le verrou se vérifie avant la boucle : le constater au troisième jour
-  // laisserait deux journées écrites sur un mois validé.
+  // laisserait deux journées écrites sur un mois validé. C'est aussi la
+  // seule vérification du verrou quand le mois n'a aucun jour ouvré réglé —
+  // la boucle ci-dessous ne s'exécute alors jamais, et ne pourrait pas le
+  // détecter à sa place (voir le test « signale le verrou même sur un mois
+  // sans aucun jour ouvré réglé »).
   if (await isMonthLocked(args.userId, args.lineId, args.month)) {
     return { ...vide, verrouille: true }
   }

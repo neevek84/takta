@@ -12,7 +12,7 @@ vi.mock('@/auth', () => ({
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 
 // eslint-disable-next-line import/first -- `vi.mock` est hissé au-dessus des imports.
-import { appliquerCase, remplirMois, validerJoursPasses, viderMois } from './actions'
+import { appliquerCase, remplirMois, saveCell, validerJoursPasses, viderMois } from './actions'
 import { updateSettings } from '@/services/settings'
 
 /** Mois précédent : ses jours sont échus quelle que soit la date d'exécution. */
@@ -157,6 +157,48 @@ describe('appliquerCase', () => {
       where: { userId: session.id, lineId: ligneVerrouillee, date: new Date(`${date}T00:00:00.000Z`) },
     })
     expect(ecrites).toBe(0)
+  })
+})
+
+/**
+ * C3 — `saveCell` est la porte de la vue tableau. Elle dérive le `kind` de la
+ * même horloge que `appliquerCase` : le réalisé est ce qui est attesté au
+ * client et facturé, et la conversion du prévisionnel échu en réalisé n'est
+ * jamais automatique dans ce produit. Un `kind` repris du client laisserait
+ * n'importe quel appelant authentifié marquer « réalisé » un jour à venir et
+ * court-circuiter `PastForecastNotice` / `validerJoursPasses`.
+ */
+describe('saveCell', () => {
+  async function kindsEcrits(lineId: string, date: string): Promise<string[]> {
+    const lignes = await prisma.timeEntry.findMany({
+      where: { userId: session.id, lineId, date: new Date(`${date}T00:00:00.000Z`) },
+      select: { kind: true },
+    })
+    return lignes.map((l) => l.kind)
+  }
+
+  it('écrit du réalisé sur un jour échu', async () => {
+    const date = `${month}-14`
+    const resultat = await saveCell({ lineId: ligneOuverte, date, raw: '1', month })
+    expect(resultat.ok).toBe(true)
+    expect(await kindsEcrits(ligneOuverte, date)).toEqual(['REALISE'])
+  })
+
+  it('écrit du prévisionnel sur un jour à venir même si le client réclame du réalisé', async () => {
+    const date = `${moisCase}-15`
+    // Un appelant forgé — `fetch` monté à la main, client modifié — peut
+    // poster ce qu'il veut : l'action ne lit pas ce champ.
+    const forge = { lineId: ligneOuverte, date, raw: '1', month: moisCase, kind: 'REALISE' }
+    const resultat = await saveCell(forge)
+    expect(resultat.ok).toBe(true)
+    expect(await kindsEcrits(ligneOuverte, date)).toEqual(['PREVISIONNEL'])
+  })
+
+  it('refuse un mois validé sans rien écrire', async () => {
+    const date = `${month}-16`
+    const resultat = await saveCell({ lineId: ligneVerrouillee, date, raw: '1', month })
+    expect(resultat).toEqual({ ok: false, reason: 'VERROUILLE' })
+    expect(await kindsEcrits(ligneVerrouillee, date)).toEqual([])
   })
 })
 

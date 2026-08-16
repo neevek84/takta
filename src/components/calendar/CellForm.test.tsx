@@ -24,11 +24,12 @@ function renderForm(
   onSubmit: ReturnType<typeof vi.fn>
   onDelete: ReturnType<typeof vi.fn>
   onCancel: ReturnType<typeof vi.fn>
+  unmount: () => void
 } {
   const onSubmit = vi.fn()
   const onDelete = vi.fn()
   const onCancel = vi.fn()
-  render(
+  const { unmount } = render(
     <CellForm
       date="2026-03-10"
       etat={{ kind: 'VIDE' }}
@@ -40,7 +41,7 @@ function renderForm(
       {...overrides}
     />,
   )
-  return { onSubmit, onDelete, onCancel }
+  return { onSubmit, onDelete, onCancel, unmount }
 }
 
 function duree(): HTMLInputElement {
@@ -167,5 +168,76 @@ describe('CellForm', () => {
     expect(onCancel).toHaveBeenCalledTimes(1)
     expect(onSubmit).not.toHaveBeenCalled()
     expect(onDelete).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * C2 — la boîte s'annonce comme une boîte de dialogue : elle doit donc se
+ * comporter comme telle. Un raccourci clavier (Maj+Entrée, touche Menu) a été
+ * ajouté pour ouvrir ce formulaire sans souris ; sans focus déplacé, sans
+ * piège de focus et sans Échap, ce raccourci ouvre un panneau que personne ne
+ * peut atteindre — la mesure de la revue : 21 tabulations à travers vingt
+ * cases du calendrier avant d'arriver au premier champ.
+ */
+describe('CellForm — boîte de dialogue au clavier', () => {
+  afterEach(cleanup)
+
+  it('se déclare boîte de dialogue modale', () => {
+    renderForm()
+    const boite = screen.getByRole('dialog')
+    expect(boite.getAttribute('aria-modal')).toBe('true')
+    expect(boite.getAttribute('aria-label')).toBe('Saisie libre du 2026-03-10')
+  })
+
+  it('porte le focus sur le champ de durée à l ouverture', () => {
+    renderForm()
+    expect(document.activeElement).toBe(duree())
+  })
+
+  it('ferme sur Échap sans rien enregistrer', () => {
+    const { onSubmit, onDelete, onCancel } = renderForm({ etat: { kind: 'JOURNEE' } })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
+  // Échap est écouté sur le document, pas sur le panneau : un `<div>` non
+  // focalisable cesserait de recevoir la touche dès que le focus le quitte.
+  it('ferme sur Échap frappé depuis un bouton de la boîte', () => {
+    const { onCancel } = renderForm()
+    const annuler = screen.getByRole('button', { name: 'Annuler' })
+    annuler.focus()
+    fireEvent.keyDown(annuler, { key: 'Escape' })
+    expect(onCancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('retient le focus dans la boîte au tabulateur', () => {
+    renderForm({ etat: { kind: 'JOURNEE' } })
+    const annuler = screen.getByRole('button', { name: 'Annuler' })
+
+    // Dernier élément focalisable : la tabulation suivante sortirait de la
+    // boîte, c'est-à-dire dans la grille du calendrier restée derrière.
+    annuler.focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(duree())
+
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(annuler)
+  })
+
+  it('rend le focus au déclencheur à la fermeture', () => {
+    // Tient lieu de case du calendrier : c'est elle qui avait le focus quand
+    // Maj+Entrée a ouvert la boîte, c'est à elle qu'il doit revenir.
+    const declencheur = document.createElement('button')
+    document.body.appendChild(declencheur)
+    declencheur.focus()
+
+    const { unmount } = renderForm()
+    expect(document.activeElement).toBe(duree())
+
+    unmount()
+    expect(document.activeElement).toBe(declencheur)
+    declencheur.remove()
   })
 })

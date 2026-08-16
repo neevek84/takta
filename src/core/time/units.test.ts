@@ -167,4 +167,13 @@ describe('parseQuantity', () => {
     expect(parseQuantity('abc', 'JOUR', J8)).toBeNull()
     expect(parseQuantity('-1', 'JOUR', J8)).toBeNull()
   })
+
+  // M3 — un nombre de minutes à deux chiffres n'est pas une base 100 : passé
+  // 59, "3h75" n'est pas 3 h 75 min mais une saisie malformée. Sans cette
+  // garde, elle serait acceptée comme 3*60+75 = 255 minutes.
+  it('refuse un nombre de minutes supérieur à 59 dans un format horaire', () => {
+    expect(parseQuantity('3h75', 'HEURE', J8)).toBeNull()
+    expect(parseQuantity('3h60', 'HEURE', J8)).toBeNull()
+    expect(parseQuantity('3h59', 'HEURE', J8)).toBe(3 * 60 + 59)
+  })
 })

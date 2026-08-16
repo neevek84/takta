@@ -9,18 +9,29 @@ import { parseQuantity } from '@/core/time/units'
 import { listActiveLines } from '@/services/missions'
 import type { CellState } from '@/core/saisie/cycle'
 import type { ClearReport, FillReport } from '@/core/saisie/report'
-import type { TimeEntryKind } from '@/core/types'
 
 /** Aujourd'hui, côté serveur : l'horloge du navigateur ne décide de rien. */
 function aujourdhui(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+/**
+ * Enregistre une valeur brute sur une case — la vue tableau.
+ *
+ * Le `kind` n'est pas un paramètre, exactement comme dans `appliquerCase` :
+ * l'horloge du serveur fait foi. Le reprendre du client laisserait n'importe
+ * quel appelant authentifié — `fetch` forgé, extension, client modifié —
+ * marquer « réalisé » un jour à venir, c'est-à-dire créer du temps engageant
+ * sans décision humaine, et court-circuiter `PastForecastNotice` /
+ * `validerJoursPasses`, dont toute la raison d'être est que la conversion du
+ * prévisionnel échu soit un geste explicite.
+ */
 export async function saveCell(args: {
   lineId: string
+  /** 'YYYY-MM-DD' */
   date: string
   raw: string
-  kind: TimeEntryKind
+  /** 'YYYY-MM' — le mois affiché, celui qu'on rafraîchit */
   month: string
 }): Promise<SaveResult | { ok: false; reason: 'SAISIE_INVALIDE' }> {
   const user = await requireUser()
@@ -36,7 +47,7 @@ export async function saveCell(args: {
     lineId: args.lineId,
     date: args.date,
     minutes,
-    kind: args.kind,
+    kind: args.date >= aujourdhui() ? 'PREVISIONNEL' : 'REALISE',
   })
 
   if (result.ok) revalidatePath(`/saisie/${args.month}`)

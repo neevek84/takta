@@ -281,6 +281,26 @@ describe('applyCellState', () => {
       expect.objectContaining({ date: '2026-03-20', minutes: 240, slotId: 'apres-midi' }),
     )
   })
+
+  // I4 — le total du jour qui alimente le contrôle de capacité doit être
+  // scopé par userId : sans ce scope, la journée pleine d'un autre
+  // utilisateur, sur une prestation qui lui est propre, se compterait dans
+  // la capacité de celui-ci et le ferait refuser à tort en mode BLOCAGE.
+  it('ne compte pas la saisie d un autre utilisateur dans la capacité du jour', async () => {
+    await updateSettings({ capacityMode: 'BLOCAGE', capacityCentiemes: 100 })
+    const r1 = await applyCellState({
+      userId: autreId, lineId: ligneAutre, date: '2026-03-21', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    expect(r1.ok).toBe(true)
+
+    const r2 = await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-21', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    expect(r2.ok).toBe(true)
+    expect(await saisiesDu(ligneJour, '2026-03-21')).toEqual([
+      { minutes: 480, slotId: '', kind: 'REALISE', minutesParJour: 480, userId },
+    ])
+  })
 })
 
 describe('isMonthLocked', () => {

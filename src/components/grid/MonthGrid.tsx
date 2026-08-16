@@ -1,7 +1,9 @@
 'use client'
 
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { formatQuantity } from '@/core/time/units'
+import { kindDeLaJournee } from '@/core/saisie/kind'
+import { centiemesParFacteur, formatJours, formatQuantity } from '@/core/time/units'
+import type { MinutesAuFacteur } from '@/core/time/units'
 import type { MonthDay } from '@/core/month/build'
 import type { CapacityMode, TimeEntryKind } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
@@ -18,8 +20,10 @@ const CELLULE_CRENEAUX =
 
 interface Cell {
   lineId: string
-  minutes: number
-  kind: TimeEntryKind
+  /** minutes de la journée, chacune sous le facteur figé à son écriture */
+  saisies: MinutesAuFacteur[]
+  /** nature de chaque saisie agrégée ; celle de la journée en dérive */
+  kinds: TimeEntryKind[]
   /** vrai dès qu'une des saisies agrégées porte un créneau */
   hasSlots: boolean
 }
@@ -51,9 +55,35 @@ const TITRE_JOUR: Record<EtatJour, string | undefined> = {
 
 type EtatSaisie = 'vide' | 'realise' | 'previsionnel'
 
+/**
+ * La nature de la journée, jamais déduite ici : `kindDeLaJournee` la tranche
+ * pour les deux vues à la fois. Le calendrier la lisait dans l'autre sens —
+ * une journée mixte s'affichait prévisionnelle chez lui et réalisée ici.
+ */
 function etatSaisie(cell: Cell | undefined): EtatSaisie {
   if (cell === undefined) return 'vide'
-  return cell.kind === 'REALISE' ? 'realise' : 'previsionnel'
+  return kindDeLaJournee(cell.kinds) === 'REALISE' ? 'realise' : 'previsionnel'
+}
+
+function minutesTotales(saisies: readonly MinutesAuFacteur[]): number {
+  return saisies.reduce((somme, s) => somme + s.minutes, 0)
+}
+
+/**
+ * La quantité qu'une cellule affiche.
+ *
+ * En heures, aucun facteur n'intervient : les minutes s'additionnent. En
+ * journées, chaque saisie se convertit sous le facteur figé à son écriture —
+ * c'est le rôle de `centiemesParFacteur` — et non la somme des minutes sous le
+ * facteur courant de la ligne : une journée écrite en deux temps à 7 h puis à
+ * 8 h vaut 0,75 j, pas 0,72 j. Le calendrier affiche la même chose par le même
+ * chemin.
+ */
+function quantiteAffichee(cell: Cell, line: LineForGrid): string {
+  if (line.displayUnit === 'HEURE') {
+    return formatQuantity(minutesTotales(cell.saisies), 'HEURE', line.minutesParJour)
+  }
+  return formatJours(centiemesParFacteur(cell.saisies))
 }
 
 /**
@@ -72,9 +102,13 @@ function buildCells(entries: MonthEntry[]): Map<string, Cell> {
     const prev = cells.get(key)
     cells.set(key, {
       lineId: e.lineId,
-      minutes: (prev?.minutes ?? 0) + e.minutes,
-      // Une journée mêlant réalisé et prévisionnel se lit comme réalisée.
-      kind: prev?.kind === 'REALISE' || e.kind === 'REALISE' ? 'REALISE' : 'PREVISIONNEL',
+      // Les saisies sont conservées une à une, jamais sommées ici : chacune
+      // porte le facteur figé à son écriture, et les additionner avant de
+      // convertir écraserait cette distinction.
+      saisies: [...(prev?.saisies ?? []), { minutes: e.minutes, minutesParJour: e.minutesParJour }],
+      // De même pour les natures : `kindDeLaJournee` tranche, et elle tranche
+      // pour les deux vues à la fois.
+      kinds: [...(prev?.kinds ?? []), e.kind],
       hasSlots: (prev?.hasSlots ?? false) || e.slotId !== '',
     })
   }
@@ -125,7 +159,7 @@ export function MonthGrid({
     for (const [key, cell] of cells) {
       const line = lineById.get(cell.lineId)
       if (line === undefined) continue
-      values.set(key, formatQuantity(cell.minutes, line.displayUnit, line.minutesParJour))
+      values.set(key, quantiteAffichee(cell, line))
     }
     return values
   }, [cells, lineById])
@@ -271,7 +305,7 @@ export function MonthGrid({
                       // Le focus se voit par le contour de `globals.css`, et
                       // les créneaux par un liseré — jamais par un aplat.
                       className={`touch-target w-11 border-0 bg-transparent text-center text-xs text-ink ${
-                        cell?.kind === 'PREVISIONNEL' ? 'pattern-hatch italic text-muted' : ''
+                        etatSaisie(cell) === 'previsionnel' ? 'pattern-hatch italic text-muted' : ''
                       } ${parCreneaux ? 'text-warning-ink ring-1 ring-inset ring-warning-edge' : ''}`}
                     />
                   </td>

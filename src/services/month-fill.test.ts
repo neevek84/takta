@@ -157,6 +157,47 @@ describe('fillMonth', () => {
     ).rejects.toThrow(/affect/i)
     await prisma.user.delete({ where: { id: autre.id } })
   })
+
+  // I5 — la liste des jours « déjà saisis » qui fait sauter des jours doit
+  // être scopée par userId : sans ce scope, une journée déjà posée par un
+  // autre utilisateur affecté à la même prestation serait sautée pour ce
+  // premier utilisateur alors qu'il n'a lui-même rien saisi ce jour-là, et
+  // le bouton annoncerait un remplissage complet en laissant un trou.
+  it('ne saute pas un jour déjà saisi par un autre utilisateur affecté à la même prestation', async () => {
+    const autre = await prisma.user.create({
+      data: { email: 'fill-scope-autre@test.local', name: 'A', passwordHash: 'x' },
+    })
+    await prisma.assignment.create({ data: { lineId: ligneA, userId: autre.id, soldCentiemes: 0 } })
+    await applyCellState({
+      userId: autre.id, lineId: ligneA, date: '2026-03-02', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+
+    const r = await fillMonth({ userId, lineId: ligneA, month: '2026-03', today: '2026-03-15' })
+    expect(r).toEqual({ poses: 22, sautesCapacite: 0, dejaSaisis: 0, verrouille: false })
+
+    const poseesParUserId = (await getMonthEntries(userId, '2026-03')).filter((e) => e.lineId === ligneA)
+    expect(poseesParUserId).toHaveLength(22)
+    expect(poseesParUserId.find((e) => e.date === '2026-03-02')).toBeDefined()
+
+    await prisma.assignment.deleteMany({ where: { lineId: ligneA, userId: autre.id } })
+    await prisma.user.delete({ where: { id: autre.id } })
+  })
+
+  // M8 — le verrou vérifié avant la boucle est redondant avec celui
+  // qu'applyCellState refait à chaque itération ; les deux se recouvrent
+  // dès qu'il existe au moins un jour ouvré. La seule situation où ce n'est
+  // *pas* le cas — celle qui rend ce garde-fou pré-boucle réellement utile —
+  // est un mois sans aucun jour ouvré réglé : la boucle ne s'exécute jamais,
+  // et sans ce garde-fou le verrou du CRA ne serait jamais détecté.
+  it('signale le verrou même sur un mois sans aucun jour ouvré réglé', async () => {
+    await updateSettings({ workingDays: [] })
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-03-01T00:00:00.000Z'), status: 'VALIDE' },
+    })
+
+    const r = await fillMonth({ userId, lineId: ligneA, month: '2026-03', today: '2026-03-15' })
+    expect(r).toEqual({ poses: 0, sautesCapacite: 0, dejaSaisis: 0, verrouille: true })
+  })
 })
 
 describe('clearMonth', () => {

@@ -13,12 +13,15 @@ import {
 
 let userId = ''
 let intrusId = ''
+let autreId = ''
 let lineA = ''
 let lineB = ''
 /** Sur une **seconde** mission : le verrou porte sur un couple (mission, mois). */
 let lineC = ''
 /** Prestation dont la journée fait 600 minutes, quel que soit le réglage global. */
 let lineLongue = ''
+/** Affectée à `autreId`, pas à `userId` : sert à vérifier le scope userId du contrôle de capacité. */
+let ligneAutre = ''
 
 beforeAll(async () => {
   const u = await prisma.user.create({
@@ -32,10 +35,20 @@ beforeAll(async () => {
   })
   intrusId = other.id
 
+  // Utilisateur affecté à sa propre ligne, sur la même mission : sert à
+  // prouver que la capacité quotidienne de `userId` ne voit pas ses saisies.
+  const autre = await prisma.user.create({
+    data: { email: 'entries-autre@test.local', name: 'A', passwordHash: 'x' },
+  })
+  autreId = autre.id
+
   const c = await createClient('ENTRIES client')
   const m = await createMission({ clientId: c.id, label: 'M' })
   lineA = (await createLine({ missionId: m.id, userId, label: 'A', soldCentiemes: 3000, tjmCents: 0 })).id
   lineB = (await createLine({ missionId: m.id, userId, label: 'B', soldCentiemes: 3000, tjmCents: 0 })).id
+  ligneAutre = (await createLine({
+    missionId: m.id, userId: autreId, label: 'Autre', soldCentiemes: 3000, tjmCents: 0,
+  })).id
 
   lineLongue = (await createLine({
     missionId: m.id, userId, label: 'Longue', soldCentiemes: 3000, tjmCents: 0, minutesParJour: 600,
@@ -46,13 +59,13 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
-  await prisma.timeEntry.deleteMany({ where: { userId: { in: [userId, intrusId] } } })
+  await prisma.timeEntry.deleteMany({ where: { userId: { in: [userId, intrusId, autreId] } } })
   await updateSettings({ minutesParJour: 480, capacityMode: 'BLOCAGE', capacityCentiemes: 100 })
 })
 
 afterAll(async () => {
   await prisma.user.deleteMany({
-    where: { email: { in: ['entries@test.local', 'intrus@test.local'] } },
+    where: { email: { in: ['entries@test.local', 'intrus@test.local', 'entries-autre@test.local'] } },
   })
   await prisma.client.deleteMany({ where: { name: 'ENTRIES client' } })
   // Settings est un singleton partagé par toute la suite : le supprimer le
@@ -201,6 +214,18 @@ describe('saveEntry', () => {
     const r = await saveEntry({ userId: intrusId, lineId: lineA, date: '2026-03-12', minutes: 0, kind: 'REALISE' })
     expect(r).toEqual({ ok: false, reason: 'NON_AFFECTE' })
     expect(await getMonthEntries(userId, '2026-03')).toHaveLength(1)
+  })
+
+  // I4 — le total du jour qui alimente le contrôle de capacité doit être
+  // scopé par userId : sans ce scope, la journée pleine d'un autre
+  // utilisateur, sur une prestation qui lui est propre, se compterait dans
+  // la capacité de celui-ci et le ferait refuser à tort en mode BLOCAGE.
+  it('ne compte pas la saisie d un autre utilisateur dans la capacité du jour', async () => {
+    const rAutre = await saveEntry({ userId: autreId, lineId: ligneAutre, date: '2026-03-12', minutes: 480, kind: 'REALISE' })
+    expect(rAutre.ok).toBe(true)
+
+    const r = await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 480, kind: 'REALISE' })
+    expect(r).toEqual({ ok: true, minutes: 480 })
   })
 })
 

@@ -34,6 +34,17 @@ export default defineConfig({
     // vitest.globalSetup.ts pour le détail.
     globalSetup: ['./vitest.globalSetup.ts'],
     env: { DATABASE_URL: `file:${TEST_DB_PATH}` },
+    server: {
+      deps: {
+        // `src/middleware.test.ts` importe le vrai middleware, donc NextAuth.
+        // Laissé externe, `next-auth/lib/env.js` est chargé par Node, qui
+        // résout `next/server` selon les règles ESM : `next` ne publie pas de
+        // champ `exports`, il n'y a donc pas de fichier `next/server` sans
+        // extension et l'import échoue (« Did you mean next/server.js ? »).
+        // Transformé par Vite, l'alias se résout comme à la construction.
+        inline: [/next-auth/, /@auth\/core/],
+      },
+    },
   },
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },

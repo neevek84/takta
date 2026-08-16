@@ -161,6 +161,95 @@ describe('SaisieClient', () => {
     await waitFor(() => expect(screen.getByText(/Saisie invalide/)).toBeDefined())
     await waitFor(() => expect(input.value).toBe(''))
   })
+
+  // C3 — le réalisé est ce qui est attesté au client et facturé : c'est
+  // l'horloge du serveur qui le départage du prévisionnel, jamais celle du
+  // navigateur. Le `toHaveBeenCalledWith` compare l'objet entier : un `kind`
+  // recalculé côté client le ferait échouer.
+  it("n'envoie aucun kind au serveur : la vue tableau ne décide pas du réalisé", async () => {
+    saveCell.mockResolvedValue({ ok: true, minutes: 480 })
+    renderClient()
+    ouvrirTableau()
+    saisir('1')
+
+    await waitFor(() =>
+      expect(saveCell).toHaveBeenCalledWith({
+        lineId: 'l1',
+        date: '2026-03-12',
+        raw: '1',
+        month: '2026-03',
+      }),
+    )
+  })
+
+  // I2 — le dépassement se juge au millicentième, l'affichage montre des
+  // centièmes : à 481 minutes contre 480, le refus s'écrivait « 1 j saisis
+  // pour une capacité de 1 j », c'est-à-dire une contradiction. Le nombre ne
+  // bouge pas — l'arrondir vers le haut le désaccorderait du bandeau et de la
+  // ligne de totaux — c'est la phrase qui cesse de prétendre à l'égalité.
+  it('ne prétend pas à l égalité quand le dépassement se perd dans l arrondi', async () => {
+    saveCell.mockResolvedValue({
+      ok: false,
+      reason: 'CAPACITE',
+      totalCentiemes: 100,
+      capacityCentiemes: 100,
+    })
+    renderClient()
+    ouvrirTableau()
+    saisir('1')
+
+    const message = await screen.findByText(/Capacité dépassée/)
+    expect(message.textContent).not.toContain('1 j saisis pour une capacité de 1 j')
+    expect(message.textContent).toContain('capacité de 1 j')
+    expect(message.textContent).toContain('trop petite pour')
+    expect(message.textContent).toContain('refusée')
+  })
+
+  it('garde les deux nombres quand le dépassement se voit à l affichage', async () => {
+    saveCell.mockResolvedValue({
+      ok: false,
+      reason: 'CAPACITE',
+      totalCentiemes: 114,
+      capacityCentiemes: 100,
+    })
+    renderClient()
+    ouvrirTableau()
+    saisir('1')
+
+    const message = await screen.findByText(/Capacité dépassée/)
+    expect(message.textContent).toContain('1,14 j saisis pour une capacité de 1 j')
+  })
+
+  // M5 — un refus et un avertissement ne se ressemblent pas.
+  it('annonce un refus en tonalité danger', async () => {
+    saveCell.mockResolvedValue({ ok: false, reason: 'VERROUILLE' })
+    renderClient()
+    ouvrirTableau()
+    saisir('0,5')
+
+    const bandeau = (await screen.findByText(/CRA de ce mois est validé/)).closest(
+      '[role="alert"]',
+    )
+    expect(bandeau).not.toBeNull()
+    expect(bandeau!.className).toContain('bg-danger')
+    expect(bandeau!.className).not.toContain('bg-warning')
+  })
+
+  it('garde la tonalité avertissement pour une saisie conservée', async () => {
+    saveCell.mockResolvedValue({
+      ok: true,
+      minutes: 240,
+      warning: { totalCentiemes: 150, capacityCentiemes: 100 },
+    })
+    renderClient()
+    ouvrirTableau()
+    saisir('0,5')
+
+    const bandeau = (await screen.findByText(/Capacité dépassée/)).closest('[role="alert"]')
+    expect(bandeau).not.toBeNull()
+    expect(bandeau!.className).toContain('bg-warning')
+    expect(bandeau!.className).not.toContain('bg-danger')
+  })
 })
 
 describe('SaisieClient — calendrier', () => {
@@ -330,9 +419,11 @@ describe('SaisieClient — calendrier', () => {
       renderClient()
 
       fireEvent.click(screen.getByRole('button', { name: 'Remplir le CRA' }))
-      await waitFor(() =>
-        expect(screen.getByText("Le CRA de ce mois est validé : aucun jour n'a été posé.")).toBeDefined(),
+      const message = await screen.findByText(
+        "Le CRA de ce mois est validé : aucun jour n'a été posé.",
       )
+      // M5 — rien n'a été posé : c'est un refus, pas un avertissement.
+      expect(message.closest('[role="alert"]')!.className).toContain('bg-danger')
     })
   })
 
@@ -388,6 +479,28 @@ describe('SaisieClient — calendrier', () => {
     await waitFor(() =>
       expect((screen.getByLabelText('Prestation') as HTMLSelectElement).value).toBe('l2'),
     )
+  })
+
+  /**
+   * C2 — le raccourci et la boîte qu'il ouvre sont une seule fonctionnalité.
+   * Maj+Entrée sur une case ouvre le formulaire de durée libre, le seul moyen
+   * de saisir une durée arbitraire : le focus doit y entrer, et en revenir.
+   */
+  it('ouvre le formulaire au clavier, y porte le focus, et le rend à la case sur Échap', () => {
+    renderClient()
+    const caseDu12 = screen.getByTestId('case-2026-03-12')
+    caseDu12.focus()
+    expect(document.activeElement).toBe(caseDu12)
+
+    fireEvent.keyDown(caseDu12, { key: 'Enter', shiftKey: true })
+
+    // Zéro tabulation : le champ est atteint par le raccourci lui-même.
+    const duree = screen.getByLabelText('Durée (heures)')
+    expect(document.activeElement).toBe(duree)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByLabelText('Durée (heures)')).toBeNull()
+    expect(document.activeElement).toBe(caseDu12)
   })
 
   it('ouvre le formulaire au clic droit et l applique', async () => {

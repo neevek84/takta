@@ -30,6 +30,36 @@ function jours(centiemes: number): string {
   return String(centiemes / 100).replace('.', ',')
 }
 
+/**
+ * Le dépassement de capacité, dit sans se contredire.
+ *
+ * Le contrôle juge au millicentième, l'affichage montre des centièmes : à 481
+ * minutes contre 480, le total vaut 100,208 centièmes et s'affiche « 1 j »
+ * pour une capacité de « 1 j ». La phrase d'origine affirmait donc l'égalité
+ * tout en refusant la saisie. Le nombre ne bouge pas — l'arrondir vers le haut
+ * le désaccorderait du bandeau et de la ligne de totaux, qui montrent le même
+ * total ailleurs sur le même écran ; c'est la phrase qui cesse de prétendre à
+ * une égalité qu'elle vient de démentir.
+ */
+function phraseCapacite(date: string, totalCentiemes: number, capacityCentiemes: number): string {
+  if (totalCentiemes > capacityCentiemes) {
+    return `Capacité dépassée le ${date} : ${jours(totalCentiemes)} j saisis pour une capacité de ${jours(capacityCentiemes)} j.`
+  }
+  return `Capacité dépassée le ${date} : le total dépasse la capacité de ${jours(capacityCentiemes)} j d'une fraction de journée trop petite pour s'y voir, l'affichage étant au centième de jour.`
+}
+
+/** Ce qui s'écrit dans le bandeau, et sur quel ton. */
+type Message = { texte: string; ton: 'warning' | 'danger' }
+
+function avertissement(texte: string): Message {
+  return { texte, ton: 'warning' }
+}
+
+/** Un refus n'est pas un avertissement : rien n'a été enregistré. */
+function refus(texte: string): Message {
+  return { texte, ton: 'danger' }
+}
+
 type Vue = 'CALENDRIER' | 'TABLEAU'
 
 export function SaisieClient(props: {
@@ -42,7 +72,7 @@ export function SaisieClient(props: {
   capacityMode: CapacityMode
   slots: Slot[]
 }) {
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<Message | null>(null)
   const [vue, setVue] = useState<Vue>('CALENDRIER')
   const [toutLeMois, setToutLeMois] = useState(false)
   const [confirmationVidage, setConfirmationVidage] = useState(false)
@@ -58,23 +88,30 @@ export function SaisieClient(props: {
 
   const ligne = props.lines.find((l) => l.id === lineId)
 
-  /** Renvoie `true` quand la valeur a bien été enregistrée. — vue tableau */
+  /**
+   * Renvoie `true` quand la valeur a bien été enregistrée. — vue tableau
+   *
+   * Aucun `kind` n'est transmis : le réalisé et le prévisionnel se départagent
+   * sur l'horloge du serveur, dans l'action, comme pour la vue calendrier. Les
+   * deux vues du même écran écrivaient sinon le même champ sous deux autorités
+   * différentes — et une machine à l'horloge décalée écrivait le mauvais.
+   */
   async function handleSave(lineIdCellule: string, date: string, raw: string): Promise<boolean> {
-    const kind = date >= new Date().toISOString().slice(0, 10) ? 'PREVISIONNEL' : 'REALISE'
-
-    const r = await saveCell({ lineId: lineIdCellule, date, raw, kind, month: props.month })
+    const r = await saveCell({ lineId: lineIdCellule, date, raw, month: props.month })
 
     if (r.ok) {
       // Mode AVERTISSEMENT : la saisie est conservée, le dépassement signalé.
       setMessage(
         r.warning
-          ? `Capacité dépassée le ${date} : ${jours(r.warning.totalCentiemes)} j saisis pour une capacité de ${jours(r.warning.capacityCentiemes)} j. La saisie est conservée.`
+          ? avertissement(
+              `${phraseCapacite(date, r.warning.totalCentiemes, r.warning.capacityCentiemes)} La saisie est conservée.`,
+            )
           : null,
       )
       return true
     }
 
-    setMessage(messageDeRefus(r, date, 'cette ligne de prestation'))
+    setMessage(refus(messageDeRefus(r, date, 'cette ligne de prestation')))
     return false
   }
 
@@ -86,16 +123,16 @@ export function SaisieClient(props: {
       // Le signalement de créneau prime : il dit ce que la saisie a de
       // particulier, là où l'avertissement de capacité redit ce que la ligne
       // de totaux montre déjà.
-      setMessage(
+      const texte =
         r.signalement ??
-          (r.warning
-            ? `Capacité dépassée le ${date} : ${jours(r.warning.totalCentiemes)} j saisis pour une capacité de ${jours(r.warning.capacityCentiemes)} j. La saisie est conservée.`
-            : null),
-      )
+        (r.warning
+          ? `${phraseCapacite(date, r.warning.totalCentiemes, r.warning.capacityCentiemes)} La saisie est conservée.`
+          : null)
+      setMessage(texte === null ? null : avertissement(texte))
       return true
     }
 
-    setMessage(messageDeRefus(r, date, 'cette prestation'))
+    setMessage(refus(messageDeRefus(r, date, 'cette prestation')))
     return false
   }
 
@@ -161,7 +198,11 @@ export function SaisieClient(props: {
             <Button
               type="button"
               onClick={async () => {
-                setMessage(formatFillReport(await remplirMois({ lineId, month: props.month })))
+                // Un mois validé n'a rien posé : c'est un refus, pas un
+                // avertissement.
+                const rapport = await remplirMois({ lineId, month: props.month })
+                const texte = formatFillReport(rapport)
+                setMessage(rapport.verrouille ? refus(texte) : avertissement(texte))
               }}
             >
               Remplir le CRA
@@ -188,7 +229,9 @@ export function SaisieClient(props: {
                 variant="danger"
                 onClick={async () => {
                   setConfirmationVidage(false)
-                  setMessage(formatClearReport(await viderMois({ lineId, month: props.month })))
+                  const rapport = await viderMois({ lineId, month: props.month })
+                  const texte = formatClearReport(rapport)
+                  setMessage(rapport.verrouille ? refus(texte) : avertissement(texte))
                 }}
               >
                 Confirmer le vidage
@@ -203,7 +246,7 @@ export function SaisieClient(props: {
 
       {message !== null && (
         <div className="mb-3">
-          <Banner tone="warning">{message}</Banner>
+          <Banner tone={message.ton}>{message.texte}</Banner>
         </div>
       )}
 
@@ -274,7 +317,7 @@ function messageDeRefus(
   quoi: string,
 ): string {
   if (r.reason === 'CAPACITE') {
-    return `Capacité dépassée le ${date} : ${jours(r.totalCentiemes)} j saisis pour une capacité de ${jours(r.capacityCentiemes)} j. La saisie est refusée.`
+    return `${phraseCapacite(date, r.totalCentiemes, r.capacityCentiemes)} La saisie est refusée.`
   }
   if (r.reason === 'VERROUILLE') {
     return `Le CRA de ce mois est validé. Rouvrez-le pour modifier la saisie.`
