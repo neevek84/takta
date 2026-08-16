@@ -16,6 +16,7 @@ import {
   detachEntity,
   type ImportEntityType,
 } from '@/services/dolibarr/import'
+import { applyDolibarrSetup } from '@/services/dolibarr/setup'
 
 const CHEMIN = '/admin/dolibarr'
 
@@ -208,6 +209,85 @@ export async function pousserClient(formData: FormData): Promise<void> {
   }
 
   revalidatePath(CHEMIN)
+  redirect(annonce(message, tone))
+}
+
+/**
+ * Ce que la reprise a fait, en toutes lettres — y compris ce qu'elle **n'a
+ * pas** fait.
+ *
+ * Le nombre de saisies laissées intactes parce qu'elles appartiennent à un CRA
+ * validé est la moitié qui compte du message : c'est la promesse du produit,
+ * et elle ne vaut que si l'écran la rend vérifiable après coup.
+ */
+function resumeReprise(r: {
+  reglagesRepris: string[]
+  recalibrees: number
+  sauteesVerrouillees: number
+}): string {
+  if (r.reglagesRepris.length === 0) {
+    return "Aucun réglage n'a été repris de Dolibarr."
+  }
+
+  const phrases = [`Réglages repris de Dolibarr : ${r.reglagesRepris.join(', ')}.`]
+  if (r.recalibrees > 0) {
+    phrases.push(`${r.recalibrees} saisie(s) des mois ouverts ont été réétalonnées.`)
+  }
+  if (r.sauteesVerrouillees > 0) {
+    phrases.push(
+      `${r.sauteesVerrouillees} saisie(s) appartenant à un CRA validé n'ont pas été modifiées.`,
+    )
+  }
+  return phrases.join(' ')
+}
+
+/**
+ * Reprend les réglages de l'instance Dolibarr — ceux que l'utilisateur a
+ * cochés, et eux seuls.
+ *
+ * Rend toujours la main par une redirection porteuse d'un message et de sa
+ * tonalité : une reprise refusée par la validation des réglages, ou une
+ * instance injoignable, doivent se voir. Un `return` muet ferait passer les
+ * deux pour un succès.
+ */
+export async function reprendreReglages(formData: FormData): Promise<void> {
+  const user = await requireUser()
+
+  const api = await getDolibarrApi()
+  if (api === null) {
+    redirect(annonce("Dolibarr n'est pas connecté : aucun réglage n'a été repris.", 'danger'))
+    return
+  }
+
+  let message: string
+  let tone: 'success' | 'danger' = 'success'
+  try {
+    message = resumeReprise(
+      await applyDolibarrSetup({
+        userId: user.id,
+        api,
+        // Une case non cochée n'est pas transmise du tout : l'absence vaut
+        // « non », et une valeur forgée autre que « on » aussi.
+        reprendreExercice: formData.get('reprendreExercice') === 'on',
+        reprendreDureeJournee: formData.get('reprendreDureeJournee') === 'on',
+        reetalonner: formData.get('reetalonner') === 'on',
+      }),
+    )
+  } catch (err) {
+    // Volontairement pas « aucun réglage n'a été repris » : une reprise peut
+    // échouer sur le second réglage après avoir écrit le premier, et affirmer
+    // le contraire enverrait vérifier au mauvais endroit.
+    message = `La reprise n'a pas abouti : ${err instanceof Error ? err.message : String(err)}`
+    tone = 'danger'
+  }
+
+  // La durée d'une journée est la conversion minutes → jours de toute
+  // l'application : la grille de saisie, l'écran de réglages et le plan de
+  // charge affichent tous des valeurs qui viennent de changer.
+  revalidatePath(CHEMIN)
+  revalidatePath('/admin/saisie')
+  revalidatePath('/saisie')
+  revalidatePath('/charge')
   redirect(annonce(message, tone))
 }
 

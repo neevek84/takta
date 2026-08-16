@@ -15,6 +15,7 @@ const {
   pushClientToDolibarr,
   detachEntity,
   listProjects,
+  applyDolibarrSetup,
 } = vi.hoisted(() => ({
   requireUser: vi.fn(),
   revalidatePath: vi.fn(),
@@ -30,6 +31,7 @@ const {
   pushClientToDolibarr: vi.fn(),
   detachEntity: vi.fn(),
   listProjects: vi.fn(),
+  applyDolibarrSetup: vi.fn(),
 }))
 
 vi.mock('@/auth', () => ({ requireUser }))
@@ -46,6 +48,7 @@ vi.mock('@/services/dolibarr/import', () => ({
   pushClientToDolibarr,
   detachEntity,
 }))
+vi.mock('@/services/dolibarr/setup', () => ({ applyDolibarrSetup }))
 
 import {
   connecterDolibarr,
@@ -54,6 +57,7 @@ import {
   rattacherProjet,
   detacher,
   pousserClient,
+  reprendreReglages,
 } from './actions'
 
 /**
@@ -96,6 +100,9 @@ beforeEach(() => {
   createMissionFromDolibarr.mockReset().mockResolvedValue({ missionId: 'm-neuf' })
   pushClientToDolibarr.mockReset().mockResolvedValue({ dolibarrThirdpartyId: 42 })
   detachEntity.mockReset().mockResolvedValue(undefined)
+  applyDolibarrSetup
+    .mockReset()
+    .mockResolvedValue({ reglagesRepris: [], recalibrees: 0, sauteesVerrouillees: 0 })
 })
 
 /**
@@ -115,6 +122,7 @@ describe('chaque action exige une session', () => {
     ],
     ['detacher', () => detacher(form({ entityType: 'Client', entityId: 'c1' }))],
     ['pousserClient', () => pousserClient(form({ clientId: 'c1' }))],
+    ['reprendreReglages', () => reprendreReglages(form({ reprendreDureeJournee: 'on' }))],
   ]
 
   for (const [nom, appeler] of actions) {
@@ -131,6 +139,7 @@ describe('chaque action exige une session', () => {
       expect(createMissionFromDolibarr).not.toHaveBeenCalled()
       expect(pushClientToDolibarr).not.toHaveBeenCalled()
       expect(detachEntity).not.toHaveBeenCalled()
+      expect(applyDolibarrSetup).not.toHaveBeenCalled()
     })
   }
 })
@@ -384,5 +393,104 @@ describe('pousserClient', () => {
     expect(redirect).toHaveBeenCalledTimes(1)
     expect(decodeURIComponent(String(redirect.mock.calls[0]![0]))).toContain('injoignable')
     expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+  })
+})
+
+describe('reprendreReglages', () => {
+  /** Le message porté par la redirection, décodé. */
+  function annonce(): string {
+    return decodeURIComponent(String(redirect.mock.calls[0]![0]))
+  }
+
+  it('ne reprend que ce qui est coché', async () => {
+    await reprendreReglages(form({ reprendreDureeJournee: 'on' }))
+
+    expect(applyDolibarrSetup).toHaveBeenCalledWith({
+      userId: 'u1',
+      api: expect.anything(),
+      reprendreExercice: false,
+      reprendreDureeJournee: true,
+      reetalonner: false,
+    })
+  })
+
+  it('transmet les trois cases quand elles sont cochées', async () => {
+    await reprendreReglages(
+      form({ reprendreExercice: 'on', reprendreDureeJournee: 'on', reetalonner: 'on' }),
+    )
+
+    expect(applyDolibarrSetup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reprendreExercice: true,
+        reprendreDureeJournee: true,
+        reetalonner: true,
+      }),
+    )
+  })
+
+  it('annonce ce qui a été repris, et ce qui n a pas été touché', async () => {
+    applyDolibarrSetup.mockResolvedValue({
+      reglagesRepris: ["durée d'une journée"],
+      recalibrees: 3,
+      sauteesVerrouillees: 2,
+    })
+
+    await reprendreReglages(form({ reprendreDureeJournee: 'on', reetalonner: 'on' }))
+
+    const message = annonce()
+    expect(message).toContain("durée d'une journée")
+    expect(message).toContain('3')
+    // Le chiffre qui compte pour le porteur : ce que la reprise n'a pas
+    // touché, parce que c'était validé.
+    expect(message).toContain('2')
+    expect(message).toContain('CRA validé')
+    expect(message).toContain('tone=success')
+  })
+
+  it('dit qu il n a rien repris plutôt que d annoncer un succès vide', async () => {
+    await reprendreReglages(form({}))
+
+    expect(annonce()).toContain('Aucun réglage')
+    expect(annonce()).toContain('tone=success')
+  })
+
+  it('rafraîchit les écrans que la reprise déplace', async () => {
+    applyDolibarrSetup.mockResolvedValue({
+      reglagesRepris: ["durée d'une journée"],
+      recalibrees: 1,
+      sauteesVerrouillees: 0,
+    })
+
+    await reprendreReglages(form({ reprendreDureeJournee: 'on', reetalonner: 'on' }))
+
+    const chemins = revalidatePath.mock.calls.map((c) => String(c[0]))
+    expect(chemins).toContain('/admin/dolibarr')
+    expect(chemins).toContain('/saisie')
+    expect(chemins).toContain('/charge')
+  })
+
+  it('dit que Dolibarr n est pas connecté au lieu de ne rien faire', async () => {
+    getDolibarrApi.mockResolvedValue(null)
+
+    await reprendreReglages(form({ reprendreDureeJournee: 'on' }))
+
+    expect(applyDolibarrSetup).not.toHaveBeenCalled()
+    expect(redirect).toHaveBeenCalledTimes(1)
+    expect(annonce()).toContain('pas connecté')
+    expect(annonce()).toContain('tone=danger')
+  })
+
+  it('rapporte un refus en alerte, sans faire tomber l écran', async () => {
+    // Dolibarr n'interdit pas une journée d'une demi-heure ; le réglage local,
+    // si. Le refus vient du service, l'écran le rapporte.
+    applyDolibarrSetup.mockRejectedValue(
+      new Error("La durée d'une journée doit être d'au moins 1 heure (60 minutes)."),
+    )
+
+    await reprendreReglages(form({ reprendreDureeJournee: 'on' }))
+
+    expect(redirect).toHaveBeenCalledTimes(1)
+    expect(annonce()).toContain('1 heure')
+    expect(annonce()).toContain('tone=danger')
   })
 })

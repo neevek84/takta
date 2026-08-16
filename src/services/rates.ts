@@ -14,9 +14,18 @@ interface Candidate {
 /**
  * Liste les saisies dont le facteur figé diffère du facteur que la cascade
  * donnerait aujourd'hui, en marquant celles qui appartiennent à un mois validé.
+ *
+ * @param globalOverride durée de journée **hypothétique**, pour répondre à
+ * « que se passerait-il si je reprenais la valeur de Dolibarr ? » avant d'avoir
+ * enregistré quoi que ce soit. Sans lui, l'aperçu affiché avant confirmation
+ * annoncerait toujours zéro saisie concernée, ce qui viderait l'avertissement
+ * de son sens. Il ne sert qu'à *simuler* : rien n'est écrit sur ce chemin, et
+ * une surcharge de prestation, de mission ou de client continue de l'emporter
+ * sur lui comme sur le réglage réel.
  */
-async function candidats(userId: string): Promise<Candidate[]> {
+async function candidats(userId: string, globalOverride?: number): Promise<Candidate[]> {
   const settings = await getSettings()
+  const global = globalOverride ?? settings.minutesParJour
 
   const entries = await prisma.timeEntry.findMany({
     where: { userId },
@@ -54,7 +63,7 @@ async function candidats(userId: string): Promise<Candidate[]> {
       line: e.line.minutesParJour,
       mission: e.line.mission.minutesParJour,
       client: e.line.mission.client.minutesParJour,
-      global: settings.minutesParJour,
+      global,
     })
     if (cible === e.minutesParJour) continue
 
@@ -66,8 +75,9 @@ async function candidats(userId: string): Promise<Candidate[]> {
 
 export async function previewRecalibration(
   userId: string,
+  globalMinutesParJourHypothetique?: number,
 ): Promise<{ concernees: number; verrouillees: number }> {
-  const liste = await candidats(userId)
+  const liste = await candidats(userId, globalMinutesParJourHypothetique)
   return {
     concernees: liste.filter((c) => !c.verrouille).length,
     verrouillees: liste.filter((c) => c.verrouille).length,

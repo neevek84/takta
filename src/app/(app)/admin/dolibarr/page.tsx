@@ -5,12 +5,14 @@ import { listMissionsForUser } from '@/services/missions'
 import { DOLIBARR } from '@/services/dolibarr/api'
 import { getDolibarrApi } from '@/services/dolibarr/resolve'
 import { listImportCandidates, type ImportCandidates } from '@/services/dolibarr/import'
+import { previewDolibarrSetup, type SetupProposal } from '@/services/dolibarr/setup'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { PageShell } from '@/components/ui/PageShell'
 import { Select } from '@/components/ui/Select'
 import { ConnexionForm } from './ConnexionForm'
+import { RepriseReglages } from './RepriseReglages'
 import { rattacherTiers, rattacherProjet, detacher, pousserClient } from './actions'
 
 /**
@@ -44,11 +46,17 @@ export default async function AdminDolibarrPage({
   ])
 
   let candidats: ImportCandidates | null = null
+  let reprise: SetupProposal | null = null
   let panne: string | null = null
 
   if (api !== null) {
     try {
       candidats = await listImportCandidates(user.id, api)
+      // Ce qui a déjà été lu reste affiché : une lecture de réglages qui échoue
+      // laisse les rattachements en place, et inversement. Un aperçu absent
+      // n'affiche rien du tout — surtout pas « déjà aligné », qui rassurerait
+      // à tort sur une comparaison qui n'a pas eu lieu.
+      reprise = await previewDolibarrSetup({ userId: user.id, api })
     } catch (err) {
       panne = err instanceof Error ? err.message : String(err)
     }
@@ -244,6 +252,8 @@ export default async function AdminDolibarrPage({
           </Card>
         </>
       )}
+
+      {reprise !== null && <RepriseReglages preview={reprise} />}
     </PageShell>
   )
 }
