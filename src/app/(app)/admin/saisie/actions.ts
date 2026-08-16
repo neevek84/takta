@@ -42,7 +42,7 @@ export async function saveSettings(
   _prevState: SaveSettingsState,
   formData: FormData,
 ): Promise<SaveSettingsState> {
-  await requireUser()
+  const user = await requireUser()
 
   const heures = Number(formData.get('heures'))
   const minutesSup = Number(formData.get('minutes'))
@@ -68,7 +68,10 @@ export async function saveSettings(
       debutExerciceMois: Number(formData.get('debutExerciceMois')),
       journeeDebutMinute: timeInputToMinutes(String(formData.get('journeeDebut') ?? '')),
       journeeFinMinute: timeInputToMinutes(String(formData.get('journeeFin') ?? '')),
-    })
+    },
+    // Le journal de preuve nomme l'auteur du réglage : un acte humain
+    // attribué à `SYSTEME` serait une preuve fausse.
+    user.id)
   } catch (err) {
     if (err instanceof SettingsValidationError) {
       return { ok: false, errors: err.errors }

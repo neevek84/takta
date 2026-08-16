@@ -4,6 +4,7 @@ import type { Slot } from '@/core/time/slots'
 import { CAPACITY_MODES, DISPLAY_UNITS } from '@/core/types'
 import type { CapacityMode, DisplayUnit, EngagementSource } from '@/core/types'
 import { frenchHolidays } from '@/core/calendar/holidays-fr'
+import { appendAudit, actorOf } from './audit'
 
 export const DEFAULT_SLOTS: Slot[] = [
   { id: 'matin', label: 'Matin', startMinute: 540, endMinute: 780, centiemes: 50 },
@@ -247,7 +248,30 @@ export class SettingsValidationError extends Error {
   }
 }
 
-export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+/**
+ * Résumé du patch pour le journal : les scalaires tels quels, les listes
+ * réduites à leur cardinal. Recopier soixante jours fériés à chaque
+ * enregistrement noierait le journal sans rien apprendre à personne — et
+ * `cles` suffit à dire ce qui a été touché.
+ */
+function resumePatch(patch: Partial<AppSettings>): Record<string, unknown> {
+  const resume: Record<string, unknown> = { cles: Object.keys(patch) }
+  for (const [cle, valeur] of Object.entries(patch)) {
+    resume[cle] = Array.isArray(valeur) ? `${valeur.length} valeur(s)` : valeur
+  }
+  return resume
+}
+
+/**
+ * `userId` optionnel, en dernière position : les réglages sont une écriture
+ * d'instance, que des dizaines d'appels de test font sans utilisateur. Absent,
+ * l'acte revient à `SYSTEME` ; la server action des réglages, elle, passe
+ * toujours l'utilisateur réel.
+ */
+export async function updateSettings(
+  patch: Partial<AppSettings>,
+  userId?: string,
+): Promise<AppSettings> {
   // Garde en profondeur : le service est la seule barrière qui compte, pas
   // le formulaire qui l'appelle. Aucun appelant (server action actuelle,
   // futur endpoint API, script de reprise) ne peut donc persister un
@@ -282,6 +306,17 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
       ...(patch.journeeFinMinute !== undefined && { journeeFinMinute: patch.journeeFinMinute }),
     },
   })
+
+  // Après l'écriture, et seulement si elle a eu lieu : la validation lève
+  // au-dessus, un patch refusé ne laisse donc rien au journal.
+  await appendAudit({
+    ...(await actorOf(userId ?? '')),
+    action: 'reglage.modifie',
+    entityType: 'Settings',
+    entityId: 'singleton',
+    payload: resumePatch(patch),
+  })
+
   return toAppSettings(row)
 }
 

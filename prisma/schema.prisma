@@ -21,6 +21,7 @@ model User {
   outbox      SyncOutbox[]
   conflicts   SyncConflict[]
   links       ExternalLink[]
+  webhooks    Webhook[]
 }
 
 model Client {
@@ -296,6 +297,127 @@ model Settings {
 
   /// délai avant relance d'une signature en attente, en jours. 0 = relances désactivées.
   relanceJours    Int    @default(7)
+
+  /// échecs consécutifs au-delà desquels un abonnement est suspendu.
+  /// Cinq tentatives = un événement abandonné ; suspendre pour un seul
+  /// événement serait fragile, dix échecs de suite disent une URL morte.
+  webhookMaxEchecs Int @default(10)
+
+  /// destinataire des rappels internes. Vide = aucun envoi.
+  notificationEmail String @default("")
+
+  /// configuration SMTP minimale, pour l'autoportance. Le mot de passe ne
+  /// vit PAS ici : il se saisit dans l'environnement (SMTP_PASSWORD), comme
+  /// AUTH_SECRET — un secret en base ressort dans chaque sauvegarde.
+  smtpHost   String  @default("")
+  smtpPort   Int     @default(0)
+  smtpUser   String  @default("")
+  smtpFrom   String  @default("")
+  smtpSecure Boolean @default(true)
+}
+
+/// Le journal de preuve : **jamais modifié, jamais supprimé**.
+///
+/// Aucune relation vers `User` : toutes les autres tables cascadent à la
+/// suppression d'un compte, et un journal qui cascade s'ampute lui-même —
+/// supprimer un compte effacerait la preuve de ce qu'il a fait.
+/// `actorId` vaut '' pour un traitement de fond.
+model AuditEvent {
+  /// numéro d'ordre, calculé par le service et haché avec le reste :
+  /// un autoincrement ne pourrait pas entrer dans l'empreinte, et un journal
+  /// dont la numérotation n'est pas hachée se renumérote sans laisser de trace.
+  seq         Int      @id
+  occurredAt  DateTime @default(now())
+  actorId     String   @default("")
+  actorLabel  String   @default("SYSTEME")
+  /// une valeur du catalogue, validée par le service
+  action      String
+  entityType  String
+  entityId    String
+  /// JSON lu et écrit en bloc uniquement — jamais interrogé finement
+  payloadJson String   @default("{}")
+  /// unique : la base interdit la fourche de chaîne, même entre processus.
+  /// Jamais nullable — la genèse porte la chaîne vide, sentinelle non nulle,
+  /// un NULL n'étant jamais égal à un autre NULL.
+  prevHash    String   @unique
+  hash        String   @unique
+
+  @@index([action, seq])
+  @@index([actorId, seq])
+  @@index([occurredAt])
+}
+
+/// Une URL que l'utilisateur a lui-même enregistrée. L'application n'appelle
+/// jamais rien d'autre.
+model Webhook {
+  id     String @id @default(cuid())
+  userId String
+  label  String
+  url    String
+  /// secret de signature HMAC, propre à l'abonnement
+  secret String
+  /// noms d'événements souscrits, séparés par des virgules. Vide = tous.
+  /// Jamais un tableau : portabilité SQLite/Postgres.
+  events String @default("")
+  /// 'ACTIF' | 'SUSPENDU'
+  state  String @default("ACTIF")
+  /// dernier seq du journal déjà pris en compte pour cet abonnement
+  lastSeq             Int       @default(0)
+  consecutiveFailures Int       @default(0)
+  lastError           String    @default("")
+  suspendedAt         DateTime?
+  createdAt           DateTime  @default(now())
+
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([userId, state])
+}
+
+/// Une tentative de poussée, tracée. Le corps n'est pas stocké : il se
+/// reconstruit à l'identique depuis `AuditEvent.seq`, ce qui est précisément
+/// ce qui rend un renvoi reproductible.
+model WebhookDelivery {
+  id        String @id @default(cuid())
+  webhookId String
+  seq       Int
+  action    String
+  /// 'PENDING' | 'SUCCES' | 'ECHEC' | 'ABANDONNE'
+  state          String    @default("PENDING")
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime  @default(now())
+  responseStatus Int       @default(0)
+  durationMs     Int       @default(0)
+  lastError      String    @default("")
+  deliveredAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  /// un événement n'est jamais mis en file deux fois pour le même abonnement
+  @@unique([webhookId, seq])
+  @@index([state, nextAttemptAt])
+}
+
+/// Les traitements récurrents. La liste est en dur dans le registre des
+/// travaux ; cette table ne porte que leur état.
+model ScheduledJob {
+  id   String @id @default(cuid())
+  name String @unique
+  /// récurrence, en minutes
+  intervalMinutes Int
+  enabled         Boolean   @default(true)
+  lastRunAt       DateTime?
+  nextRunAt       DateTime  @default(now())
+  /// '' | 'SUCCES' | 'ECHEC' | 'IGNORE' | 'INDISPONIBLE'
+  lastState       String    @default("")
+  lastError       String    @default("")
+  attempts        Int       @default(0)
+  /// verrou : non nul pendant l'exécution, pour qu'un second réveil
+  /// n'exécute pas une seconde fois un travail encore en cours
+  runningSince    DateTime?
+
+  @@index([enabled, nextRunAt])
 }
 
 /// Un **ensemble** d'entités à synchroniser, jamais un journal : l'unicité du

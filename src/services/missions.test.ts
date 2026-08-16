@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/db/client'
 import { createClient, listClients } from './clients'
 import {
@@ -9,6 +9,7 @@ import {
   updateMissionSignataire,
 } from './missions'
 import { updateSettings } from './settings'
+import { readAuditSince } from './audit'
 
 let userId = ''
 
@@ -37,6 +38,7 @@ afterAll(async () => {
   await prisma.client.deleteMany({ where: { name: { startsWith: 'SURCHARGE' } } })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'CASCADE' } } })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'SIGNATAIRE' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'JOURNAL' } } })
   await prisma.$disconnect()
 })
 
@@ -388,5 +390,48 @@ describe('signataire de la mission', () => {
     expect(relu.signataireNom).toBe('')
 
     await prisma.user.delete({ where: { id: autre.id } })
+  })
+})
+
+describe('consignation du référentiel', () => {
+  beforeEach(async () => {
+    await prisma.auditEvent.deleteMany({})
+  })
+
+  it('consigne la création d un client', async () => {
+    const c = await createClient('JOURNAL client', null, userId)
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal[0]).toMatchObject({
+      action: 'client.cree', entityType: 'Client', entityId: c.id, actorId: userId,
+    })
+    expect(journal[0]!.payload).toMatchObject({ name: 'JOURNAL client' })
+  })
+
+  it('consigne la création d une mission et d une prestation', async () => {
+    const c = await createClient('JOURNAL cascade', null, userId)
+    const m = await createMission({ clientId: c.id, label: 'M', userId })
+    const l = await createLine({
+      missionId: m.id, userId, label: 'L', soldCentiemes: 3000, tjmCents: 80000,
+    })
+
+    expect((await readAuditSince({ since: 0 })).map((e) => e.action)).toEqual([
+      'client.cree', 'mission.creee', 'prestation.creee',
+    ])
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal[2]).toMatchObject({ entityType: 'MissionLine', entityId: l.id })
+    expect(journal[2]!.payload).toMatchObject({ missionId: m.id, soldCentiemes: 3000 })
+  })
+
+  it('attribue au système un acte sans utilisateur', async () => {
+    await createClient('JOURNAL systeme')
+    expect((await readAuditSince({ since: 0 }))[0]).toMatchObject({
+      actorId: '', actorLabel: 'SYSTEME',
+    })
+  })
+
+  it('ne consigne aucune consultation du référentiel', async () => {
+    await listMissionsForUser(userId)
+    await listActiveLines(userId)
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
   })
 })

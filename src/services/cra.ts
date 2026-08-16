@@ -2,9 +2,28 @@ import { prisma } from '@/db/client'
 import { applyTransition, type CraTransition } from '@/core/cra/state-machine'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import type { CraStatus } from '@/core/types'
+import type { AuditAction } from '@/core/audit/events'
 import { DOLIBARR } from './dolibarr/api'
 import { isDolibarrPushArmed } from './dolibarr/push'
 import { enqueueSync } from './sync/outbox'
+import { appendAudit, actorOf } from './audit'
+
+/**
+ * Chaque transition porte son propre nom au journal. Un unique
+ * `cra.transitionne` obligerait tout abonné à ouvrir la charge utile pour
+ * savoir de quoi il s'agit — et rendrait impossible de s'abonner à la seule
+ * validation, qui est précisément ce que tout le monde attend.
+ *
+ * `Record<CraTransition, AuditAction>` et non un objet libre : ajouter une
+ * transition à la machine à états sans lui donner d'événement ne compilera
+ * pas, plutôt que de passer silencieusement.
+ */
+const ACTION_PAR_TRANSITION: Record<CraTransition, AuditAction> = {
+  ENVOYER: 'cra.envoye',
+  VALIDER: 'cra.valide',
+  REFUSER: 'cra.refuse',
+  ROUVRIR: 'cra.rouvert',
+}
 
 export interface CraView {
   id: string
@@ -50,17 +69,44 @@ function monthStart(month: string): Date {
   return new Date(`${month}-01T00:00:00.000Z`)
 }
 
+/**
+ * Une lecture puis une création, et non un `upsert` : un `upsert` ne dit pas
+ * s'il a créé. Consigner une ouverture à chaque affichage de la page noierait
+ * le journal sous un événement qui ne raconte rien — le CRA n'est ouvert
+ * qu'une fois.
+ */
 export async function getOrCreateCra(
   userId: string,
   missionId: string,
   month: string,
 ): Promise<CraView> {
-  const row = await prisma.cra.upsert({
-    where: { missionId_userId_month: { missionId, userId, month: monthStart(month) } },
-    create: { missionId, userId, month: monthStart(month) },
-    update: {},
-    include: WITH_MISSION,
+  const cle = { missionId_userId_month: { missionId, userId, month: monthStart(month) } }
+
+  const existant = await prisma.cra.findUnique({ where: cle, include: WITH_MISSION })
+  if (existant !== null) return toView(existant)
+
+  let row
+  try {
+    row = await prisma.cra.create({
+      data: { missionId, userId, month: monthStart(month) },
+      include: WITH_MISSION,
+    })
+  } catch {
+    // Course avec un autre rendu de la même page : le CRA existe désormais,
+    // et il n'a été « ouvert » qu'une fois — c'est l'autre rendu qui l'a
+    // consigné.
+    const relu = await prisma.cra.findUniqueOrThrow({ where: cle, include: WITH_MISSION })
+    return toView(relu)
+  }
+
+  await appendAudit({
+    ...(await actorOf(userId)),
+    action: 'cra.ouvert',
+    entityType: 'Cra',
+    entityId: row.id,
+    payload: { missionId, month, status: row.status },
   })
+
   return toView(row)
 }
 
@@ -129,9 +175,39 @@ export async function transitionCra(
     return updated
   })
 
+  // Consigné après la transaction : le journal atteste de ce qui a eu lieu, et
+  // une transaction annulée n'a rien fait avoir lieu. `applyTransition` lève
+  // **avant** l'écriture — une transition impossible ne laisse donc rien ici
+  // sans qu'aucune garde supplémentaire soit nécessaire.
+  await appendAudit({
+    ...(await actorOf(userId)),
+    action: ACTION_PAR_TRANSITION[t],
+    entityType: 'Cra',
+    entityId: craId,
+    payload: {
+      missionId: row.missionId,
+      month: row.month.toISOString().slice(0, 7),
+      statutAvant: current.status,
+      statutApres: next,
+    },
+  })
+
   return toView(row)
 }
 
+/**
+ * Le suivi de facturation, **saisi à la main** : l'application ne facture pas,
+ * et ces trois champs ne sont le produit d'aucun calcul.
+ *
+ * Consigné sous `facturation.renseignee`. C'est l'événement qui a remplacé
+ * `facture.demandee` de la spec du lot 4 : la demande de facture à Dolibarr a
+ * été retirée du produit (commit `c1aeb8c`), mais dire « cette prestation est
+ * facturée, à ce numéro, payée à cette date » reste un acte qui engage.
+ *
+ * Seules les clés effectivement présentes au patch sont consignées : recopier
+ * les trois champs à chaque enregistrement ferait croire qu'on a touché à ce
+ * qu'on n'a pas touché.
+ */
 export async function updateInvoiceTracking(
   userId: string,
   craId: string,
@@ -144,6 +220,23 @@ export async function updateInvoiceTracking(
     data: patch,
     include: WITH_MISSION,
   })
+
+  await appendAudit({
+    ...(await actorOf(userId)),
+    action: 'facturation.renseignee',
+    entityType: 'Cra',
+    entityId: craId,
+    payload: {
+      cles: Object.keys(patch),
+      month: row.month.toISOString().slice(0, 7),
+      ...(patch.invoiceNumber !== undefined && { invoiceNumber: patch.invoiceNumber }),
+      ...(patch.invoicedAt !== undefined && {
+        invoicedAt: patch.invoicedAt?.toISOString() ?? null,
+      }),
+      ...(patch.paidAt !== undefined && { paidAt: patch.paidAt?.toISOString() ?? null }),
+    },
+  })
+
   return toView(row)
 }
 

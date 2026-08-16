@@ -2,6 +2,7 @@ import { prisma } from '@/db/client'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { isLocked } from '@/core/cra/state-machine'
 import { getSettings } from './settings'
+import { appendAudit, actorOf } from './audit'
 import type { CraStatus } from '@/core/types'
 
 interface Candidate {
@@ -94,6 +95,22 @@ export async function recalibrateOpenMonths(
     await prisma.timeEntry.update({
       where: { id: c.id },
       data: { minutesParJour: c.cible },
+    })
+  }
+
+  // Un réétalonnage qui ne touche rien n'est pas un acte : le consigner
+  // remplirait le journal de non-événements à chaque passage sur l'écran.
+  if (aTraiter.length > 0) {
+    await appendAudit({
+      ...(await actorOf(userId)),
+      action: 'reetalonnage.effectue',
+      entityType: 'Settings',
+      entityId: 'singleton',
+      payload: {
+        recalibrees: aTraiter.length,
+        sauteesVerrouillees: liste.length - aTraiter.length,
+        entryIds: aTraiter.map((c) => c.id),
+      },
     })
   }
 

@@ -45,7 +45,9 @@ Une commande de vérification recalcule la chaîne et signale la première ruptu
 
 ### Ce qui est consigné
 
-Tout ce qui engage : création, modification et suppression d'une saisie ; toute transition de CRA ; le push des temps ; la création d'une facture demandée à Dolibarr ; l'envoi en signature et le retour signé ; toute modification de réglage ; tout réétalonnage.
+Tout ce qui engage : création, modification et suppression d'une saisie ; toute transition de CRA ; le push des temps ; le suivi de facturation saisi à la main sur le CRA ; l'envoi en signature et le retour signé ; toute modification de réglage ; tout réétalonnage.
+
+(La demande de facture à Dolibarr figurait ici ; elle a été retirée du produit — voir l'amendement du §3.)
 
 **Ce qui n'est pas consigné :** les consultations. Un journal qui enregistre les lectures se noie et cesse d'être lisible.
 
@@ -58,15 +60,27 @@ Tout ce qui engage : création, modification et suppression d'une saisie ; toute
 | Domaine | Événements |
 |---|---|
 | Saisie | `saisie.creee` · `saisie.modifiee` · `saisie.supprimee` · `previsionnel.converti` |
-| CRA | `cra.ouvert` · `cra.envoye` · `cra.valide` · `cra.refuse` · `cra.rouvert` |
+| CRA | `cra.ouvert` · `cra.envoye` · `cra.valide` · `cra.refuse` · `cra.rouvert` · `facturation.renseignee` |
 | Référentiel | `client.cree` · `mission.creee` · `prestation.creee` |
-| Dolibarr | `temps.pousses` · `facture.demandee` |
+| Dolibarr | `temps.pousses` |
 | Agenda | `agenda.bloc.pousse` · `agenda.conflit.detecte` |
 | Signature | `signature.envoyee` · `signature.recue` · `signature.refusee` |
 | Alertes | `engagement.depasse` · `capacite.depassee` |
 | Exploitation | `reglage.modifie` · `reetalonnage.effectue` · `synchro.echec` · `travail.echoue` |
 
-Les noms sont en minuscules pointées : c'est un contrat public, lisible par un humain qui configure un flux, et stable dans le temps.
+Les noms sont en minuscules pointées : c'est un contrat public, lisible par un humain qui configure un flux, et stable dans le temps. Le catalogue en compte **vingt-cinq**.
+
+> **Amendement (retrait de la demande de facture, commit `c1aeb8c`).** La table
+> portait `facture.demandee`. La demande de facture a été retirée du produit :
+> Dolibarr facture depuis ses propres écrans, son API REST n'expose pas
+> l'action, et notre demande créait une facture parallèle que Dolibarr ne
+> reliait à rien. Publier un événement pour un acte qui n'existe plus serait une
+> promesse fausse — un intégrateur s'y abonnerait et attendrait indéfiniment.
+> Ce qui subsiste, en revanche, c'est le suivi **manuel** porté par le CRA
+> (`invoiceNumber`, `invoicedAt`, `paidAt`) : il engage, et il est désormais
+> consigné sous `facturation.renseignee`, dans le domaine CRA où il se décide.
+> Le décompte reste donc de vingt-cinq. La liste est figée, décompte compris,
+> dans `src/core/audit/events.test.ts`.
 
 **Ajouter un événement au catalogue est une décision de conception**, pas un effet de bord. Un catalogue qui grossit sans discipline devient inutilisable pour celui qui doit choisir à quoi s'abonner.
 

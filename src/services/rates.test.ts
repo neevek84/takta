@@ -5,6 +5,7 @@ import { createClient } from './clients'
 import { createMission, createLine } from './missions'
 import { saveEntry } from './time-entries'
 import { previewRecalibration, recalibrateOpenMonths } from './rates'
+import { readAuditSince } from './audit'
 
 let userId = ''
 let missionId = ''
@@ -111,5 +112,43 @@ describe('réétalonnage', () => {
   it('ne fait rien quand aucun facteur n a changé', async () => {
     await saveEntry({ userId, lineId, date: '2026-07-06', minutes: 480, kind: 'REALISE' })
     expect(await recalibrateOpenMonths(userId)).toEqual({ recalibrees: 0, sauteesVerrouillees: 0 })
+  })
+})
+
+describe('consignation du réétalonnage', () => {
+  beforeEach(async () => {
+    await prisma.auditEvent.deleteMany({})
+  })
+
+  it('consigne un réétalonnage effectif', async () => {
+    await saveEntry({ userId, lineId, date: '2026-07-11', minutes: 480, kind: 'REALISE' })
+    await prisma.auditEvent.deleteMany({})
+    await updateSettings({ minutesParJour: 420 })
+    await prisma.auditEvent.deleteMany({})
+
+    await recalibrateOpenMonths(userId)
+
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal[0]).toMatchObject({
+      action: 'reetalonnage.effectue', entityType: 'Settings', entityId: 'singleton', actorId: userId,
+    })
+    expect(journal[0]!.payload).toMatchObject({ recalibrees: 1, sauteesVerrouillees: 0 })
+  })
+
+  it('ne consigne rien quand rien n a bougé', async () => {
+    await saveEntry({ userId, lineId, date: '2026-07-12', minutes: 480, kind: 'REALISE' })
+    await prisma.auditEvent.deleteMany({})
+
+    expect(await recalibrateOpenMonths(userId)).toEqual({ recalibrees: 0, sauteesVerrouillees: 0 })
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
+  })
+
+  it('ne consigne pas la prévisualisation', async () => {
+    await saveEntry({ userId, lineId, date: '2026-07-13', minutes: 480, kind: 'REALISE' })
+    await updateSettings({ minutesParJour: 420 })
+    await prisma.auditEvent.deleteMany({})
+
+    await previewRecalibration(userId)
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
   })
 })

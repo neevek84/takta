@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from 'vitest'
+import { describe, it, expect, afterAll, beforeEach } from 'vitest'
 import {
   getSettings,
   updateSettings,
@@ -7,6 +7,7 @@ import {
   SettingsValidationError,
 } from './settings'
 import { prisma } from '@/db/client'
+import { readAuditSince } from './audit'
 
 afterAll(async () => {
   await prisma.settings.deleteMany({})
@@ -263,3 +264,41 @@ describe('plage journée', () => {
   })
 })
 
+
+describe('consignation des réglages', () => {
+  beforeEach(async () => {
+    await prisma.auditEvent.deleteMany({})
+  })
+
+  it('consigne les clés modifiées et leurs valeurs', async () => {
+    await updateSettings({ minutesParJour: 432, capacityMode: 'BLOCAGE' })
+
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal[0]).toMatchObject({ action: 'reglage.modifie', entityType: 'Settings', entityId: 'singleton' })
+    expect(journal[0]!.payload).toMatchObject({
+      cles: ['minutesParJour', 'capacityMode'],
+      minutesParJour: 432,
+      capacityMode: 'BLOCAGE',
+    })
+  })
+
+  it('résume les listes plutôt que de les recopier', async () => {
+    // Recopier 60 jours fériés à chaque enregistrement noierait le journal.
+    await updateSettings({ holidays: ['2026-01-01', '2026-05-01'], workingDays: [1, 2, 3, 4, 5] })
+
+    expect((await readAuditSince({ since: 0 }))[0]!.payload).toMatchObject({
+      holidays: '2 valeur(s)',
+      workingDays: '5 valeur(s)',
+    })
+  })
+
+  it('ne consigne rien quand la validation refuse le patch', async () => {
+    await expect(updateSettings({ minutesParJour: 0 })).rejects.toThrow()
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
+  })
+
+  it('ne consigne aucune lecture de réglage', async () => {
+    await getSettings()
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
+  })
+})

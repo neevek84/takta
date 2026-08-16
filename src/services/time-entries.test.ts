@@ -5,6 +5,7 @@ import { updateSettings } from './settings'
 import { createClient } from './clients'
 import { createMission, createLine } from './missions'
 import { saveEntry, getMonthEntries, getLineEngagementTotals } from './time-entries'
+import { listAuditEvents, readAuditSince } from './audit'
 import {
   listPastForecast,
   convertPastForecast,
@@ -22,6 +23,8 @@ let lineB = ''
 let lineC = ''
 /** Prestation dont la journée fait 600 minutes, quel que soit le réglage global. */
 let lineLongue = ''
+/** Prestation vendue 100 centièmes : la deuxième journée dépasse l'engagement. */
+let lineCourte = ''
 /** Affectée à `autreId`, pas à `userId` : sert à vérifier le scope userId du contrôle de capacité. */
 let ligneAutre = ''
 
@@ -55,6 +58,10 @@ beforeAll(async () => {
 
   lineLongue = (await createLine({
     missionId: m.id, userId, label: 'Longue', soldCentiemes: 3000, tjmCents: 0, minutesParJour: 600,
+  })).id
+
+  lineCourte = (await createLine({
+    missionId: m.id, userId, label: 'Courte', soldCentiemes: 100, tjmCents: 0,
   })).id
 
   const m2 = await createMission({ clientId: c.id, label: 'M2' })
@@ -669,5 +676,141 @@ describe('gel du facteur de conversion', () => {
       where: { id: line.mission.clientId },
       data: { minutesParJour: null },
     })
+  })
+})
+
+describe('consignation des saisies', () => {
+  beforeEach(async () => {
+    // Le `beforeEach` racine appelle `updateSettings`, qui consigne désormais
+    // un `reglage.modifie` : le journal se vide donc APRÈS lui, jamais avant.
+    await prisma.auditEvent.deleteMany({})
+  })
+
+  it('consigne une création', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-09-01', minutes: 480, kind: 'REALISE' })
+
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toMatchObject({
+      action: 'saisie.creee',
+      entityType: 'TimeEntry',
+      actorId: userId,
+    })
+    expect(journal[0]!.payload).toMatchObject({
+      lineId: lineA,
+      date: '2026-09-01',
+      minutes: 480,
+      kind: 'REALISE',
+      slotId: '',
+    })
+  })
+
+  it('distingue une modification d une création', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-09-02', minutes: 480, kind: 'REALISE' })
+    await saveEntry({ userId, lineId: lineA, date: '2026-09-02', minutes: 240, kind: 'REALISE' })
+
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal.map((e) => e.action)).toEqual(['saisie.creee', 'saisie.modifiee'])
+    expect(journal[1]!.payload).toMatchObject({ minutes: 240, minutesAvant: 480 })
+  })
+
+  it('consigne une suppression avec ce qui disparaît', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-09-03', minutes: 480, kind: 'REALISE' })
+    await saveEntry({ userId, lineId: lineA, date: '2026-09-03', minutes: 0, kind: 'REALISE' })
+
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal.map((e) => e.action)).toEqual(['saisie.creee', 'saisie.supprimee'])
+    expect(journal[1]!.payload).toMatchObject({ minutes: 480, date: '2026-09-03' })
+  })
+
+  it('ne consigne rien quand on supprime ce qui n existe pas', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-09-04', minutes: 0, kind: 'REALISE' })
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
+  })
+
+  it('ne consigne rien quand la saisie est refusée faute d affectation', async () => {
+    const r = await saveEntry({
+      userId: intrusId, lineId: lineA, date: '2026-09-05', minutes: 480, kind: 'REALISE',
+    })
+    expect(r).toEqual({ ok: false, reason: 'NON_AFFECTE' })
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
+  })
+
+  it('ne consigne rien quand le mois est verrouillé', async () => {
+    await prisma.cra.create({
+      data: { missionId: missionA, userId, month: new Date('2026-09-01T00:00:00Z'), status: 'VALIDE' },
+    })
+    const r = await saveEntry({ userId, lineId: lineA, date: '2026-09-06', minutes: 480, kind: 'REALISE' })
+    expect(r).toEqual({ ok: false, reason: 'VERROUILLE' })
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
+
+    await prisma.cra.deleteMany({ where: { userId } })
+  })
+
+  it('consigne un dépassement de capacité, blocage compris', async () => {
+    await updateSettings({ capacityMode: 'BLOCAGE', capacityCentiemes: 100, minutesParJour: 480 })
+    await prisma.auditEvent.deleteMany({})
+
+    const r = await saveEntry({ userId, lineId: lineA, date: '2026-09-07', minutes: 600, kind: 'REALISE' })
+    expect(r).toMatchObject({ ok: false, reason: 'CAPACITE' })
+
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal.map((e) => e.action)).toEqual(['capacite.depassee'])
+    expect(journal[0]!.payload).toMatchObject({ date: '2026-09-07', bloque: true })
+  })
+
+  it('consigne un dépassement d engagement une seule fois', async () => {
+    // La ligne est vendue 100 centièmes ; la deuxième journée la dépasse.
+    await updateSettings({ capacityMode: 'DESACTIVE', minutesParJour: 480 })
+    await prisma.auditEvent.deleteMany({})
+
+    await saveEntry({ userId, lineId: lineCourte, date: '2026-09-10', minutes: 480, kind: 'REALISE' })
+    await saveEntry({ userId, lineId: lineCourte, date: '2026-09-11', minutes: 480, kind: 'REALISE' })
+    await saveEntry({ userId, lineId: lineCourte, date: '2026-09-14', minutes: 480, kind: 'REALISE' })
+
+    const depassements = (await readAuditSince({ since: 0 })).filter(
+      (e) => e.action === 'engagement.depasse',
+    )
+    // Franchi une fois, il ne se re-signale pas à chaque journée suivante :
+    // un rappel qu'on apprend à ignorer est pire qu'une absence de rappel.
+    expect(depassements).toHaveLength(1)
+    expect(depassements[0]!.payload).toMatchObject({ lineId: lineCourte })
+  })
+
+  it('consigne la conversion du prévisionnel échu', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-09-20', minutes: 480, kind: 'PREVISIONNEL' })
+    await prisma.auditEvent.deleteMany({})
+
+    const r = await convertPastForecast(userId, '2026-09', '2026-09-25')
+    expect(r.converted).toBe(1)
+
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal.map((e) => e.action)).toEqual(['previsionnel.converti'])
+    expect(journal[0]).toMatchObject({ entityType: 'Mois', entityId: '2026-09' })
+    expect(journal[0]!.payload).toMatchObject({ converted: 1, skippedLocked: 0 })
+  })
+
+  it('ne consigne rien quand la conversion ne convertit rien', async () => {
+    expect(await convertPastForecast(userId, '2026-10', '2026-10-25')).toEqual({
+      converted: 0, skippedLocked: 0,
+    })
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
+  })
+
+  it('ne consigne AUCUNE lecture', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-09-28', minutes: 480, kind: 'PREVISIONNEL' })
+    const avant = await readAuditSince({ since: 0 })
+
+    await getMonthEntries(userId, '2026-09')
+    await listPastForecast(userId, '2026-09', '2026-09-30')
+    await getPastForecastWithLockStatus(userId, '2026-09', '2026-09-30')
+
+    expect(await readAuditSince({ since: 0 })).toHaveLength(avant.length)
+  })
+
+  it('rend les entrées consignées visibles dans la lecture scopée', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-09-29', minutes: 480, kind: 'REALISE' })
+    expect(await listAuditEvents(userId, { action: 'saisie.creee' })).toHaveLength(1)
+    expect(await listAuditEvents(intrusId, { action: 'saisie.creee' })).toHaveLength(0)
   })
 })

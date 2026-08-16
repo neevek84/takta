@@ -4,8 +4,10 @@ import { checkCapacity } from '@/core/capacity/check'
 import { isLocked } from '@/core/cra/state-machine'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { entryBounds } from '@/core/time/slots'
+import { computeEngagement } from '@/core/engagement/compute'
 import { getSettings } from './settings'
 import { enqueueTimeEntry } from './sync/outbox'
+import { appendAudit, actorOf } from './audit'
 
 export interface MonthEntry {
   id: string
@@ -192,12 +194,34 @@ export async function resolveLineMinutesParJour(
 }
 
 /**
+ * Dépassement d'engagement d'une ligne, en centièmes, **toutes périodes
+ * confondues** — la mesure sur laquelle porte l'alerte. Le borner au mois
+ * saisi donnerait un dépassement faux dès le deuxième mois de la mission.
+ */
+async function depassementDeLaLigne(
+  userId: string,
+  lineId: string,
+  venduCentiemes: number,
+): Promise<number> {
+  const totaux = await getLineEngagementTotals(userId, [lineId])
+  return computeEngagement({ venduCentiemes, entries: totaux[lineId] ?? [] })
+    .depassementCentiemes
+}
+
+/**
  * Enregistre une saisie de temps pour une ligne/utilisateur/jour/créneau
  * donnés, en appliquant l'affectation, le verrouillage du CRA et le contrôle
  * de capacité quotidien (toutes lignes confondues, week-ends inclus).
  *
  * `minutes: 0` supprime la saisie existante plutôt que d'écrire une ligne à
  * zéro.
+ *
+ * **Ce qui part au journal de preuve**, et rien d'autre : la création, la
+ * modification, la suppression, le dépassement de capacité et le
+ * franchissement d'engagement. Un refus n'écrit rien — sauf le dépassement de
+ * capacité, qui EST le fait qu'on veut consigner. Les lectures de ce module
+ * restent muettes : un journal qui enregistre les consultations se noie et
+ * cesse d'être lisible.
  */
 export async function saveEntry(args: {
   userId: string
@@ -216,7 +240,12 @@ export async function saveEntry(args: {
   // vit dans le service, pas dans le server action qui l'appelle.
   const assignment = await prisma.assignment.findUnique({
     where: { lineId_userId: { lineId: args.lineId, userId: args.userId } },
-    select: { line: { select: { missionId: true, allowedSlotIds: true } } },
+    // `soldCentiemes` est la part vendue à CET utilisateur : c'est elle, et
+    // non le vendu de la prestation entière, que son engagement dépasse.
+    select: {
+      soldCentiemes: true,
+      line: { select: { missionId: true, allowedSlotIds: true } },
+    },
   })
 
   if (assignment === null) {
@@ -237,6 +266,20 @@ export async function saveEntry(args: {
   if (cra && isLocked(cra.status as CraStatus)) {
     return { ok: false, reason: 'VERROUILLE' }
   }
+
+  // Lu avant toute écriture : c'est le seul moment où l'on sait encore ce que
+  // la saisie remplace — donc le seul moment où l'on peut distinguer une
+  // création d'une modification, et dire ce qu'une suppression emporte.
+  //
+  // Relevé par sa **cible** (le créneau) et non par la clé d'unicité (qui
+  // porte l'heure de début depuis le lot 1f) : c'est ce que désigne la
+  // cellule du tableau, et c'est ce que retrouve l'écriture plus bas.
+  const existante = await prisma.timeEntry.findFirst({
+    where: { lineId: args.lineId, userId: args.userId, date, slotId },
+    select: { minutes: true, kind: true },
+  })
+
+  const acteur = await actorOf(args.userId)
 
   if (args.minutes === 0) {
     // La suppression et sa mise en file tiennent dans la même transaction :
@@ -262,6 +305,24 @@ export async function saveEntry(args: {
         })
       }
     })
+
+    // Rien de supprimé, rien à consigner : effacer une cellule déjà vide
+    // n'est pas un acte.
+    if (existante !== null) {
+      await appendAudit({
+        ...acteur,
+        action: 'saisie.supprimee',
+        entityType: 'TimeEntry',
+        entityId: `${args.lineId}:${args.date}:${slotId}`,
+        payload: {
+          lineId: args.lineId,
+          date: args.date,
+          slotId,
+          minutes: existante.minutes,
+          kind: existante.kind,
+        },
+      })
+    }
 
     return { ok: true, minutes: 0 }
   }
@@ -317,6 +378,25 @@ export async function saveEntry(args: {
     mode: settings.capacityMode,
   })
 
+  // Le dépassement est un fait de la journée, qu'il ait bloqué ou seulement
+  // averti : les deux méritent d'être consignés, et c'est le seul refus qui
+  // laisse une trace — parce que c'est lui, le fait.
+  if (!verdict.ok) {
+    await appendAudit({
+      ...acteur,
+      action: 'capacite.depassee',
+      entityType: 'Jour',
+      entityId: args.date,
+      payload: {
+        date: args.date,
+        totalCentiemes: verdict.totalCentiemes,
+        capacityCentiemes: verdict.capacityCentiemes,
+        mode: settings.capacityMode,
+        bloque: verdict.severity === 'block',
+      },
+    })
+  }
+
   if (!verdict.ok && verdict.severity === 'block') {
     return {
       ok: false,
@@ -334,19 +414,27 @@ export async function saveEntry(args: {
       ? { totalCentiemes: verdict.totalCentiemes, capacityCentiemes: verdict.capacityCentiemes }
       : null
 
+  // Mesuré **avant** l'écriture : c'est la comparaison avant/après qui dit
+  // s'il y a franchissement, et non simple poursuite d'un dépassement acquis.
+  const depassementAvant = await depassementDeLaLigne(
+    args.userId,
+    args.lineId,
+    assignment.soldCentiemes,
+  )
+
   await prisma.$transaction(async (tx) => {
     // La cellule du tableau vise **un créneau**, pas une heure de début : le
     // `slotId` reste ce qui la désigne, même s'il n'identifie plus la saisie
     // en base. La retrouver par sa cible plutôt que par la clé d'unicité est
     // aussi ce qui garde son identifiant — donc son événement d'agenda —
     // quand le créneau a été redéfini entre deux corrections.
-    const existante = await tx.timeEntry.findFirst({
+    const cible = await tx.timeEntry.findFirst({
       where: { lineId: args.lineId, userId: args.userId, date, slotId },
       select: { id: true },
     })
 
     const entry =
-      existante === null
+      cible === null
         ? await tx.timeEntry.create({
             data: {
               lineId: args.lineId,
@@ -360,7 +448,7 @@ export async function saveEntry(args: {
             },
           })
         : await tx.timeEntry.update({
-            where: { id: existante.id },
+            where: { id: cible.id },
             // Les bornes sont réécrites avec la saisie, comme `minutesParJour` :
             // le gel porte sur l'écriture, et une correction *est* une écriture.
             data: { minutes: args.minutes, kind: args.kind, minutesParJour, ...bornes },
@@ -368,6 +456,48 @@ export async function saveEntry(args: {
 
     await enqueueTimeEntry(tx, { userId: args.userId, entryId: entry.id, operation: 'UPSERT' })
   })
+
+  // Consigné **après** la transaction, jamais dedans : le journal atteste de
+  // ce qui a eu lieu, et une entrée écrite dans une transaction qui peut
+  // encore être annulée attesterait d'un acte qui n'a pas eu lieu.
+  await appendAudit({
+    ...acteur,
+    action: existante === null ? 'saisie.creee' : 'saisie.modifiee',
+    entityType: 'TimeEntry',
+    entityId: `${args.lineId}:${args.date}:${slotId}`,
+    payload: {
+      lineId: args.lineId,
+      date: args.date,
+      slotId,
+      minutes: args.minutes,
+      kind: args.kind,
+      minutesParJour,
+      ...(existante !== null && { minutesAvant: existante.minutes, kindAvant: existante.kind }),
+    },
+  })
+
+  const depassementApres = await depassementDeLaLigne(
+    args.userId,
+    args.lineId,
+    assignment.soldCentiemes,
+  )
+
+  // Signalé au **franchissement** seulement. Le re-signaler à chaque journée
+  // suivante apprendrait à l'ignorer, et un rappel qu'on ignore est pire
+  // qu'une absence de rappel.
+  if (depassementAvant === 0 && depassementApres > 0) {
+    await appendAudit({
+      ...acteur,
+      action: 'engagement.depasse',
+      entityType: 'MissionLine',
+      entityId: args.lineId,
+      payload: {
+        lineId: args.lineId,
+        venduCentiemes: assignment.soldCentiemes,
+        depassementCentiemes: depassementApres,
+      },
+    })
+  }
 
   // Une ligne qui n'énumère aucun créneau les accepte tous ; une saisie à la
   // journée n'est jamais concernée. La liste est stockée en chaîne séparée par
@@ -502,6 +632,22 @@ export async function convertPastForecast(
       for (const e of convertibles) {
         await enqueueTimeEntry(tx, { userId, entryId: e.id, operation: 'UPSERT' })
       }
+    })
+
+    // Une seule entrée pour tout le lot : la conversion est un acte unique,
+    // décidé une fois par l'utilisateur. Une entrée par saisie noierait le
+    // journal sans rien apprendre de plus.
+    await appendAudit({
+      ...(await actorOf(userId)),
+      action: 'previsionnel.converti',
+      entityType: 'Mois',
+      entityId: month,
+      payload: {
+        month,
+        converted: convertibles.length,
+        skippedLocked: lockedCount,
+        lineIds: [...new Set(convertibles.map((e) => e.lineId))],
+      },
     })
   }
 

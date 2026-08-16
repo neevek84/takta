@@ -1,10 +1,29 @@
 import { prisma } from '@/db/client'
+import { appendAudit, actorOf } from './audit'
 
+/**
+ * `userId` est optionnel et en **dernière position** : la création d'un client
+ * est une écriture d'instance, qui ne portait pas d'utilisateur. Le journal,
+ * lui, a besoin d'un acteur. Plutôt que d'imposer un argument à des dizaines
+ * d'appels existants, l'absence attribue l'acte à `SYSTEME` — les server
+ * actions, elles, passent toujours l'utilisateur réel : un acte humain
+ * attribué au système serait une preuve fausse.
+ */
 export async function createClient(
   name: string,
   minutesParJour?: number | null,
+  userId?: string,
 ): Promise<{ id: string; name: string }> {
   const c = await prisma.client.create({ data: { name, minutesParJour: minutesParJour ?? null } })
+
+  await appendAudit({
+    ...(await actorOf(userId ?? '')),
+    action: 'client.cree',
+    entityType: 'Client',
+    entityId: c.id,
+    payload: { name, minutesParJour: minutesParJour ?? null },
+  })
+
   return { id: c.id, name: c.name }
 }
 

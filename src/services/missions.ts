@@ -3,6 +3,7 @@ import { prisma } from '@/db/client'
 import { getSettings } from './settings'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import type { DisplayUnit } from '@/core/types'
+import { appendAudit, actorOf } from './audit'
 
 export interface LineForGrid {
   id: string
@@ -15,12 +16,19 @@ export interface LineForGrid {
   allowedSlotIds: string[]
 }
 
+/**
+ * `userId` optionnel, pour la même raison que sur `createClient` : une mission
+ * se crée sans utilisateur dans des dizaines d'appels existants, et le journal
+ * a besoin d'un acteur. Absent, l'acte revient à `SYSTEME` ; les server
+ * actions le passent toujours.
+ */
 export async function createMission(args: {
   clientId: string
   label: string
   minutesParJour?: number | null
   signataireNom?: string
   signataireEmail?: string
+  userId?: string
 }): Promise<{ id: string }> {
   const m = await prisma.mission.create({
     data: {
@@ -31,6 +39,19 @@ export async function createMission(args: {
       signataireEmail: args.signataireEmail ?? '',
     },
   })
+
+  await appendAudit({
+    ...(await actorOf(args.userId ?? '')),
+    action: 'mission.creee',
+    entityType: 'Mission',
+    entityId: m.id,
+    payload: {
+      clientId: args.clientId,
+      label: args.label,
+      minutesParJour: args.minutesParJour ?? null,
+    },
+  })
+
   return { id: m.id }
 }
 
@@ -50,7 +71,7 @@ export async function createLine(args: {
   // affectation n'existe pas dans le modèle — `listActiveLines` part des
   // affectations, donc une telle ligne serait invisible dans l'interface tout
   // en occupant la base, sans moyen de la supprimer.
-  return prisma.$transaction(async (tx) => {
+  const cree = await prisma.$transaction(async (tx) => {
     const line = await tx.missionLine.create({
       data: {
         missionId: args.missionId,
@@ -71,6 +92,26 @@ export async function createLine(args: {
 
     return { id: line.id }
   })
+
+  // Hors de la transaction, et volontairement : le journal ne doit pas être
+  // écrit dans une transaction qui peut encore être annulée — il attesterait
+  // alors d'une prestation qui n'existe pas.
+  await appendAudit({
+    ...(await actorOf(args.userId)),
+    action: 'prestation.creee',
+    entityType: 'MissionLine',
+    entityId: cree.id,
+    payload: {
+      missionId: args.missionId,
+      label: args.label,
+      soldCentiemes: args.soldCentiemes,
+      tjmCents: args.tjmCents,
+      displayUnit: args.displayUnit ?? settings.defaultDisplayUnit,
+      minutesParJour: args.minutesParJour ?? null,
+    },
+  })
+
+  return cree
 }
 
 export interface MissionForUser {

@@ -35,8 +35,16 @@ const VARIABLES_SECRETES = [
   'DATABASE_URL',
 ] as const
 
-/** Lues à chaque appel : un test qui change l'environnement doit être suivi. */
-function secretsDuProcessus(): string[] {
+/**
+ * Lues à chaque appel : un test qui change l'environnement doit être suivi.
+ *
+ * Exportée pour le journal de preuve (`services/audit.ts`), qui rédige les
+ * charges utiles qu'il consigne. Une seconde liste de variables sensibles
+ * vivrait ailleurs et prendrait du retard sur celle-ci au premier secret
+ * ajouté — et un secret oublié d'une seule des deux listes est un secret
+ * publié.
+ */
+export function secretsDuProcessus(): string[] {
   return VARIABLES_SECRETES.map((nom) => process.env[nom] ?? '').filter((v) => v !== '')
 }
 

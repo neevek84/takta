@@ -71,3 +71,12 @@ describe('saveSettings — plage journée', () => {
     expect(Number.isNaN(patch.journeeDebutMinute)).toBe(true)
   })
 })
+
+describe('attribution au journal de preuve', () => {
+  it('transmet l utilisateur de la session au service des réglages', async () => {
+    // Sans ce second argument, tout réglage humain serait consigné au nom de
+    // `SYSTEME` — une preuve fausse, et le seul motif de ce paramètre.
+    await saveSettings(null, formulaire())
+    expect(updateSettings).toHaveBeenCalledWith(expect.any(Object), 'u1')
+  })
+})

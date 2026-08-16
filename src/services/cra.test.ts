@@ -8,6 +8,7 @@ import { getOrCreateCra, transitionCra, listCras, updateInvoiceTracking } from '
 import { InvalidTransitionError } from '@/core/cra/state-machine'
 import { saveInstanceCredential, revokeInstanceCredential } from './credentials'
 import { DOLIBARR } from './dolibarr/api'
+import { readAuditSince } from './audit'
 
 // Un interrupteur pour rendre la file indisponible à la demande — même montage
 // que `cells.test.ts`, pour la même raison. Sans lui, « la mise en file est
@@ -283,5 +284,86 @@ describe('mise en file à la validation', () => {
     const apres = await prisma.cra.findUniqueOrThrow({ where: { id: cra.id } })
     expect(apres.status).toBe('ENVOYE')
     expect(await prisma.syncOutbox.count()).toBe(0)
+  })
+})
+
+describe('consignation du CRA', () => {
+  beforeEach(async () => {
+    await prisma.auditEvent.deleteMany({})
+  })
+
+  it('consigne l ouverture, une seule fois', async () => {
+    const cra = await getOrCreateCra(userId, missionId, '2026-11')
+    await getOrCreateCra(userId, missionId, '2026-11')
+
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal.map((e) => e.action)).toEqual(['cra.ouvert'])
+    expect(journal[0]).toMatchObject({ entityType: 'Cra', entityId: cra.id, actorId: userId })
+    expect(journal[0]!.payload).toMatchObject({ missionId, month: '2026-11' })
+  })
+
+  it('consigne chaque transition sous son propre nom', async () => {
+    const cra = await getOrCreateCra(userId, missionId, '2026-12')
+    await prisma.auditEvent.deleteMany({})
+
+    await transitionCra(userId, cra.id, 'ENVOYER')
+    await transitionCra(userId, cra.id, 'VALIDER')
+    await transitionCra(userId, cra.id, 'ROUVRIR')
+    await transitionCra(userId, cra.id, 'ENVOYER')
+    await transitionCra(userId, cra.id, 'REFUSER')
+
+    expect((await readAuditSince({ since: 0 })).map((e) => e.action)).toEqual([
+      'cra.envoye', 'cra.valide', 'cra.rouvert', 'cra.envoye', 'cra.refuse',
+    ])
+  })
+
+  it('consigne le statut d avant et d après', async () => {
+    const cra = await getOrCreateCra(userId, missionId, '2027-01')
+    await prisma.auditEvent.deleteMany({})
+    await transitionCra(userId, cra.id, 'ENVOYER')
+
+    expect((await readAuditSince({ since: 0 }))[0]!.payload).toMatchObject({
+      statutAvant: 'BROUILLON',
+      statutApres: 'ENVOYE',
+      month: '2027-01',
+    })
+  })
+
+  it('ne consigne rien quand la transition est impossible', async () => {
+    const cra = await getOrCreateCra(userId, missionId, '2027-02')
+    await prisma.auditEvent.deleteMany({})
+
+    await expect(transitionCra(userId, cra.id, 'VALIDER')).rejects.toThrow()
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
+  })
+
+  it('consigne le suivi de facturation saisi à la main', async () => {
+    // La demande de facture à Dolibarr a été retirée du produit : il n'existe
+    // plus d'événement `facture.demandee`. Ce qui subsiste — et engage — c'est
+    // ce suivi manuel, porté par le CRA.
+    const cra = await getOrCreateCra(userId, missionId, '2027-04')
+    await prisma.auditEvent.deleteMany({})
+
+    await updateInvoiceTracking(userId, cra.id, {
+      invoiceNumber: 'FA2704-0001',
+      invoicedAt: new Date('2027-05-02T00:00:00Z'),
+    })
+
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal.map((e) => e.action)).toEqual(['facturation.renseignee'])
+    expect(journal[0]).toMatchObject({ entityType: 'Cra', entityId: cra.id, actorId: userId })
+    expect(journal[0]!.payload).toMatchObject({
+      cles: ['invoiceNumber', 'invoicedAt'],
+      invoiceNumber: 'FA2704-0001',
+    })
+  })
+
+  it('ne consigne aucune consultation', async () => {
+    await getOrCreateCra(userId, missionId, '2027-03')
+    await prisma.auditEvent.deleteMany({})
+
+    await listCras(userId, '2027-03')
+
+    expect(await readAuditSince({ since: 0 })).toHaveLength(0)
   })
 })

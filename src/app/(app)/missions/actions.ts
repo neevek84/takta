@@ -25,20 +25,28 @@ function surchargeOuNull(brut: FormDataEntryValue | null): number | null {
   return Math.round(heures * 60)
 }
 
+// L'utilisateur est transmis au service pour que le journal de preuve nomme
+// l'auteur réel de l'acte : un acte humain attribué à `SYSTEME` serait une
+// preuve fausse. C'est le seul motif de ces deux passages d'argument.
 export async function addClient(formData: FormData) {
-  await requireUser()
-  await createClient(String(formData.get('name')), surchargeOuNull(formData.get('heuresParJour')))
+  const user = await requireUser()
+  await createClient(
+    String(formData.get('name')),
+    surchargeOuNull(formData.get('heuresParJour')),
+    user.id,
+  )
   revalidatePath('/missions')
 }
 
 export async function addMission(formData: FormData) {
-  await requireUser()
+  const user = await requireUser()
   await createMission({
     clientId: String(formData.get('clientId')),
     label: String(formData.get('label')),
     minutesParJour: surchargeOuNull(formData.get('heuresParJour')),
     signataireNom: String(formData.get('signataireNom') ?? ''),
     signataireEmail: String(formData.get('signataireEmail') ?? ''),
+    userId: user.id,
   })
   revalidatePath('/missions')
 }

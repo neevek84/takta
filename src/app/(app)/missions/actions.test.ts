@@ -16,7 +16,7 @@ vi.mock('@/services/missions', () => ({
   updateMissionSignataire,
 }))
 
-import { addMission, saveSignataire } from './actions'
+import { addClient, addMission, saveSignataire } from './actions'
 
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
@@ -48,7 +48,16 @@ describe('addMission', () => {
       minutesParJour: null,
       signataireNom: 'Claire Martin',
       signataireEmail: 'claire@acme.test',
+      // L'utilisateur de la session est transmis pour que le journal de
+      // preuve nomme l'auteur réel : un acte humain attribué à `SYSTEME`
+      // serait une preuve fausse.
+      userId: 'u1',
     })
+  })
+
+  it('attribue la création à l utilisateur de la session', async () => {
+    await addMission(formulaire({ clientId: 'c1', label: 'ITSM' }))
+    expect(createMission).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1' }))
   })
 
   it('laisse le signataire vide quand le formulaire ne le porte pas', async () => {
@@ -86,5 +95,13 @@ describe('saveSignataire', () => {
     await saveSignataire(null, formulaire({ missionId: 'm1', signataireEmail: 'c@a.test' }))
     expect(revalidatePath).toHaveBeenCalledWith('/missions')
     expect(revalidatePath).toHaveBeenCalledWith('/cra')
+  })
+})
+
+describe('addClient', () => {
+  it('attribue la création à l utilisateur de la session', async () => {
+    const { createClient } = await import('@/services/clients')
+    await addClient(formulaire({ name: 'ACME' }))
+    expect(createClient).toHaveBeenCalledWith('ACME', null, 'u1')
   })
 })
