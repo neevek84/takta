@@ -316,6 +316,30 @@ describe('MonthCalendar', () => {
       expect(classes(caseDu('2026-03-10'))).toContain('italic')
     })
 
+    // La règle vient de `kindDeLaJournee`, que le tableau consomme aussi :
+    // écrite deux fois, elle divergerait, et le même jour se lirait réalisé
+    // ici et prévisionnel là. Lire une journée mixte comme réalisée effacerait
+    // de l'écran la seule trace de la conversion qui reste à faire.
+    it('lit une journée mêlant réalisé et prévisionnel comme prévisionnelle', () => {
+      renderCalendar({
+        entries: [
+          entree({ id: 'a', minutes: 240, slotId: 'matin', kind: 'REALISE' }),
+          entree({ id: 'b', minutes: 240, slotId: 'apresmidi', kind: 'PREVISIONNEL' }),
+        ],
+      })
+      expect(classes(caseDu('2026-03-10'))).toContain('italic')
+    })
+
+    it("ne dépend pas de l'ordre des saisies pour lire une journée mixte", () => {
+      renderCalendar({
+        entries: [
+          entree({ id: 'a', minutes: 240, slotId: 'matin', kind: 'PREVISIONNEL' }),
+          entree({ id: 'b', minutes: 240, slotId: 'apresmidi', kind: 'REALISE' }),
+        ],
+      })
+      expect(classes(caseDu('2026-03-10'))).toContain('italic')
+    })
+
     it('laisse vide une case sans saisie', () => {
       renderCalendar()
       expect(valeurDu('2026-03-10').textContent).toBe('')

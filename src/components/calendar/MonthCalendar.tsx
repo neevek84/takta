@@ -4,12 +4,14 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { buildWeeks } from '@/core/month/weeks'
 import { buildCellStates } from '@/core/saisie/cell-state'
 import { colorForLine } from '@/core/saisie/colors'
+import { kindDeLaJournee } from '@/core/saisie/kind'
 import { cycleSlotIds, nextCellState } from '@/core/saisie/cycle'
 import type { CellState } from '@/core/saisie/cycle'
 import { centiemesParFacteur, formatJours, formatQuantity } from '@/core/time/units'
 import type { MinutesAuFacteur } from '@/core/time/units'
 import type { MonthDay } from '@/core/month/build'
 import type { Slot } from '@/core/time/slots'
+import type { TimeEntryKind } from '@/core/types'
 import { Button } from '@/components/ui/Button'
 import { useDragSelect } from '@/components/grid/useDragSelect'
 import type { LineForGrid } from '@/services/missions'
@@ -174,13 +176,26 @@ export function MonthCalendar({
 
   // Le `kind` ne rentre pas dans `CellState` : il dit comment la case
   // s'affiche, jamais ce que le clic suivant écrit.
-  const previsionnelles = useMemo(
-    () =>
-      new Set(
-        entries.filter((e) => e.lineId === line.id && e.kind === 'PREVISIONNEL').map((e) => e.date),
-      ),
-    [entries, line.id],
-  )
+  //
+  // La nature d'une journée se lit par `kindDeLaJournee`, la même fonction que
+  // le tableau : une règle écrite deux fois finit par diverger, et les deux
+  // vues afficheraient alors deux natures pour le même jour — ce qui était
+  // précisément le défaut I3.
+  const previsionnelles = useMemo(() => {
+    const kindsParDate = new Map<string, TimeEntryKind[]>()
+    for (const e of entries) {
+      if (e.lineId !== line.id) continue
+      const kinds = kindsParDate.get(e.date)
+      if (kinds === undefined) kindsParDate.set(e.date, [e.kind])
+      else kinds.push(e.kind)
+    }
+
+    const dates = new Set<string>()
+    for (const [date, kinds] of kindsParDate) {
+      if (kindDeLaJournee(kinds) === 'PREVISIONNEL') dates.add(date)
+    }
+    return dates
+  }, [entries, line.id])
 
   // Les saisies du jour, une à une, chacune avec le facteur figé à son
   // écriture : les sommer avant de convertir écraserait cette distinction.
