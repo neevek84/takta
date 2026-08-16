@@ -1,7 +1,6 @@
 import { prisma } from '@/db/client'
 import { checkCapacity } from '@/core/capacity/check'
 import { isLocked } from '@/core/cra/state-machine'
-import { centiemesToMinutes } from '@/core/time/units'
 import { cellStateToWrite } from '@/core/saisie/cell-state'
 import { isSlotAllowed } from '@/core/saisie/cycle'
 import type { CellState } from '@/core/saisie/cycle'
@@ -11,7 +10,7 @@ import { resolveLineMinutesParJour, type CapacityWarning } from './time-entries'
 
 export type CellResult =
   | { ok: true; state: CellState; warning?: CapacityWarning; signalement?: string }
-  | { ok: false; reason: 'CAPACITE'; totalMinutes: number; capacityMinutes: number }
+  | { ok: false; reason: 'CAPACITE'; totalCentiemes: number; capacityCentiemes: number }
   | { ok: false; reason: 'VERROUILLE' }
   | { ok: false; reason: 'NON_AFFECTE' }
   | { ok: false; reason: 'SAISIE_INVALIDE' }
@@ -100,19 +99,25 @@ export async function applyCellState(args: {
 
   // Total du jour hors la case qu'on remplace : toutes ses saisies partent,
   // les compter ferait refuser une correction qui allège pourtant la journée.
+  //
+  // `minutesParJour` est lu sur chaque saisie — la valeur figée à son
+  // écriture, jamais une valeur recalculée : c'est ce qui garantit qu'un CRA
+  // validé ne change pas de calcul quand le réglage global bouge.
   const jour = await prisma.timeEntry.findMany({
     where: { userId: args.userId, date },
-    select: { minutes: true, lineId: true },
+    select: { minutes: true, lineId: true, minutesParJour: true },
   })
-  const existingMinutes = jour
+  const existing = jour
     .filter((e) => e.lineId !== args.lineId)
-    .reduce((somme, e) => somme + e.minutes, 0)
-  const addedMinutes = cibles.reduce((somme, c) => somme + c.minutes, 0)
+    .map((e) => ({ minutes: e.minutes, minutesParJour: e.minutesParJour }))
+  // Les cases à écrire portent le facteur que la ligne vient de résoudre,
+  // c'est-à-dire celui qui sera figé quelques lignes plus bas.
+  const added = cibles.map((c) => ({ minutes: c.minutes, minutesParJour }))
 
   const verdict = checkCapacity({
-    existingMinutes,
-    addedMinutes,
-    capacityMinutes: centiemesToMinutes(settings.capacityCentiemes, settings.minutesParJour),
+    existing,
+    added,
+    capacityCentiemes: settings.capacityCentiemes,
     mode: settings.capacityMode,
   })
 
@@ -120,8 +125,8 @@ export async function applyCellState(args: {
     return {
       ok: false,
       reason: 'CAPACITE',
-      totalMinutes: verdict.totalMinutes,
-      capacityMinutes: verdict.capacityMinutes,
+      totalCentiemes: verdict.totalCentiemes,
+      capacityCentiemes: verdict.capacityCentiemes,
     }
   }
 
@@ -153,7 +158,7 @@ export async function applyCellState(args: {
 
   const warning: CapacityWarning | undefined =
     !verdict.ok && verdict.severity === 'warn'
-      ? { totalMinutes: verdict.totalMinutes, capacityMinutes: verdict.capacityMinutes }
+      ? { totalCentiemes: verdict.totalCentiemes, capacityCentiemes: verdict.capacityCentiemes }
       : undefined
 
   // Signalement, jamais refus : la prestation restreint ce que la cinématique

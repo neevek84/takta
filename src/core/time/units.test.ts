@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   minutesToCentiemes,
   centiemesToMinutes,
+  centiemesParFacteur,
   formatQuantity,
   parseQuantity,
 } from './units'
@@ -34,6 +35,36 @@ describe('centiemesToMinutes', () => {
     expect(centiemesToMinutes(100, J8)).toBe(480)
     expect(centiemesToMinutes(50, J8)).toBe(240)
     expect(centiemesToMinutes(100, J7_12)).toBe(432)
+  })
+})
+
+describe('centiemesParFacteur', () => {
+  it('ne compte rien sans saisie', () => {
+    expect(centiemesParFacteur([])).toBe(0)
+  })
+
+  it('cumule les minutes d un même facteur avant de convertir', () => {
+    // 213 + 213 + 174 = 600 min à 600 → 100. Converties une par une :
+    // 36 + 36 + 29 = 101.
+    expect(
+      centiemesParFacteur([
+        { minutes: 213, minutesParJour: 600 },
+        { minutes: 213, minutesParJour: 600 },
+        { minutes: 174, minutesParJour: 600 },
+      ]),
+    ).toBe(100)
+  })
+
+  it('convertit chaque facteur séparément avant de sommer les centièmes', () => {
+    // 330 min à 420 → 79 ; 150 min à 600 → 25. La somme brute des minutes
+    // (480) convertie en une fois donnerait 114 à 420 ou 80 à 600.
+    expect(
+      centiemesParFacteur([
+        { minutes: 200, minutesParJour: 420 },
+        { minutes: 150, minutesParJour: 600 },
+        { minutes: 130, minutesParJour: 420 },
+      ]),
+    ).toBe(104)
   })
 })
 

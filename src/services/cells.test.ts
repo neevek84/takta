@@ -139,7 +139,7 @@ describe('applyCellState', () => {
     await applyCellState({ userId, lineId: ligneJour, date: '2026-03-09', kind: 'REALISE', state: { kind: 'JOURNEE' } })
 
     const r = await applyCellState({ userId, lineId: ligneNuit, date: '2026-03-09', kind: 'REALISE', state: { kind: 'JOURNEE' } })
-    expect(r).toEqual({ ok: false, reason: 'CAPACITE', totalMinutes: 960, capacityMinutes: 480 })
+    expect(r).toEqual({ ok: false, reason: 'CAPACITE', totalCentiemes: 200, capacityCentiemes: 100 })
     expect(await saisiesDu(ligneNuit, '2026-03-09')).toEqual([])
   })
 
@@ -149,7 +149,7 @@ describe('applyCellState', () => {
 
     const r = await applyCellState({ userId, lineId: ligneNuit, date: '2026-03-10', kind: 'REALISE', state: { kind: 'JOURNEE' } })
     expect(r.ok).toBe(true)
-    expect(r.ok && r.warning).toEqual({ totalMinutes: 960, capacityMinutes: 480 })
+    expect(r.ok && r.warning).toEqual({ totalCentiemes: 200, capacityCentiemes: 100 })
     expect(await saisiesDu(ligneNuit, '2026-03-10')).toHaveLength(1)
   })
 
@@ -164,6 +164,49 @@ describe('applyCellState', () => {
       state: { kind: 'DEMI', slotId: 'matin' },
     })
     expect(r.ok).toBe(true)
+  })
+
+  // Tâche 12 — la capacité se contrôle en centièmes de jour. Une saisie déjà
+  // écrite porte son facteur figé (lot 1d) : changer le réglage global ne doit
+  // pas la faire recompter autrement, sans quoi un CRA validé changerait de
+  // calcul.
+  it('compte une saisie existante à son facteur figé, pas au réglage du jour', async () => {
+    await updateSettings({ capacityMode: 'BLOCAGE', capacityCentiemes: 100, minutesParJour: 600 })
+    // 300 minutes figées à 600, soit une demi-journée pour toujours.
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-23', kind: 'REALISE',
+      state: { kind: 'DEMI', slotId: 'matin' },
+    })
+
+    await updateSettings({ minutesParJour: 420 })
+    // 210 minutes à 420, soit l'autre demi-journée : 0,50 + 0,50 = 1,00 j.
+    // Comparées en minutes (510 min contre un seuil converti à 420), les deux
+    // demi-journées se faisaient refuser.
+    const r = await applyCellState({
+      userId, lineId: ligneNuit, date: '2026-03-23', kind: 'REALISE',
+      state: { kind: 'DEMI', slotId: 'matin' },
+    })
+    expect(r.ok).toBe(true)
+    expect(await saisiesDu(ligneNuit, '2026-03-23')).toEqual([
+      { minutes: 210, slotId: 'matin', kind: 'REALISE', minutesParJour: 420, userId },
+    ])
+  })
+
+  it('refuse un dépassement réel malgré des facteurs différents dans la journée', async () => {
+    await updateSettings({ capacityMode: 'BLOCAGE', capacityCentiemes: 100, minutesParJour: 420 })
+    // Une journée pleine figée à 420 : 1,00 j.
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-24', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+
+    await updateSettings({ minutesParJour: 600 })
+    // Une demi-journée à 600 par-dessus : 1,50 j au total.
+    const r = await applyCellState({
+      userId, lineId: ligneNuit, date: '2026-03-24', kind: 'REALISE',
+      state: { kind: 'DEMI', slotId: 'matin' },
+    })
+    expect(r).toEqual({ ok: false, reason: 'CAPACITE', totalCentiemes: 150, capacityCentiemes: 100 })
+    expect(await saisiesDu(ligneNuit, '2026-03-24')).toEqual([])
   })
 
   // Lot 0 : `allowedSlotIds` devient enfin applicable. Un créneau non autorisé

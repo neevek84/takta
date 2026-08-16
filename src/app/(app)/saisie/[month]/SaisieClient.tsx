@@ -8,8 +8,14 @@ import type { MonthDay } from '@/core/month/build'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
 
-function heures(minutes: number): string {
-  return String(Math.round((minutes / 60) * 100) / 100).replace('.', ',')
+/**
+ * Centièmes de jour → jours, comme la charge et l'engagement les affichent
+ * déjà. Le contrôle de capacité raisonne désormais dans cette unité : le
+ * message la reprend plutôt que de reconvertir en heures avec un facteur qu'il
+ * n'a pas.
+ */
+function jours(centiemes: number): string {
+  return String(centiemes / 100).replace('.', ',')
 }
 
 export function SaisieClient(props: {
@@ -33,7 +39,7 @@ export function SaisieClient(props: {
       // Mode AVERTISSEMENT : la saisie est conservée, le dépassement signalé.
       setMessage(
         r.warning
-          ? `Capacité dépassée le ${date} : ${heures(r.warning.totalMinutes)} h saisies pour ${heures(r.warning.capacityMinutes)} h disponibles. La saisie est conservée.`
+          ? `Capacité dépassée le ${date} : ${jours(r.warning.totalCentiemes)} j saisis pour une capacité de ${jours(r.warning.capacityCentiemes)} j. La saisie est conservée.`
           : null,
       )
       return true
@@ -41,7 +47,7 @@ export function SaisieClient(props: {
 
     if (r.reason === 'CAPACITE') {
       setMessage(
-        `Capacité dépassée le ${date} : ${heures(r.totalMinutes)} h saisies pour ${heures(r.capacityMinutes)} h disponibles. La saisie est refusée.`,
+        `Capacité dépassée le ${date} : ${jours(r.totalCentiemes)} j saisis pour une capacité de ${jours(r.capacityCentiemes)} j. La saisie est refusée.`,
       )
     } else if (r.reason === 'VERROUILLE') {
       setMessage(`Le CRA de ce mois est validé. Rouvrez-le pour modifier la saisie.`)

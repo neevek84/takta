@@ -8,6 +8,40 @@ export function centiemesToMinutes(centiemes: number, minutesParJour: number): n
   return Math.round((centiemes / 100) * minutesParJour)
 }
 
+/** Des minutes et le facteur de conversion sous lequel elles ont été écrites. */
+export interface MinutesAuFacteur {
+  minutes: number
+  /** durée d'une journée figée à l'écriture de ces minutes */
+  minutesParJour: number
+}
+
+/**
+ * Total en centièmes de jour d'un ensemble de saisies, chacune convertie sous
+ * le facteur figé à son écriture.
+ *
+ * « Cumuler les minutes, convertir une fois » — mais seulement à facteur
+ * constant : des minutes écrites à 420/jour et à 480/jour ne s'additionnent
+ * pas. On groupe donc par facteur, on convertit chaque groupe, on somme les
+ * centièmes. Cumuler d'abord évite qu'une journée pleine découpée en trois
+ * saisies dépasse les 100 centièmes par accumulation d'arrondis.
+ *
+ * Point de passage unique du domaine : l'engagement et la capacité en
+ * dépendent tous les deux, précisément pour qu'ils ne puissent pas afficher
+ * « 1,40 j ici, 1,43 j là » sur un même écran.
+ */
+export function centiemesParFacteur(entries: ReadonlyArray<MinutesAuFacteur>): number {
+  const parFacteur = new Map<number, number>()
+  for (const e of entries) {
+    parFacteur.set(e.minutesParJour, (parFacteur.get(e.minutesParJour) ?? 0) + e.minutes)
+  }
+
+  let centiemes = 0
+  for (const [facteur, minutes] of parFacteur) {
+    centiemes += minutesToCentiemes(minutes, facteur)
+  }
+  return centiemes
+}
+
 function formatDays(minutes: number, minutesParJour: number): string {
   const days = minutes / minutesParJour
   const rounded = Math.round(days * 100) / 100

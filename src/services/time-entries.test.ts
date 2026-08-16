@@ -17,6 +17,8 @@ let lineA = ''
 let lineB = ''
 /** Sur une **seconde** mission : le verrou porte sur un couple (mission, mois). */
 let lineC = ''
+/** Prestation dont la journée fait 600 minutes, quel que soit le réglage global. */
+let lineLongue = ''
 
 beforeAll(async () => {
   const u = await prisma.user.create({
@@ -34,6 +36,10 @@ beforeAll(async () => {
   const m = await createMission({ clientId: c.id, label: 'M' })
   lineA = (await createLine({ missionId: m.id, userId, label: 'A', soldCentiemes: 3000, tjmCents: 0 })).id
   lineB = (await createLine({ missionId: m.id, userId, label: 'B', soldCentiemes: 3000, tjmCents: 0 })).id
+
+  lineLongue = (await createLine({
+    missionId: m.id, userId, label: 'Longue', soldCentiemes: 3000, tjmCents: 0, minutesParJour: 600,
+  })).id
 
   const m2 = await createMission({ clientId: c.id, label: 'M2' })
   lineC = (await createLine({ missionId: m2.id, userId, label: 'C', soldCentiemes: 3000, tjmCents: 0 })).id
@@ -71,7 +77,7 @@ describe('saveEntry', () => {
   it('bloque le dépassement en mode BLOCAGE', async () => {
     await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 480, kind: 'REALISE' })
     const r = await saveEntry({ userId, lineId: lineB, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
-    expect(r).toEqual({ ok: false, reason: 'CAPACITE', totalMinutes: 720, capacityMinutes: 480 })
+    expect(r).toEqual({ ok: false, reason: 'CAPACITE', totalCentiemes: 150, capacityCentiemes: 100 })
   })
 
   it('laisse passer le dépassement en mode AVERTISSEMENT', async () => {
@@ -134,7 +140,7 @@ describe('saveEntry', () => {
     expect(r).toEqual({
       ok: true,
       minutes: 240,
-      warning: { totalMinutes: 720, capacityMinutes: 480 },
+      warning: { totalCentiemes: 150, capacityCentiemes: 100 },
     })
   })
 
@@ -149,6 +155,38 @@ describe('saveEntry', () => {
     await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 480, kind: 'REALISE' })
     const r = await saveEntry({ userId, lineId: lineB, date: '2026-03-12', minutes: 480, kind: 'REALISE' })
     expect(r).toEqual({ ok: true, minutes: 480 })
+  })
+
+  // Tâche 12 — le contrôle de capacité se fait en centièmes de jour. Réglage
+  // global à 480 minutes, capacité à 100 centièmes.
+  it('accepte une journée pleine sur une prestation dont la journée fait 600 minutes', async () => {
+    // 590 minutes chez ce client valent 0,98 j : la journée n'est même pas
+    // complète. Comparées en minutes au seuil converti au facteur global
+    // (480 min), elles se faisaient refuser.
+    const r = await saveEntry({ userId, lineId: lineLongue, date: '2026-03-12', minutes: 590, kind: 'REALISE' })
+    expect(r).toEqual({ ok: true, minutes: 590 })
+  })
+
+  it('compte chaque saisie du jour au facteur figé à son écriture', async () => {
+    await updateSettings({ minutesParJour: 600 })
+    // 300 minutes figées à 600, soit une demi-journée pour toujours.
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 300, kind: 'REALISE' })
+
+    await updateSettings({ minutesParJour: 420 })
+    // 210 minutes à 420, soit l'autre demi-journée : 1,00 j au total, tout
+    // juste dans la capacité. Comparées en minutes (510 min contre un seuil
+    // converti à 420), les deux demi-journées se faisaient refuser.
+    const r = await saveEntry({ userId, lineId: lineB, date: '2026-03-12', minutes: 210, kind: 'REALISE' })
+    expect(r).toEqual({ ok: true, minutes: 210 })
+  })
+
+  it('refuse un dépassement réel malgré des facteurs différents dans la journée', async () => {
+    await updateSettings({ minutesParJour: 420 })
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 420, kind: 'REALISE' })
+
+    await updateSettings({ minutesParJour: 600 })
+    const r = await saveEntry({ userId, lineId: lineB, date: '2026-03-12', minutes: 300, kind: 'REALISE' })
+    expect(r).toEqual({ ok: false, reason: 'CAPACITE', totalCentiemes: 150, capacityCentiemes: 100 })
   })
 
   // I6 — le scope par affectation vit dans le service, pas dans le server action.

@@ -54,12 +54,16 @@ describe('SaisieClient', () => {
     saveCell.mockResolvedValue({
       ok: true,
       minutes: 240,
-      warning: { totalMinutes: 720, capacityMinutes: 480 },
+      warning: { totalCentiemes: 150, capacityCentiemes: 100 },
     })
     renderClient()
     const input = saisir('0,5')
 
-    await waitFor(() => expect(screen.getByText(/Capacité dépassée/)).toBeDefined())
+    // Le message parle de jours, l'unité dans laquelle le contrôle raisonne
+    // désormais — et celle qu'emploient déjà l'engagement et la charge.
+    const message = await screen.findByText(/Capacité dépassée/)
+    expect(message.textContent).toContain('1,5 j saisis pour une capacité de 1 j')
+    expect(message.textContent).toContain('conservée')
     expect(input.value).toBe('0,5')
   })
 
@@ -76,13 +80,15 @@ describe('SaisieClient', () => {
     saveCell.mockResolvedValue({
       ok: false,
       reason: 'CAPACITE',
-      totalMinutes: 720,
-      capacityMinutes: 480,
+      totalCentiemes: 114,
+      capacityCentiemes: 100,
     })
     renderClient()
     const input = saisir('0,5')
 
-    await waitFor(() => expect(screen.getByText(/Capacité dépassée/)).toBeDefined())
+    const message = await screen.findByText(/Capacité dépassée/)
+    expect(message.textContent).toContain('1,14 j saisis pour une capacité de 1 j')
+    expect(message.textContent).toContain('refusée')
     await waitFor(() => expect(input.value).toBe(''))
   })
 

@@ -2,7 +2,6 @@ import { prisma } from '@/db/client'
 import type { CraStatus, TimeEntryKind } from '@/core/types'
 import { checkCapacity } from '@/core/capacity/check'
 import { isLocked } from '@/core/cra/state-machine'
-import { centiemesToMinutes } from '@/core/time/units'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { getSettings } from './settings'
 
@@ -108,15 +107,20 @@ export async function getLineEngagementTotals(
   return totals
 }
 
-/** Dépassement de capacité signalé sans blocage (mode `AVERTISSEMENT`). */
+/**
+ * Dépassement de capacité signalé sans blocage (mode `AVERTISSEMENT`).
+ *
+ * En centièmes de jour : c'est la seule unité dans laquelle la charge d'une
+ * journée et la capacité réglée sont comparables (voir `checkCapacity`).
+ */
 export interface CapacityWarning {
-  totalMinutes: number
-  capacityMinutes: number
+  totalCentiemes: number
+  capacityCentiemes: number
 }
 
 export type SaveResult =
   | { ok: true; minutes: number; warning?: CapacityWarning }
-  | { ok: false; reason: 'CAPACITE'; totalMinutes: number; capacityMinutes: number }
+  | { ok: false; reason: 'CAPACITE'; totalCentiemes: number; capacityCentiemes: number }
   | { ok: false; reason: 'VERROUILLE' }
   | { ok: false; reason: 'NON_AFFECTE' }
 
@@ -207,20 +211,27 @@ export async function saveEntry(args: {
     return { ok: true, minutes: 0 }
   }
 
+  // Le facteur de conversion est figé au moment de l'écriture : le rejouer au
+  // moment de la lecture réinterpréterait tout l'historique dès que le
+  // réglage change. Il est résolu avant le contrôle de capacité, qui compare
+  // en centièmes de jour et a donc besoin du facteur que cette saisie portera.
+  const minutesParJour = await resolveLineMinutesParJour(args.lineId, settings.minutesParJour)
+
   // Total du jour hors la clé qu'on écrit : corriger une valeur ne doit pas
-  // la compter deux fois.
+  // la compter deux fois. Chaque saisie est reprise avec **son** facteur figé,
+  // jamais avec le réglage du moment — un CRA validé ne change pas de calcul.
   const sameDay = await prisma.timeEntry.findMany({
     where: { userId: args.userId, date },
-    select: { minutes: true, lineId: true, slotId: true },
+    select: { minutes: true, lineId: true, slotId: true, minutesParJour: true },
   })
-  const existingMinutes = sameDay
+  const existing = sameDay
     .filter((e) => !(e.lineId === args.lineId && e.slotId === slotId))
-    .reduce((sum, e) => sum + e.minutes, 0)
+    .map((e) => ({ minutes: e.minutes, minutesParJour: e.minutesParJour }))
 
   const verdict = checkCapacity({
-    existingMinutes,
-    addedMinutes: args.minutes,
-    capacityMinutes: centiemesToMinutes(settings.capacityCentiemes, settings.minutesParJour),
+    existing,
+    added: [{ minutes: args.minutes, minutesParJour }],
+    capacityCentiemes: settings.capacityCentiemes,
     mode: settings.capacityMode,
   })
 
@@ -228,8 +239,8 @@ export async function saveEntry(args: {
     return {
       ok: false,
       reason: 'CAPACITE',
-      totalMinutes: verdict.totalMinutes,
-      capacityMinutes: verdict.capacityMinutes,
+      totalCentiemes: verdict.totalCentiemes,
+      capacityCentiemes: verdict.capacityCentiemes,
     }
   }
 
@@ -238,13 +249,8 @@ export async function saveEntry(args: {
   // DESACTIVE.
   const warning: CapacityWarning | null =
     !verdict.ok && verdict.severity === 'warn'
-      ? { totalMinutes: verdict.totalMinutes, capacityMinutes: verdict.capacityMinutes }
+      ? { totalCentiemes: verdict.totalCentiemes, capacityCentiemes: verdict.capacityCentiemes }
       : null
-
-  // Le facteur de conversion est figé au moment de l'écriture : le rejouer au
-  // moment de la lecture réinterpréterait tout l'historique dès que le
-  // réglage change.
-  const minutesParJour = await resolveLineMinutesParJour(args.lineId, settings.minutesParJour)
 
   await prisma.timeEntry.upsert({
     where: {
