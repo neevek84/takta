@@ -70,7 +70,18 @@ Le soupçon du porteur — « c'est peut-être mon thème d'entreprise qui fout 
 
 **Le tableau doit dire qu'il est la vue multi-CRA.** C'est sa nature — plusieurs lignes de prestation à la fois — et son nom actuel ne le dit pas.
 
-**Et une ambiguïté à trancher** : sur la capture du porteur, le tableau affiche trois lignes alors que la portée sélectionnée est « Cette prestation ». Les deux bascules se recouvrent — l'une choisit la vue, l'autre la portée, et leur interaction n'est aujourd'hui définie nulle part. Ce lot doit dire ce que fait chaque combinaison, ou supprimer celle qui ne veut rien dire.
+### La bascule qui ment, et qui ne sert que dans une vue
+
+Sur la capture du porteur, le tableau affiche trois lignes alors que la portée sélectionnée est « Cette prestation ». Lecture du code : **la bascule n'est transmise qu'au calendrier.** En mode tableau, elle n'a aucun effet.
+
+Et son libellé ne dit pas ce qu'elle fait. **« Tout le mois » annonce une portée de temps ; elle porte une portée de prestations** — afficher, ou non, les autres prestations en lecture seule à côté de celle qu'on saisit. C'est le basculement que le porteur avait demandé dès l'origine : « afficher le CRA avec toutes les prestations ou uniquement celle sélectionnée ».
+
+Deux corrections :
+
+- **« Cette prestation » / « Toutes les prestations »** — le libellé dit la chose.
+- **La bascule disparaît en mode tableau**, où elle ne fait rien. Un réglage sans effet visible apprend à l'utilisateur que l'interface ment.
+
+**Le tableau, lui, ne change pas** : il montre toutes les missions et prestations auxquelles on est affecté, et le porteur l'a validé tel quel. C'est sa nature, et c'est ce qui justifie de le nommer comme la vue multi-CRA.
 
 ---
 
