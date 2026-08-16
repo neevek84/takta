@@ -53,7 +53,7 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 ## 4. État du code
 
-**Branche `main`** — 830 tests, `tsc` à 0, `next build` vert, 11 routes.
+**Branche `main`** — 1 253 tests, `tsc` à 0, `next build` vert, 15 routes.
 
 | Lot | Contenu | État |
 |---|---|---|
@@ -62,6 +62,7 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 | 1d | Gel du facteur de conversion, cascade client/mission/prestation | fusionné |
 | 1e | Système de design, thème paramétrable | fusionné |
 | 1c | Calendrier, saisie cyclique, PWA | fusionné |
+| 1b | Connecteur Google Calendar, file de synchronisation | fusionné |
 
 **Écrans** : `/login` `/saisie/[month]` `/missions` `/cra` `/charge` `/admin/saisie` `/admin/theme`
 
@@ -71,7 +72,6 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 | Lot | Spec | Plan | Tâches |
 |---|---|---|---|
-| **1b** — Google Calendar | oui | oui | 12 |
 | **2** — Connecteur Dolibarr | oui | oui | 14 |
 | **3** — Validation client (PDF, signature) | oui | oui | 15 |
 | **4** — Journal de preuve, API, ordonnanceur | oui | oui | 15 |
