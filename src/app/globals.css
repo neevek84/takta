@@ -36,6 +36,27 @@
   --color-info-ink: #4f4636;
   --color-info-edge: #d8cfbf;
 
+  /* Palette catégorielle : distingue des prestations entre elles, sans porter
+     aucun jugement — voir `src/core/theme/tokens.ts` et `src/core/saisie/colors.ts`. */
+  --color-cat-a: #f29892;
+  --color-cat-a-ink: #3f1512;
+  --color-cat-a-edge: #c69895;
+  --color-cat-b: #f2b892;
+  --color-cat-b-ink: #35261d;
+  --color-cat-b-edge: #eba170;
+  --color-cat-c: #f7e5bf;
+  --color-cat-c-ink: #352d1d;
+  --color-cat-c-edge: #f1d59d;
+  --color-cat-d: #f2e892;
+  --color-cat-d-ink: #35331d;
+  --color-cat-d-edge: #ebde70;
+  --color-cat-e: #f292b8;
+  --color-cat-e-ink: #3f1224;
+  --color-cat-e-edge: #c695a9;
+  --color-cat-f: #f9e1e5;
+  --color-cat-f-ink: #411018;
+  --color-cat-f-edge: #dfc3c8;
+
   /* Polices embarquées, exposées par next/font/local dans le layout racine. */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;

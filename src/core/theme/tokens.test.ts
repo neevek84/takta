@@ -15,11 +15,15 @@ import {
   MIN_LUMINANCE_GAP,
   FONDS_DE_TEXTE,
   ENCRES_ETAT,
+  CATEGORY_BACKGROUNDS,
+  MIN_CATEGORY_DISTANCE,
+  colorDistance,
   findContrastIssues,
   describeContrastIssue,
   type ThemeTokens,
   type ContrastIssue,
   type SeparationIssue,
+  type DistinctionIssue,
   type ThemeIssue,
 } from './tokens'
 
@@ -27,6 +31,8 @@ const contrastes = (issues: ThemeIssue[]): ContrastIssue[] =>
   issues.filter((i): i is ContrastIssue => i.kind === 'contraste')
 const separations = (issues: ThemeIssue[]): SeparationIssue[] =>
   issues.filter((i): i is SeparationIssue => i.kind === 'separation')
+const distinctions = (issues: ThemeIssue[]): DistinctionIssue[] =>
+  issues.filter((i): i is DistinctionIssue => i.kind === 'distinction')
 
 const PALETTES: ReadonlyArray<[string, ThemeTokens]> = [
   ['KreativPM', THEME_KREATIVPM],
@@ -82,6 +88,12 @@ const COUPLES_TEXTE_ATTENDUS = [
   'dangerInk/danger', 'dangerInk/dangerEdge', 'dangerInk/page', 'dangerInk/surface',
   'dangerInk/off', 'dangerInk/offStrong',
   'infoInk/info', 'infoInk/infoEdge', 'infoInk/page', 'infoInk/surface',
+  'catAInk/catA', 'catAInk/catAEdge',
+  'catBInk/catB', 'catBInk/catBEdge',
+  'catCInk/catC', 'catCInk/catCEdge',
+  'catDInk/catD', 'catDInk/catDEdge',
+  'catEInk/catE', 'catEInk/catEEdge',
+  'catFInk/catF', 'catFInk/catFEdge',
 ]
 
 const COUPLES_NON_TEXTUELS_ATTENDUS = [
@@ -288,6 +300,90 @@ describe('lisibilité monochrome des fonds de grille', () => {
   it('n’en signale aucun sur les palettes livrées', () => {
     for (const [nom, palette] of PALETTES) {
       expect(separations(findContrastIssues(palette)), nom).toEqual([])
+    }
+  })
+})
+
+/**
+ * Le point délicat de la palette catégorielle : chaque teinte tient son
+ * 4,5:1 sur son *propre* fond (`TEXT_PAIRS` ci-dessus), mais rien dans ce
+ * calcul ne dit que les six fonds se distinguent *entre eux*. Deux teintes
+ * peuvent chacune passer le contraste sur le crème tout en étant quasiment
+ * identiques l'une à l'autre — c'est exactement le défaut `info`/`off` que
+ * cette palette remplace (voir le commentaire de `LINE_COLORS` dans
+ * `src/core/saisie/colors.ts`). `colorDistance` mesure cet écart en CIE76
+ * (ΔE*ab), indépendant du contraste WCAG ; `MIN_CATEGORY_DISTANCE` en fixe le
+ * seuil — voir le commentaire de la constante pour sa justification.
+ */
+describe('distinction de la palette catégorielle', () => {
+  it('déclare exactement les six fonds catégoriels, dans l’ordre', () => {
+    expect(CATEGORY_BACKGROUNDS).toEqual(['catA', 'catB', 'catC', 'catD', 'catE', 'catF'])
+  })
+
+  for (const [nom, palette] of PALETTES) {
+    it(`${nom} : les six fonds se distinguent deux à deux (ΔE*ab ≥ ${MIN_CATEGORY_DISTANCE})`, () => {
+      for (let i = 0; i + 1 < CATEGORY_BACKGROUNDS.length; i++) {
+        for (let j = i + 1; j < CATEGORY_BACKGROUNDS.length; j++) {
+          const a = CATEGORY_BACKGROUNDS[i]!
+          const b = CATEGORY_BACKGROUNDS[j]!
+          const distance = colorDistance(palette[a], palette[b])
+          expect(distance, `${a}/${b}`).toBeGreaterThanOrEqual(MIN_CATEGORY_DISTANCE)
+        }
+      }
+    })
+  }
+
+  it('garde une marge réelle, pas un passage de justesse', () => {
+    let pire = Infinity
+    for (let i = 0; i + 1 < CATEGORY_BACKGROUNDS.length; i++) {
+      for (let j = i + 1; j < CATEGORY_BACKGROUNDS.length; j++) {
+        const a = CATEGORY_BACKGROUNDS[i]!
+        const b = CATEGORY_BACKGROUNDS[j]!
+        pire = Math.min(pire, colorDistance(THEME_KREATIVPM[a], THEME_KREATIVPM[b]))
+      }
+    }
+    // Le pire couple est `catA`/`catB` — corail contre abricot, les deux
+    // teintes les plus proches en teinte de la famille chaude retenue.
+    expect(pire).toBeCloseTo(20.97, 1)
+  })
+
+  it('refuse une palette où deux teintes catégorielles se confondent', () => {
+    // `catB` recopié sur `catA` : même fond, même bordure, même encre. La
+    // preuve la plus directe qu'une palette peut être un jeu de mots — les
+    // deux jetons existent, les deux tiennent 4,5:1 sur eux-mêmes — sans que
+    // les prestations qui les portent ne se distinguent plus à l'écran.
+    const fautive: ThemeTokens = {
+      ...THEME_KREATIVPM,
+      catB: THEME_KREATIVPM.catA,
+      catBInk: THEME_KREATIVPM.catAInk,
+      catBEdge: THEME_KREATIVPM.catAEdge,
+    }
+    const defauts = distinctions(findContrastIssues(fautive))
+    const trouve = defauts.find(
+      (d) => (d.a === 'catA' && d.b === 'catB') || (d.a === 'catB' && d.b === 'catA'),
+    )
+    expect(trouve, 'un défaut catA/catB').toBeDefined()
+    expect(trouve!.distance).toBeCloseTo(0, 6)
+    expect(trouve!.required).toBe(MIN_CATEGORY_DISTANCE)
+  })
+
+  it('nomme le couple fautif dans le message français', () => {
+    const message = describeContrastIssue({
+      kind: 'distinction',
+      a: 'catA',
+      b: 'catB',
+      distance: 3.2,
+      required: MIN_CATEGORY_DISTANCE,
+    })
+    expect(message).toContain('catégorie 1')
+    expect(message).toContain('catégorie 2')
+    expect(message).toContain('3,2')
+    expect(message).toContain('15,0')
+  })
+
+  it('n’en signale aucun sur les palettes livrées', () => {
+    for (const [nom, palette] of PALETTES) {
+      expect(distinctions(findContrastIssues(palette)), nom).toEqual([])
     }
   })
 })

@@ -2,14 +2,16 @@ import {
   contrastRatio,
   relativeLuminance,
   formatRatio,
+  parseHexColor,
   AA_TEXT_RATIO,
   NON_TEXT_RATIO,
 } from './contrast'
 
 /**
- * Les 26 jetons de couleur du système. Toutes les autres échelles — espacement,
- * rayons, ombres, typographie — sont figées dans `globals.css` : la spec rend
- * les couleurs paramétrables, rien d'autre.
+ * Les 44 jetons de couleur du système — 26 de base plus les 18 de la palette
+ * catégorielle (six teintes, chacune fond/encre/bordure). Toutes les autres
+ * échelles — espacement, rayons, ombres, typographie — sont figées dans
+ * `globals.css` : la spec rend les couleurs paramétrables, rien d'autre.
  */
 export interface ThemeTokens {
   /** fond de page */
@@ -56,6 +58,33 @@ export interface ThemeTokens {
   info: string
   infoInk: string
   infoEdge: string
+
+  /**
+   * Palette catégorielle : six teintes qui ne portent aucun jugement, à la
+   * différence de `success`/`warning`/`danger`/`info`. Leur seul rôle est de
+   * distinguer des choses entre elles — aujourd'hui les prestations affichées
+   * simultanément par la vue calendrier « Tout le mois » (`src/core/saisie/
+   * colors.ts`). Une prestation en rouge se lirait comme un problème ; ces six
+   * jetons existent pour que ce ne soit jamais le cas.
+   */
+  catA: string
+  catAInk: string
+  catAEdge: string
+  catB: string
+  catBInk: string
+  catBEdge: string
+  catC: string
+  catCInk: string
+  catCEdge: string
+  catD: string
+  catDInk: string
+  catDEdge: string
+  catE: string
+  catEInk: string
+  catEEdge: string
+  catF: string
+  catFInk: string
+  catFEdge: string
 }
 
 export const THEME_TOKEN_KEYS: readonly (keyof ThemeTokens)[] = [
@@ -66,6 +95,12 @@ export const THEME_TOKEN_KEYS: readonly (keyof ThemeTokens)[] = [
   'warning', 'warningInk', 'warningEdge',
   'danger', 'dangerInk', 'dangerEdge',
   'info', 'infoInk', 'infoEdge',
+  'catA', 'catAInk', 'catAEdge',
+  'catB', 'catBInk', 'catBEdge',
+  'catC', 'catCInk', 'catCEdge',
+  'catD', 'catDInk', 'catDEdge',
+  'catE', 'catEInk', 'catEEdge',
+  'catF', 'catFInk', 'catFEdge',
 ]
 
 export const TOKEN_LABELS: Record<keyof ThemeTokens, string> = {
@@ -95,6 +130,24 @@ export const TOKEN_LABELS: Record<keyof ThemeTokens, string> = {
   info: 'fond d’information',
   infoInk: 'encre d’information',
   infoEdge: 'bordure d’information',
+  catA: 'fond de catégorie 1',
+  catAInk: 'encre de catégorie 1',
+  catAEdge: 'bordure de catégorie 1',
+  catB: 'fond de catégorie 2',
+  catBInk: 'encre de catégorie 2',
+  catBEdge: 'bordure de catégorie 2',
+  catC: 'fond de catégorie 3',
+  catCInk: 'encre de catégorie 3',
+  catCEdge: 'bordure de catégorie 3',
+  catD: 'fond de catégorie 4',
+  catDInk: 'encre de catégorie 4',
+  catDEdge: 'bordure de catégorie 4',
+  catE: 'fond de catégorie 5',
+  catEInk: 'encre de catégorie 5',
+  catEEdge: 'bordure de catégorie 5',
+  catF: 'fond de catégorie 6',
+  catFInk: 'encre de catégorie 6',
+  catFEdge: 'bordure de catégorie 6',
 }
 
 /**
@@ -136,6 +189,31 @@ export const THEME_KREATIVPM: ThemeTokens = {
   info: '#efeae0',
   infoInk: '#4f4636',
   infoEdge: '#d8cfbf',
+
+  // Palette catégorielle : six teintes chaudes choisies par recherche — pour
+  // chacune, fond, bordure et encre sont réglés pour tenir 4,5:1 à la fois
+  // (calcul dans `tokens.test.ts`) —, puis vérifiées deux à deux à l'écart
+  // perceptif CIE76 (`colorDistance`, `MIN_CATEGORY_DISTANCE`). Aucun hasard
+  // dans le choix des teintes : `success`/`warning`/`danger`/`info` n'en
+  // offraient que quatre, toutes hors de la famille chaude de la marque.
+  catA: '#f29892',
+  catAInk: '#3f1512',
+  catAEdge: '#c69895',
+  catB: '#f2b892',
+  catBInk: '#35261d',
+  catBEdge: '#eba170',
+  catC: '#f7e5bf',
+  catCInk: '#352d1d',
+  catCEdge: '#f1d59d',
+  catD: '#f2e892',
+  catDInk: '#35331d',
+  catDEdge: '#ebde70',
+  catE: '#f292b8',
+  catEInk: '#3f1224',
+  catEEdge: '#c695a9',
+  catF: '#f9e1e5',
+  catFInk: '#411018',
+  catFEdge: '#dfc3c8',
 }
 
 /** Préréglage sobre, pour qui déploie l'application sans la marque. */
@@ -169,6 +247,29 @@ export const THEME_NEUTRE: ThemeTokens = {
   info: '#eaedef',
   infoInk: '#33414a',
   infoEdge: '#c3ccd2',
+
+  // Même palette catégorielle que KreativPM : les six teintes ne portent pas
+  // l'identité de marque à elles seules — `page`/`ink`/`accent` en sont déjà
+  // chargés — et sont indépendantes des autres jetons du préréglage. Rien
+  // n'empêche un administrateur de les réétalonner depuis `/admin/theme`.
+  catA: '#f29892',
+  catAInk: '#3f1512',
+  catAEdge: '#c69895',
+  catB: '#f2b892',
+  catBInk: '#35261d',
+  catBEdge: '#eba170',
+  catC: '#f7e5bf',
+  catCInk: '#352d1d',
+  catCEdge: '#f1d59d',
+  catD: '#f2e892',
+  catDInk: '#35331d',
+  catDEdge: '#ebde70',
+  catE: '#f292b8',
+  catEInk: '#3f1224',
+  catEEdge: '#c695a9',
+  catF: '#f9e1e5',
+  catFInk: '#411018',
+  catFEdge: '#dfc3c8',
 }
 
 export const DEFAULT_THEME: ThemeTokens = THEME_KREATIVPM
@@ -204,6 +305,27 @@ const STATE_TOKENS: Record<
   danger: { ink: 'dangerInk', fond: 'danger', bordure: 'dangerEdge' },
   info: { ink: 'infoInk', fond: 'info', bordure: 'infoEdge' },
 }
+
+const CATEGORIES = ['catA', 'catB', 'catC', 'catD', 'catE', 'catF'] as const
+type Category = (typeof CATEGORIES)[number]
+
+/** Le même triplet que `STATE_TOKENS`, pour la palette catégorielle. */
+const CATEGORY_TOKENS: Record<
+  Category,
+  { ink: keyof ThemeTokens; fond: keyof ThemeTokens; bordure: keyof ThemeTokens }
+> = {
+  catA: { ink: 'catAInk', fond: 'catA', bordure: 'catAEdge' },
+  catB: { ink: 'catBInk', fond: 'catB', bordure: 'catBEdge' },
+  catC: { ink: 'catCInk', fond: 'catC', bordure: 'catCEdge' },
+  catD: { ink: 'catDInk', fond: 'catD', bordure: 'catDEdge' },
+  catE: { ink: 'catEInk', fond: 'catE', bordure: 'catEEdge' },
+  catF: { ink: 'catFInk', fond: 'catF', bordure: 'catFEdge' },
+}
+
+/** Les six fonds catégoriels, dans l'ordre de déclaration — c'est la liste que balaie la distinction deux à deux. */
+export const CATEGORY_BACKGROUNDS: readonly (keyof ThemeTokens)[] = CATEGORIES.map(
+  (c) => CATEGORY_TOKENS[c].fond,
+)
 
 /** Les quatre fonds sur lesquels l'application pose du texte courant. */
 export const FONDS_DE_TEXTE = ['page', 'surface', 'off', 'offStrong'] as const
@@ -284,6 +406,17 @@ export const TEXT_PAIRS: readonly TokenPair[] = [
   { text: 'warningInk', background: 'offStrong' },
   { text: 'dangerInk', background: 'off' },
   { text: 'dangerInk', background: 'offStrong' },
+  // Palette catégorielle : `src/core/saisie/colors.ts` pose toujours `bg-*`
+  // et `text-*` (et `border-*`) dans le même `LineColor`, jamais l'encre
+  // seule — contrairement aux quatre encres d'état ci-dessus. Le couple sur
+  // `page`/`surface` n'est donc pas exigé : aucun rendu ne l'isole ainsi.
+  ...CATEGORIES.flatMap((c): TokenPair[] => {
+    const t = CATEGORY_TOKENS[c]
+    return [
+      { text: t.ink, background: t.fond },
+      { text: t.ink, background: t.bordure },
+    ]
+  }),
 ]
 
 /**
@@ -322,6 +455,75 @@ export const MIN_LUMINANCE_GAP = 0.05
  */
 export const GRID_BACKGROUNDS: readonly (keyof ThemeTokens)[] = ['surface', 'off', 'offStrong']
 
+/**
+ * sRGB (0-255) vers CIE XYZ (D65), palier standard de la colorimétrie —
+ * `0,04045` est le seuil de linéarisation sRGB usuel, distinct du `0,03928`
+ * qu'utilise `relativeLuminance` : celui-ci sert au contraste WCAG, celui-ci
+ * sert à situer une teinte dans un espace perceptif, pas à mesurer un rapport
+ * de luminance.
+ */
+function versXyz(hex: string): { x: number; y: number; z: number } {
+  const { r, g, b } = parseHexColor(hex)
+  const lin = (c: number): number => {
+    const v = c / 255
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+  }
+  const R = lin(r)
+  const G = lin(g)
+  const B = lin(b)
+  return {
+    x: R * 0.4124564 + G * 0.3575761 + B * 0.1804375,
+    y: R * 0.2126729 + G * 0.7151522 + B * 0.072175,
+    z: R * 0.0193339 + G * 0.119192 + B * 0.9503041,
+  }
+}
+
+/** CIE XYZ (D65) vers CIE L*a*b*. */
+function versLab({ x, y, z }: { x: number; y: number; z: number }): {
+  l: number
+  a: number
+  b: number
+} {
+  const xn = 0.95047
+  const yn = 1
+  const zn = 1.08883
+  const f = (t: number): number => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116)
+  const fx = f(x / xn)
+  const fy = f(y / yn)
+  const fz = f(z / zn)
+  return { l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz) }
+}
+
+/**
+ * Écart perceptif CIE76 (ΔE*ab) entre deux couleurs `#RRGGBB` — la mesure
+ * choisie pour la distinction de la palette catégorielle. Le contraste WCAG
+ * ne suffit pas à cet usage : deux teintes peuvent chacune tenir 4,5:1 sur le
+ * même fond clair tout en étant quasi identiques entre elles — c'était le
+ * défaut d'`info`/`off` que ce module corrige. CIE76 reste une distance
+ * euclidienne dans un espace pensé pour l'uniformité perceptive (contrairement
+ * à une distance RGB brute, où un même écart numérique ne « paraît » pas le
+ * même selon la teinte) ; CIEDE2000 serait plus fidèle mais demande une
+ * formule bien plus lourde pour un gain marginal ici, où les six teintes sont
+ * déjà bien séparées (voir `MIN_CATEGORY_DISTANCE`).
+ */
+export function colorDistance(hexA: string, hexB: string): number {
+  const a = versLab(versXyz(hexA))
+  const b = versLab(versXyz(hexB))
+  return Math.sqrt((a.l - b.l) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2)
+}
+
+/**
+ * Seuil minimal de ΔE*ab entre deux fonds catégoriels. Repères usuels de la
+ * colorimétrie : ~2,3 est le plus petit écart perceptible dans des conditions
+ * de laboratoire (JND), ~10 marque un écart net « au premier coup d'œil ».
+ * Le calendrier pose ces six teintes en petites cellules adjacentes, vues
+ * rapidement et pas toujours en pleine attention : 15 retient une marge
+ * confortable au-dessus du simple « perceptible », sans réduire l'espace des
+ * teintes chaudes disponibles au point de ne plus pouvoir en placer six — la
+ * palette livrée ci-dessous tient 20,97 au pire couple, largement au-dessus.
+ */
+export const MIN_CATEGORY_DISTANCE = 15
+
 export interface ContrastIssue {
   kind: 'contraste'
   text: keyof ThemeTokens
@@ -340,7 +542,16 @@ export interface SeparationIssue {
   required: number
 }
 
-export type ThemeIssue = ContrastIssue | SeparationIssue
+export interface DistinctionIssue {
+  kind: 'distinction'
+  a: keyof ThemeTokens
+  b: keyof ThemeTokens
+  /** écart perceptif CIE76 (ΔE*ab) mesuré entre les deux fonds */
+  distance: number
+  required: number
+}
+
+export type ThemeIssue = ContrastIssue | SeparationIssue | DistinctionIssue
 
 /**
  * Le seul contrôle que traverse une palette enregistrée. Il porte les deux
@@ -379,6 +590,19 @@ export function findContrastIssues(tokens: ThemeTokens): ThemeIssue[] {
     }
   }
 
+  // Distinction deux à deux de la palette catégorielle : le contraste sur le
+  // fond ci-dessus ne dit rien de la distance entre deux teintes elles-mêmes.
+  for (let i = 0; i + 1 < CATEGORY_BACKGROUNDS.length; i++) {
+    for (let j = i + 1; j < CATEGORY_BACKGROUNDS.length; j++) {
+      const a = CATEGORY_BACKGROUNDS[i]!
+      const b = CATEGORY_BACKGROUNDS[j]!
+      const distance = colorDistance(tokens[a], tokens[b])
+      if (distance < MIN_CATEGORY_DISTANCE) {
+        issues.push({ kind: 'distinction', a, b, distance, required: MIN_CATEGORY_DISTANCE })
+      }
+    }
+  }
+
   return issues
 }
 
@@ -397,6 +621,11 @@ function formatGap(value: number): string {
   return (Math.floor(value * 1000) / 1000).toFixed(3).replace('.', ',')
 }
 
+/** Écart perceptif CIE76 : une décimale, un seuil de 15 n'a pas besoin de plus. */
+function formatDistance(value: number): string {
+  return (Math.floor(value * 10) / 10).toFixed(1).replace('.', ',')
+}
+
 export function describeContrastIssue(issue: ThemeIssue): string {
   if (issue.kind === 'separation') {
     return (
@@ -404,6 +633,15 @@ export function describeContrastIssue(issue: ThemeIssue): string {
       `ne se séparent que de ${formatGap(issue.gap)} en luminance ; le minimum exigé est ` +
       `${formatGap(issue.required)}. Sans cet écart, les états de la grille ne se ` +
       `distinguent plus que par la teinte.`
+    )
+  }
+
+  if (issue.kind === 'distinction') {
+    return (
+      `Les teintes catégorielles « ${TOKEN_LABELS[issue.a]} » et « ${TOKEN_LABELS[issue.b]} » ` +
+      `ne s’écartent que de ${formatDistance(issue.distance)} (ΔE*ab) ; le minimum exigé est ` +
+      `${formatDistance(issue.required)}. En dessous, deux prestations affichées côte à côte ` +
+      `dans le calendrier deviendraient indiscernables l’une de l’autre.`
     )
   }
 
