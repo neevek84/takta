@@ -3,9 +3,18 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser } from '@/auth'
 import { saveEntry, convertPastForecast, type SaveResult } from '@/services/time-entries'
+import { applyCellState, type CellResult } from '@/services/cells'
+import { clearMonth, fillMonth } from '@/services/month-fill'
 import { parseQuantity } from '@/core/time/units'
 import { listActiveLines } from '@/services/missions'
+import type { CellState } from '@/core/saisie/cycle'
+import type { ClearReport, FillReport } from '@/core/saisie/report'
 import type { TimeEntryKind } from '@/core/types'
+
+/** Aujourd'hui, côté serveur : l'horloge du navigateur ne décide de rien. */
+function aujourdhui(): string {
+  return new Date().toISOString().slice(0, 10)
+}
 
 export async function saveCell(args: {
   lineId: string
@@ -34,6 +43,69 @@ export async function saveCell(args: {
   return result
 }
 
+/**
+ * Applique un état de case — la cinématique de la vue calendrier.
+ *
+ * Le `kind` n'est jamais fourni par le client : c'est l'horloge du serveur qui
+ * départage le réalisé du prévisionnel, comme pour `validerJoursPasses`.
+ *
+ * L'action ne connaît ni le verrou, ni la capacité, ni l'affectation : elle
+ * passe la main à `applyCellState`, qui scope tout sur `userId`. Aucune
+ * requête Prisma ne part d'ici.
+ */
+export async function appliquerCase(args: {
+  lineId: string
+  /** 'YYYY-MM-DD' */
+  date: string
+  state: CellState
+  /** 'YYYY-MM' — le mois affiché, celui qu'on rafraîchit */
+  month: string
+}): Promise<CellResult> {
+  const user = await requireUser()
+
+  const result = await applyCellState({
+    userId: user.id,
+    lineId: args.lineId,
+    date: args.date,
+    kind: args.date >= aujourdhui() ? 'PREVISIONNEL' : 'REALISE',
+    state: args.state,
+  })
+
+  if (result.ok) revalidatePath(`/saisie/${args.month}`)
+  return result
+}
+
+/** Pose une journée sur chaque jour ouvré encore libre du mois. */
+export async function remplirMois(args: {
+  lineId: string
+  month: string
+}): Promise<FillReport> {
+  const user = await requireUser()
+
+  const report = await fillMonth({
+    userId: user.id,
+    lineId: args.lineId,
+    month: args.month,
+    today: aujourdhui(),
+  })
+
+  revalidatePath(`/saisie/${args.month}`)
+  return report
+}
+
+/** Retire les saisies du mois pour la prestation sélectionnée, elle seule. */
+export async function viderMois(args: {
+  lineId: string
+  month: string
+}): Promise<ClearReport> {
+  const user = await requireUser()
+
+  const report = await clearMonth({ userId: user.id, lineId: args.lineId, month: args.month })
+
+  revalidatePath(`/saisie/${args.month}`)
+  return report
+}
+
 /** Compte rendu de la dernière conversion, `null` avant tout clic. */
 export type ConversionEtat = { converted: number; skippedLocked: number } | null
 
@@ -51,9 +123,8 @@ export async function validerJoursPasses(
 ): Promise<ConversionEtat> {
   const user = await requireUser()
   const month = String(formData.get('month'))
-  const today = new Date().toISOString().slice(0, 10)
 
-  const resultat = await convertPastForecast(user.id, month, today)
+  const resultat = await convertPastForecast(user.id, month, aujourdhui())
   revalidatePath(`/saisie/${month}`)
   return resultat
 }

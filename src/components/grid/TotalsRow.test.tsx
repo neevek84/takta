@@ -4,6 +4,7 @@ import { render, screen, cleanup } from '@testing-library/react'
 import { TotalsRow } from './TotalsRow'
 import { buildMonthDays } from '@/core/month/build'
 import { checkCapacity } from '@/core/capacity/check'
+import type { CapacityMode } from '@/core/types'
 import type { MonthEntry } from '@/services/time-entries'
 
 /**
@@ -32,23 +33,36 @@ function saisie(minutes: number, minutesParJour: number): MonthEntry {
   }
 }
 
-function afficher(entries: MonthEntry[], capacityCentiemes = CAP): HTMLElement {
+function afficher(
+  entries: MonthEntry[],
+  capacityCentiemes = CAP,
+  capacityMode: CapacityMode = 'BLOCAGE',
+): HTMLElement {
   render(
     <table>
       <tbody>
-        <TotalsRow days={days} entries={entries} capacityCentiemes={capacityCentiemes} />
+        <TotalsRow
+          days={days}
+          entries={entries}
+          capacityCentiemes={capacityCentiemes}
+          capacityMode={capacityMode}
+        />
       </tbody>
     </table>,
   )
   return screen.getByTestId(`total-${JOUR}`)
 }
 
-function verdict(entries: MonthEntry[], capacityCentiemes = CAP): boolean {
+function verdict(
+  entries: MonthEntry[],
+  capacityCentiemes = CAP,
+  mode: CapacityMode = 'BLOCAGE',
+): boolean {
   const v = checkCapacity({
     existing: entries,
     added: [],
     capacityCentiemes,
-    mode: 'BLOCAGE',
+    mode,
   })
   return v.ok
 }
@@ -109,5 +123,48 @@ describe('TotalsRow', () => {
     const total = afficher([saisie(480, 480), saisie(480, 480)], 0)
     expect(total.getAttribute('data-depassement')).toBe('false')
     expect(total.textContent).toBe('2')
+  })
+
+  /**
+   * Le mode manquait à cette ligne : en `DESACTIVE`, elle marquait un
+   * dépassement que `checkCapacity` ignore délibérément — l'écran contredisait
+   * le service sur la même journée, dans le seul mode où le service ne dit
+   * rien. Les trois modes sont vérifiés, et chacun contre le verdict rendu
+   * sous ce même mode.
+   */
+  describe('mode de capacité', () => {
+    // Deux journées pleines pour une capacité d'une : le dépassement est
+    // franc, seul le mode décide s'il se dit.
+    const deuxJournees = (): MonthEntry[] => [saisie(480, 480), saisie(480, 480)]
+
+    it('ne marque rien en mode DESACTIVE', () => {
+      const entries = deuxJournees()
+      const total = afficher(entries, CAP, 'DESACTIVE')
+
+      expect(total.getAttribute('data-depassement')).toBe('false')
+      // Le glyphe précède le chiffre : `toBe` refuse le « ! » que `toContain`
+      // laisserait passer.
+      expect(total.textContent).toBe('2')
+      expect(total.getAttribute('title')).toBeNull()
+      expect(verdict(entries, CAP, 'DESACTIVE')).toBe(true)
+    })
+
+    it('marque en mode AVERTISSEMENT', () => {
+      const entries = deuxJournees()
+      const total = afficher(entries, CAP, 'AVERTISSEMENT')
+
+      expect(total.getAttribute('data-depassement')).toBe('true')
+      expect(total.textContent).toBe('! 2')
+      expect(verdict(entries, CAP, 'AVERTISSEMENT')).toBe(false)
+    })
+
+    it('marque en mode BLOCAGE', () => {
+      const entries = deuxJournees()
+      const total = afficher(entries, CAP, 'BLOCAGE')
+
+      expect(total.getAttribute('data-depassement')).toBe('true')
+      expect(total.textContent).toBe('! 2')
+      expect(verdict(entries, CAP, 'BLOCAGE')).toBe(false)
+    })
   })
 })

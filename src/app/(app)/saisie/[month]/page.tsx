@@ -51,6 +51,10 @@ export default async function SaisiePage({ params }: { params: Promise<{ month: 
         // facteur global donnerait à la ligne de totaux un seuil qu'aucune
         // saisie ne partage forcément (voir `TotalsRow`).
         capacityCentiemes={settings.capacityCentiemes}
+        // Le mode descend avec le seuil : sans lui, la ligne de totaux
+        // marquerait un dépassement que le service ignore en `DESACTIVE`.
+        capacityMode={settings.capacityMode}
+        slots={settings.slots}
       />
     </main>
   )

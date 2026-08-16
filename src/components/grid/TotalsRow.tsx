@@ -2,9 +2,10 @@
 
 import { saisiesParJour } from '@/core/month/build'
 import { centiemesParFacteur, formatJours } from '@/core/time/units'
-import { depasseCapacite } from '@/core/capacity/check'
+import { checkCapacity } from '@/core/capacity/check'
 import type { MonthDay } from '@/core/month/build'
 import type { MinutesAuFacteur } from '@/core/time/units'
+import type { CapacityMode } from '@/core/types'
 import type { MonthEntry } from '@/services/time-entries'
 
 const AUCUNE_SAISIE: MinutesAuFacteur[] = []
@@ -15,20 +16,25 @@ const AUCUNE_SAISIE: MinutesAuFacteur[] = []
  * Le chiffre affiché et le marqueur de dépassement sortent du **même calcul
  * que le service** : chaque saisie est convertie sous le facteur figé à son
  * écriture (`centiemesParFacteur`), et le dépassement est jugé par
- * `depasseCapacite`, celui-là même qu'emploie `checkCapacity`. Sommer les
- * minutes brutes de la journée puis les convertir au facteur global — ce que
- * faisait cette ligne — affichait sur le même écran un total et un « ! » que
- * le service pouvait contredire sur la même journée.
+ * `checkCapacity` lui-même — la fonction qu'appellent `applyCellState` et
+ * `saveEntry`, mode compris. Sommer les minutes brutes de la journée puis les
+ * convertir au facteur global — ce que faisait cette ligne — affichait sur le
+ * même écran un total et un « ! » que le service pouvait contredire sur la
+ * même journée ; juger sans le mode faisait de même en `DESACTIVE`, où le
+ * service ne dit délibérément rien.
  */
 export function TotalsRow({
   days,
   entries,
   capacityCentiemes,
+  capacityMode,
 }: {
   days: MonthDay[]
   entries: MonthEntry[]
   /** capacité d'une journée, telle qu'elle est réglée : jamais convertie */
   capacityCentiemes: number
+  /** mode réglé : c'est lui qui décide si un dépassement se dit */
+  capacityMode: CapacityMode
 }) {
   const parJour = saisiesParJour(entries)
 
@@ -39,7 +45,10 @@ export function TotalsRow({
       </th>
       {days.map((d) => {
         const saisies = parJour.get(d.date) ?? AUCUNE_SAISIE
-        const over = capacityCentiemes > 0 && depasseCapacite(saisies, capacityCentiemes)
+        // Capacité à zéro : aucun seuil n'est réglé, il n'y a rien à dépasser.
+        const over =
+          capacityCentiemes > 0 &&
+          !checkCapacity({ existing: saisies, added: [], capacityCentiemes, mode: capacityMode }).ok
         return (
           // Le dépassement porte trois signaux — teinte, graisse soulignée et
           // glyphe — dont deux survivent à une vision monochrome.

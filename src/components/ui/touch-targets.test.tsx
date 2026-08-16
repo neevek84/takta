@@ -62,6 +62,7 @@ describe('cibles tactiles', () => {
         entries={[]}
         engagementTotals={{ l1: [] }}
         capacityCentiemes={100}
+        capacityMode="BLOCAGE"
         onSave={vi.fn(async () => true)}
       />,
     )

@@ -53,6 +53,7 @@ function renderGrid(
       entries={entries}
       engagementTotals={engagementTotals}
       capacityCentiemes={100}
+      capacityMode="BLOCAGE"
       onSave={vi.fn(async () => true)}
       {...overrides}
     />,
@@ -97,6 +98,17 @@ describe('MonthGrid', () => {
     const total = screen.getByTestId('total-2026-03-12')
     expect(total.className).toContain('text-danger-ink')
     expect(total.getAttribute('data-depassement')).toBe('true')
+  })
+
+  // La grille jugeait le dépassement sans connaître le mode : en `DESACTIVE`,
+  // elle posait un « ! » que le service ne pose jamais. Le mode doit descendre
+  // jusqu'à la ligne de totaux, sans quoi cette même journée porte deux
+  // verdicts contradictoires sur le même écran.
+  it('fait descendre le mode de capacité jusqu à la ligne de totaux', () => {
+    renderGrid({ capacityMode: 'DESACTIVE' })
+    const total = screen.getByTestId('total-2026-03-12')
+    expect(total.getAttribute('data-depassement')).toBe('false')
+    expect(total.className).not.toContain('text-danger-ink')
   })
 
   // Six états sur une même cellule, et aucun porté par la seule couleur.
@@ -292,6 +304,7 @@ describe('MonthGrid', () => {
           ]}
           engagementTotals={engagementTotals}
           capacityCentiemes={100}
+          capacityMode="BLOCAGE"
           onSave={vi.fn(async () => true)}
         />,
       )
@@ -312,6 +325,7 @@ describe('MonthGrid', () => {
           entries={[...entries]}
           engagementTotals={engagementTotals}
           capacityCentiemes={100}
+          capacityMode="BLOCAGE"
           onSave={vi.fn(async () => true)}
         />,
       )

@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { formatQuantity } from '@/core/time/units'
 import type { MonthDay } from '@/core/month/build'
-import type { TimeEntryKind } from '@/core/types'
+import type { CapacityMode, TimeEntryKind } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
 import { SegmentLegend } from '@/components/ui/SegmentLegend'
@@ -88,6 +88,7 @@ export function MonthGrid({
   entries,
   engagementTotals,
   capacityCentiemes,
+  capacityMode,
   onSave,
 }: {
   days: MonthDay[]
@@ -103,6 +104,14 @@ export function MonthGrid({
    * les saisies qu'elle additionne n'ont pas toutes la même durée de journée.
    */
   capacityCentiemes: number
+  /**
+   * mode de capacité réglé, transmis tel quel à la ligne de totaux.
+   *
+   * Sans lui, la grille marquait un dépassement en mode `DESACTIVE`, que le
+   * service ignore : l'écran et le service disaient deux choses de la même
+   * journée.
+   */
+  capacityMode: CapacityMode
   /** renvoie `true` quand la valeur a bien été enregistrée */
   onSave: (lineId: string, date: string, raw: string) => Promise<boolean>
 }) {
@@ -271,7 +280,12 @@ export function MonthGrid({
             </tr>
           ))}
 
-          <TotalsRow days={days} entries={entries} capacityCentiemes={capacityCentiemes} />
+          <TotalsRow
+            days={days}
+            entries={entries}
+            capacityCentiemes={capacityCentiemes}
+            capacityMode={capacityMode}
+          />
         </tbody>
       </table>
     </div>
