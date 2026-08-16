@@ -75,7 +75,7 @@ Lit `donnees/cra.pid`, arrête le processus, retire le fichier. Si le processus 
 
 **Un point à écrire noir sur blanc dans le `LISEZMOI` :** SQLite écrit sur le disque à chaque transaction validée. **Fermer la fenêtre, arrêter le processus ou couper l'ordinateur ne perd aucune donnée déjà enregistrée.** C'est la phrase qui permet d'oser éteindre.
 
-L'application est configurée en journalisation `WAL`, qui rend l'écriture durable et la reprise après coupure automatique.
+**Une correction apportée par le plan** : l'application n'est PAS en journalisation `WAL` aujourd'hui — son pragma vaut `delete`. La phrase ci-dessus n'est donc vraie qu'une fois le mode activé, ce que le lot fait explicitement et vérifie en relisant le pragma. Sans cela, le `LISEZMOI` mentirait sur la sécurité des données.
 
 ---
 
