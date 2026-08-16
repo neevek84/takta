@@ -8,6 +8,7 @@ import { saveEntry, getMonthEntries } from '@/services/time-entries'
 import { saveCredential } from '@/services/credentials'
 import { createGoogleCalendarConnector } from '@/integrations/google/calendar'
 import { createFakeGoogleApi, type FakeGoogleApi } from '@/integrations/google/fake-google-api'
+import type { CalendarConnector } from '@/core/calendar/connector'
 import { getBusyDays } from './availability'
 
 const DEDIE = 'cra-dedie@group.calendar.google.com'
@@ -242,5 +243,38 @@ describe('isolation par utilisateur', () => {
     // L'autre utilisateur n'a aucun compte connecté : aucune requête ne part.
     expect(await getBusyDays(autreId, '2026-03', { fetchFn: api.fetchFn })).toEqual([])
     expect(api.calls.length).toBe(0)
+  })
+})
+
+// Le `catch` du service protège d'un agenda en panne. Il ne protège de rien
+// contre un agenda lent, qui répondra — plus tard — et retiendra d'ici là
+// l'affichage de la saisie. Le marquage est une information, jamais un
+// blocage : il ne vaut pas d'être attendu.
+describe('agenda lent', () => {
+  it('rend la main sans marquage plutôt que de retenir la page', async () => {
+    const lent = {
+      dedicatedCalendarId: 'dedie',
+      freeBusy: () => new Promise<never>(() => {}),
+    } as unknown as CalendarConnector
+
+    const debut = Date.now()
+    const jours = await getBusyDays(userId, '2026-03', { connector: lent, delaiMs: 40 })
+
+    expect(jours).toEqual([])
+    expect(Date.now() - debut).toBeLessThan(2000)
+  })
+
+  it('laisse passer une réponse arrivée dans le délai', async () => {
+    await connecter()
+    api.busy.set('primary', [
+      { start: '2026-03-12T09:00:00.000Z', end: '2026-03-12T17:00:00.000Z' },
+    ])
+
+    const jours = await getBusyDays(userId, '2026-03', {
+      fetchFn: api.fetchFn,
+      delaiMs: 5000,
+    })
+
+    expect(jours).toContain('2026-03-12')
   })
 })

@@ -55,12 +55,50 @@ function joursCouverts(interval: BusyInterval): string[] {
  * Aucun cache en v1 : un appel `freeBusy` est bon marché, et un cache
  * introduirait une fraîcheur à arbitrer.
  */
+/**
+ * Au-delà de ce délai, la grille s'affiche sans marquage.
+ *
+ * Le `catch` ci-dessous protège d'un agenda **en panne**. Il ne protège de
+ * rien contre un agenda **lent**, qui répondra — dans trente secondes — et
+ * retiendra d'ici là l'affichage de la saisie. Une panne franche était le cas
+ * facile ; la lenteur est celui qui se voit à l'usage.
+ *
+ * Le marquage est une information, jamais un blocage : il ne vaut pas d'être
+ * attendu.
+ */
+export const DELAI_OCCUPATION_MS = 3000
+
 export async function getBusyDays(
   userId: string,
   month: string,
-  deps: { connector?: CalendarConnector | null; fetchFn?: FetchLike } = {},
+  deps: {
+    connector?: CalendarConnector | null
+    fetchFn?: FetchLike
+    delaiMs?: number
+  } = {},
 ): Promise<string[]> {
+  const delaiMs = deps.delaiMs ?? DELAI_OCCUPATION_MS
+
   try {
+    return await Promise.race([
+      lireOccupation(userId, month, deps),
+      new Promise<string[]>((_, rejeter) =>
+        setTimeout(() => rejeter(new Error('Délai dépassé')), delaiMs).unref?.(),
+      ),
+    ])
+  } catch {
+    // Le seul `catch` muet que ce service s'autorise, et la raison d'être de
+    // sa signature : l'appelant est une page de saisie qui doit s'afficher.
+    return []
+  }
+}
+
+async function lireOccupation(
+  userId: string,
+  month: string,
+  deps: { connector?: CalendarConnector | null; fetchFn?: FetchLike },
+): Promise<string[]> {
+  {
     const connector =
       deps.connector !== undefined
         ? deps.connector
@@ -85,9 +123,5 @@ export async function getBusyDays(
       }
     }
     return [...jours].sort()
-  } catch {
-    // Le seul `catch` muet que ce service s'autorise, et la raison d'être de
-    // sa signature : l'appelant est une page de saisie qui doit s'afficher.
-    return []
   }
 }
