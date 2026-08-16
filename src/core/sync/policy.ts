@@ -19,6 +19,17 @@ export const ENTITY_TIME_ENTRY = 'TimeEntry'
 export const RETRY_DELAYS_MINUTES: readonly number[] = [1, 5, 15, 60, 360]
 export const MAX_ATTEMPTS = 5
 
+/**
+ * Taille d'un lot de drainage, commune à tous les fournisseurs.
+ *
+ * Elle vivait dans `services/sync/flush.ts`, d'où le drainage générique ne
+ * pouvait pas la lire sans fermer un cycle d'imports
+ * (`outbox → flush → time-entries → outbox`). Une valeur par défaut recopiée à
+ * chaque étage se contredit sans que rien ne le dise, et c'est exactement le
+ * genre de constante qu'aucun test ne pince quand elle est dupliquée.
+ */
+export const TAILLE_LOT = 50
+
 export interface NextAttempt {
   state: SyncState
   attempts: number

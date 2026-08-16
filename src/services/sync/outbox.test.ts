@@ -4,8 +4,9 @@ import { updateSettings } from '@/services/settings'
 import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
 import { saveEntry, convertPastForecast } from '@/services/time-entries'
-import { enqueueTimeEntry, RETENTION_JOURS } from './outbox'
+import { enqueueSync, enqueueTimeEntry, flushOutbox, RETENTION_JOURS } from './outbox'
 import { listFailedSyncRows, retrySyncRow } from './queue'
+import type { SyncHandler, SyncJob, SyncOutcome } from './types'
 
 // Un interrupteur pour faire échouer la mise en file à la demande. C'est le
 // seul moyen d'observer le sens « pas d'écriture sans mise en file » : la
@@ -473,5 +474,374 @@ describe('les échecs remontent au lieu de disparaître', () => {
     const id = await echouer()
     expect(await retrySyncRow(autreId, id)).toBe(false)
     expect((await prisma.syncOutbox.findUniqueOrThrow({ where: { id } })).state).toBe('FAILED')
+  })
+})
+
+// --------------------------------------------------------------------------
+// La file au service d'un fournisseur qui n'est PAS personnel.
+//
+// Google pousse des événements d'agenda, avec un jeton par personne : la file
+// et le fournisseur ont le même propriétaire, et rien n'obligeait jusqu'ici à
+// distinguer les deux. Dolibarr reçoit des temps consommés avec une clé d'API
+// qui appartient à l'instance (`ownerScope = 'INSTANCE'`) : la ligne de file
+// reste personnelle — elle désigne un CRA, qui a un propriétaire — mais le
+// fournisseur, lui, ne l'est plus. Tout ce qui suit vérifie que la file ne
+// confond pas les deux.
+// --------------------------------------------------------------------------
+
+const DOLIBARR = 'DOLIBARR'
+
+const SUCCES: SyncOutcome = { ok: true }
+const PANNE: SyncOutcome = { ok: false, retriable: true, message: 'Dolibarr injoignable.' }
+const REFUS: SyncOutcome = { ok: false, retriable: false, message: 'Mission non rattachée.' }
+
+function gestionnaire(resultat: SyncOutcome, vus: SyncJob[] = []): SyncHandler {
+  return {
+    async upsert(job) {
+      vus.push(job)
+      return resultat
+    },
+    async remove(job) {
+      vus.push(job)
+      return resultat
+    },
+  }
+}
+
+function explosif(): SyncHandler {
+  return {
+    async upsert() {
+      throw new Error('boum')
+    },
+    async remove() {
+      throw new Error('boum')
+    },
+  }
+}
+
+function enfiler(args: {
+  userId: string
+  entityType?: string
+  entityId: string
+  provider?: string
+  operation?: 'UPSERT' | 'DELETE'
+  payload?: Record<string, string>
+  now?: Date
+}): Promise<void> {
+  return prisma.$transaction(async (tx) =>
+    enqueueSync(tx, {
+      userId: args.userId,
+      entityType: args.entityType ?? 'Cra',
+      entityId: args.entityId,
+      provider: args.provider ?? DOLIBARR,
+      ...(args.operation === undefined ? {} : { operation: args.operation }),
+      ...(args.payload === undefined ? {} : { payload: args.payload }),
+      ...(args.now === undefined ? {} : { now: args.now }),
+    }),
+  )
+}
+
+describe('la file ne suppose pas un fournisseur personnel', () => {
+  it('met en file une entité qui n est pas une saisie, pour un fournisseur d instance', async () => {
+    await enfiler({ userId, entityId: 'cra-1' })
+
+    const ligne = await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })
+    expect({
+      entityType: ligne.entityType,
+      entityId: ligne.entityId,
+      provider: ligne.provider,
+      operation: ligne.operation,
+      state: ligne.state,
+    }).toEqual({
+      entityType: 'Cra',
+      entityId: 'cra-1',
+      provider: DOLIBARR,
+      operation: 'UPSERT',
+      state: 'PENDING',
+    })
+  })
+
+  // Le dédoublonnage porte sur le triplet, pas sur la saisie : dix validations
+  // successives du même CRA ne laissent qu'une ligne.
+  it('dix mises en file sur la même cible produisent une ligne', async () => {
+    for (let i = 0; i < 10; i++) await enfiler({ userId, entityId: 'cra-1' })
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(1)
+  })
+
+  // Le `provider` entre dans la clé d'unicité : deux fournisseurs visant la
+  // même entité tiennent chacun leur ligne. Sans cela, armer Dolibarr
+  // écraserait la ligne Google de la même cible — et l'agenda ne recevrait
+  // jamais rien.
+  it('sépare deux fournisseurs sur la même entité', async () => {
+    await enfiler({ userId, entityType: 'TimeEntry', entityId: 'e1', provider: 'GOOGLE' })
+    await enfiler({ userId, entityType: 'TimeEntry', entityId: 'e1', provider: DOLIBARR })
+
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(2)
+  })
+
+  it('conserve le contexte de rejeu et le relit tel quel', async () => {
+    await enfiler({ userId, entityId: 'cra-1', payload: { month: '2026-05' } })
+
+    const vus: SyncJob[] = []
+    await flushOutbox({ userId, handlers: { [DOLIBARR]: gestionnaire(SUCCES, vus) } })
+
+    expect(vus[0]?.payload).toEqual({ month: '2026-05' })
+  })
+
+  // La purge est bornée au fournisseur qu'on met en file : valider un CRA vers
+  // Dolibarr ne doit pas emporter les vieilles lignes de l'agenda, dont la
+  // suppression est justement le défaut que la purge Google existe pour
+  // empêcher.
+  it('la purge ne franchit pas la frontière du fournisseur', async () => {
+    const vieilleGoogle = await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'TimeEntry',
+        entityId: 'saisie-perimee-google',
+        provider: 'GOOGLE',
+        operation: 'UPSERT',
+        nextAttemptAt: new Date(Date.now() - (RETENTION_JOURS + 1) * 86_400_000),
+      },
+    })
+
+    await enfiler({ userId, entityId: 'cra-1' })
+
+    expect(await prisma.syncOutbox.findUnique({ where: { id: vieilleGoogle.id } })).not.toBeNull()
+  })
+
+  it('la purge ne franchit pas la frontière de l utilisateur', async () => {
+    const autre = await prisma.syncOutbox.create({
+      data: {
+        userId: autreId,
+        entityType: 'Cra',
+        entityId: 'cra-autre',
+        provider: DOLIBARR,
+        operation: 'UPSERT',
+        nextAttemptAt: new Date(Date.now() - (RETENTION_JOURS + 1) * 86_400_000),
+      },
+    })
+
+    await enfiler({ userId, entityId: 'cra-1' })
+
+    expect(await prisma.syncOutbox.findUnique({ where: { id: autre.id } })).not.toBeNull()
+  })
+
+  // L'écran de supervision est commun aux deux fournisseurs. Il lisait chaque
+  // ligne comme une saisie et rendait « Saisie supprimée » pour tout ce qui
+  // n'en était pas une — un CRA validé, parfaitement vivant, s'y présentait
+  // comme effacé.
+  it('l écran de supervision ne présente pas un CRA comme une saisie supprimée', async () => {
+    await enfiler({ userId, entityId: 'cra-1' })
+    await prisma.syncOutbox.updateMany({
+      where: { userId },
+      data: { state: 'FAILED', attempts: 5, lastError: 'Dolibarr injoignable' },
+    })
+
+    const [echec] = await listFailedSyncRows(userId)
+    expect(echec?.provider).toBe(DOLIBARR)
+    expect(echec?.libelle).not.toContain('supprimée')
+    expect(echec?.libelle).toContain('cra-1')
+  })
+})
+
+describe('drainage par gestionnaire', () => {
+  const T0 = new Date('2026-05-04T10:00:00.000Z')
+  const plusTard = (minutes: number) => new Date(T0.getTime() + minutes * 60_000)
+
+  it('supprime la ligne quand le gestionnaire réussit', async () => {
+    await enfiler({ userId, entityId: 'cra-1' })
+
+    const rapport = await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire(SUCCES) },
+      now: T0,
+    })
+
+    expect(rapport).toEqual({ traitees: 1, reussies: 1, replanifiees: 0, echouees: 0 })
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+  })
+
+  it('appelle remove pour une suppression', async () => {
+    const vus: SyncJob[] = []
+    await enfiler({ userId, entityId: 'cra-1', operation: 'DELETE' })
+
+    await flushOutbox({ userId, handlers: { [DOLIBARR]: gestionnaire(SUCCES, vus) }, now: T0 })
+    expect(vus[0]?.operation).toBe('DELETE')
+  })
+
+  // Le drainage est scopé sur l'utilisateur comme toute fonction de service :
+  // le bouton « synchroniser » d'un compte ne pousse pas les CRA d'un autre.
+  it('ne draine pas la file d un autre utilisateur', async () => {
+    await enfiler({ userId: autreId, entityId: 'cra-autre' })
+
+    const vus: SyncJob[] = []
+    const rapport = await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire(SUCCES, vus) },
+      now: T0,
+    })
+
+    expect(rapport.traitees).toBe(0)
+    expect(vus).toEqual([])
+    expect(await prisma.syncOutbox.count({ where: { userId: autreId } })).toBe(1)
+  })
+
+  // Un fournisseur non connecté n'a pas de gestionnaire : sa file attend, elle
+  // ne tombe pas en échec. Consommer des tentatives ici viderait le quota
+  // avant même que l'exploitant ait saisi sa clé d'API.
+  it('laisse en attente la ligne d un fournisseur sans gestionnaire', async () => {
+    await enfiler({ userId, entityId: 'cra-1' })
+
+    const rapport = await flushOutbox({ userId, handlers: {}, now: T0 })
+
+    expect(rapport.traitees).toBe(0)
+    expect((await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })).state).toBe('PENDING')
+  })
+
+  it('ne touche pas à la ligne d un fournisseur pour lequel on ne draine pas', async () => {
+    await enfiler({ userId, entityType: 'TimeEntry', entityId: 'e1', provider: 'GOOGLE' })
+    await enfiler({ userId, entityId: 'cra-1' })
+
+    const rapport = await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire(SUCCES) },
+      now: T0,
+    })
+
+    expect(rapport.traitees).toBe(1)
+    const restantes = await prisma.syncOutbox.findMany({ where: { userId } })
+    expect(restantes.map((l) => l.provider)).toEqual(['GOOGLE'])
+  })
+
+  // Le filtre sur le fournisseur borne la **lecture**, pas seulement la
+  // boucle. Sans lui, les lignes d'un fournisseur non connecté occupent le lot
+  // et affament celui qu'on sait pousser : un compte dont l'agenda est
+  // déconnecté depuis six mois ne verrait plus un seul CRA partir vers
+  // Dolibarr, sans le moindre échec pour le dire.
+  it('ne laisse pas un fournisseur sans gestionnaire affamer le lot', async () => {
+    await enfiler({
+      userId,
+      entityType: 'TimeEntry',
+      entityId: 'e1',
+      provider: 'GOOGLE',
+      now: new Date(T0.getTime() - 86_400_000),
+    })
+    await enfiler({ userId, entityId: 'cra-1', now: T0 })
+
+    const rapport = await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire(SUCCES) },
+      limit: 1,
+      now: T0,
+    })
+
+    expect(rapport.traitees).toBe(1)
+    expect((await prisma.syncOutbox.findMany({ where: { userId } })).map((l) => l.provider)).toEqual(
+      ['GOOGLE'],
+    )
+  })
+
+  it('replanifie un échec rejouable selon le recul progressif', async () => {
+    await enfiler({ userId, entityId: 'cra-1' })
+
+    const rapport = await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire(PANNE) },
+      now: T0,
+    })
+
+    expect(rapport).toEqual({ traitees: 1, reussies: 0, replanifiees: 1, echouees: 0 })
+    const ligne = await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })
+    expect(ligne.state).toBe('PENDING')
+    expect(ligne.attempts).toBe(1)
+    expect(ligne.lastError).toBe('Dolibarr injoignable.')
+    expect(ligne.nextAttemptAt.toISOString()).toBe(plusTard(1).toISOString())
+  })
+
+  it('passe en échec au bout du quota, sans perdre la ligne', async () => {
+    await enfiler({ userId, entityId: 'cra-1' })
+
+    for (let i = 0; i < 5; i++) {
+      await flushOutbox({
+        userId,
+        handlers: { [DOLIBARR]: gestionnaire(PANNE) },
+        now: plusTard(i * 1000),
+      })
+    }
+
+    const ligne = await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })
+    expect(ligne.state).toBe('FAILED')
+    expect(ligne.attempts).toBe(5)
+    expect((await listFailedSyncRows(userId)).map((r) => r.id)).toEqual([ligne.id])
+  })
+
+  // Une erreur permanente (400, 422 : mission non rattachée, projet effacé)
+  // n'est pas rejouée cinq fois. Elle remonte tout de suite à l'écran.
+  it('abandonne sans attendre un échec non rejouable', async () => {
+    await enfiler({ userId, entityId: 'cra-1' })
+
+    const rapport = await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire(REFUS) },
+      now: T0,
+    })
+
+    expect(rapport).toEqual({ traitees: 1, reussies: 0, replanifiees: 0, echouees: 1 })
+    const ligne = await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })
+    expect(ligne.state).toBe('FAILED')
+    expect(ligne.attempts).toBe(1)
+    expect(ligne.lastError).toBe('Mission non rattachée.')
+  })
+
+  it('ne retraite pas une ligne en échec définitif', async () => {
+    await enfiler({ userId, entityId: 'cra-1' })
+    await flushOutbox({ userId, handlers: { [DOLIBARR]: gestionnaire(REFUS) }, now: T0 })
+
+    const vus: SyncJob[] = []
+    const rapport = await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire(SUCCES, vus) },
+      now: plusTard(10_000),
+    })
+
+    expect(rapport.traitees).toBe(0)
+    expect(vus).toEqual([])
+  })
+
+  it('ne traite pas une ligne dont le recul n est pas écoulé', async () => {
+    await enfiler({ userId, entityId: 'cra-1' })
+    await flushOutbox({ userId, handlers: { [DOLIBARR]: gestionnaire(PANNE) }, now: T0 })
+
+    const rapport = await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire(SUCCES) },
+      now: plusTard(0.5),
+    })
+    expect(rapport.traitees).toBe(0)
+  })
+
+  // Une exception non prévue d'un gestionnaire ne doit pas interrompre le
+  // drainage : elle vaut échec rejouable, et la ligne suivante est traitée.
+  it('absorbe une exception du gestionnaire comme un échec rejouable', async () => {
+    await enfiler({ userId, entityId: 'cra-1' })
+
+    const rapport = await flushOutbox({ userId, handlers: { [DOLIBARR]: explosif() }, now: T0 })
+
+    expect(rapport).toEqual({ traitees: 1, reussies: 0, replanifiees: 1, echouees: 0 })
+    expect((await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })).lastError).toBe('boum')
+  })
+
+  it('respecte la limite demandée', async () => {
+    for (let i = 0; i < 5; i++) await enfiler({ userId, entityId: `cra-${i}` })
+
+    const rapport = await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire(SUCCES) },
+      limit: 2,
+      now: T0,
+    })
+
+    expect(rapport.traitees).toBe(2)
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(3)
   })
 })

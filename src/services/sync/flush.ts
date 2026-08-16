@@ -1,7 +1,13 @@
 import { prisma } from '@/db/client'
 import { CalendarApiError, type CalendarConnector } from '@/core/calendar/connector'
 import { buildCalendarEvent } from '@/core/calendar/event'
-import { abandon, nextAttempt, PROVIDER_GOOGLE, type ConflictKind } from '@/core/sync/policy'
+import {
+  abandon,
+  nextAttempt,
+  PROVIDER_GOOGLE,
+  TAILLE_LOT,
+  type ConflictKind,
+} from '@/core/sync/policy'
 import type { TimeEntryKind } from '@/core/types'
 import type { FetchLike } from '@/integrations/google/calendar'
 import { OWNER_SCOPE_USER } from '@/services/credentials'
@@ -19,14 +25,11 @@ export interface FlushReport {
 }
 
 /**
- * Taille d'un lot de drainage.
- *
- * Une seule définition pour les trois appelants : une valeur par défaut
- * recopiée à chaque étage se contredit sans que rien ne le dise, et c'est
- * exactement le genre de constante qu'aucun test ne pince quand elle est
- * dupliquée.
+ * Réexportée telle quelle : la constante a migré dans `core/sync/policy.ts`
+ * pour que le drainage générique (`outbox.ts`) la lise sans fermer de cycle
+ * d'imports. Les appelants historiques ne changent pas d'adresse.
  */
-export const TAILLE_LOT = 50
+export { TAILLE_LOT }
 
 type Row = Awaited<ReturnType<typeof prisma.syncOutbox.findFirstOrThrow>>
 
@@ -182,9 +185,18 @@ export async function flushSyncOutbox(args: {
   // deux rendrait la file inerte dès que l'appelant fournit un autre instant
   // (drainage d'une reprise, test à horloge figée) — et rien ne l'aurait dit,
   // puisqu'une file inerte ne lève rien.
+  //
+  // `provider` fait partie du filtre, et ce n'est pas une précaution de
+  // façade : la file est commune à tous les fournisseurs, ce drainage-ci ne
+  // sait parler qu'à l'agenda. Sans ce filtre il prenait aussi les lignes
+  // Dolibarr, dont l'`entityId` désigne un CRA : `traiterUpsert` n'y
+  // retrouvait aucune saisie, concluait « plus rien à pousser » et supprimait
+  // la ligne. Le CRA validé n'arrivait jamais dans Dolibarr, sans qu'aucun
+  // écran ne montre le moindre échec.
   const rows = await prisma.syncOutbox.findMany({
     where: {
       userId: args.userId,
+      provider: PROVIDER_GOOGLE,
       state: 'PENDING',
       OR: [{ attempts: 0 }, { nextAttemptAt: { lte: now } }],
     },
@@ -260,11 +272,18 @@ export interface DrainReport extends FlushReport {
   reste: number
 }
 
-/** Lignes de la file dues à cet instant, sans les reculs après échec. */
+/**
+ * Lignes de l'agenda dues à cet instant, sans les reculs après échec.
+ *
+ * Même filtre sur le fournisseur que le drainage : compter ici une ligne que
+ * ce drainage-là ne prendra jamais afficherait un reste que recliquer ne fait
+ * pas descendre.
+ */
 function compterDues(userId: string, now: Date): Promise<number> {
   return prisma.syncOutbox.count({
     where: {
       userId,
+      provider: PROVIDER_GOOGLE,
       state: 'PENDING',
       OR: [{ attempts: 0 }, { nextAttemptAt: { lte: now } }],
     },

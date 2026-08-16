@@ -30,6 +30,8 @@ const conflit: OpenConflict = {
 const echec: FailedSyncRow = {
   id: 'r1',
   entityId: 'e2',
+  entityType: 'TimeEntry',
+  provider: 'GOOGLE',
   operation: 'UPSERT',
   attempts: 5,
   lastError: 'Agenda injoignable : fetch failed',

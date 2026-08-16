@@ -464,6 +464,47 @@ async function fileFantome(id: string, combien: number): Promise<void> {
   })
 }
 
+/** Une ligne de file destinée à un fournisseur qui n'est pas l'agenda. */
+function ligneDolibarr(entityId: string) {
+  return prisma.syncOutbox.create({
+    data: {
+      userId,
+      entityType: 'Cra',
+      entityId,
+      provider: 'DOLIBARR',
+      operation: 'UPSERT',
+    },
+  })
+}
+
+// Le drainage de l'agenda lit la file, qui est commune à tous les
+// fournisseurs. Sans filtre sur le fournisseur, il prenait aussi les lignes
+// Dolibarr : `traiterUpsert` ne retrouvait aucune saisie derrière un `craId`,
+// concluait « plus rien à pousser » et **supprimait la ligne**. Le CRA validé
+// n'arrivait alors jamais dans Dolibarr, et rien nulle part ne le disait.
+describe('le drainage de l agenda ne touche qu à ses propres lignes', () => {
+  it('ne traite ni ne consomme la ligne d un autre fournisseur', async () => {
+    const ligne = await ligneDolibarr('cra-1')
+
+    const r = await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(r.traitees).toBe(0)
+    expect(await prisma.syncOutbox.findUnique({ where: { id: ligne.id } })).not.toBeNull()
+  })
+
+  it('draine ses propres lignes en laissant les autres en place', async () => {
+    await saisir('2026-03-12')
+    const ligne = await ligneDolibarr('cra-1')
+
+    const r = await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(r.traitees).toBe(1)
+    expect((await prisma.syncOutbox.findMany({ where: { userId } })).map((l) => l.id)).toEqual([
+      ligne.id,
+    ])
+  })
+})
+
 describe('drainage d un compte, jusqu au bout', () => {
   // `flushSyncOutbox` s'arrête à `limit` lignes. Le déclenchement manuel est le
   // SEUL drainage disponible par défaut : s'il n'enchaîne pas, le consultant
@@ -520,6 +561,17 @@ describe('drainage d un compte, jusqu au bout', () => {
 
     expect(r.traitees).toBe(2)
     expect(await prisma.syncOutbox.count({ where: { userId: autreId } })).toBe(3)
+  })
+
+  // La file est partagée par tous les fournisseurs, le drainage ne l'est pas.
+  // Une ligne Dolibarr comptée dans le reste ferait recliquer indéfiniment sur
+  // « synchroniser » un utilisateur dont l'agenda, lui, est à jour.
+  it('ne compte pas dans le reste la ligne d un autre fournisseur', async () => {
+    await ligneDolibarr('cra-reste')
+
+    const r = await drainSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect({ traitees: r.traitees, reste: r.reste }).toEqual({ traitees: 0, reste: 0 })
   })
 
   it('rend le cas non connecté tel quel, sans rien marquer en échec', async () => {

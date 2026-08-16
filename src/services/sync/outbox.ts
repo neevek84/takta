@@ -1,5 +1,14 @@
 import type { Prisma } from '@prisma/client'
-import { ENTITY_TIME_ENTRY, PROVIDER_GOOGLE, type SyncOperation } from '@/core/sync/policy'
+import { prisma } from '@/db/client'
+import {
+  abandon,
+  ENTITY_TIME_ENTRY,
+  nextAttempt,
+  PROVIDER_GOOGLE,
+  TAILLE_LOT,
+  type SyncOperation,
+} from '@/core/sync/policy'
+import type { SyncHandler, SyncJob, SyncOutcome } from './types'
 
 /**
  * Au-delà de ce délai, une ligne encore due n'a jamais pu partir : l'agenda
@@ -106,11 +115,20 @@ export async function enqueueSync(
     entityType: string
     entityId: string
     provider: string
-    operation: SyncOperation
+    operation?: SyncOperation
+    /**
+     * Contexte de rejeu, transmis tel quel au gestionnaire. Facultatif, et
+     * vide pour l'agenda : sa cible est une saisie, que le drainage relit en
+     * base. Un fournisseur dont la cible a changé de forme entre-temps y
+     * dépose ce qu'il lui faudra.
+     */
+    payload?: Record<string, string>
     now?: Date
   },
 ): Promise<void> {
   const now = args.now ?? new Date()
+  const operation = args.operation ?? 'UPSERT'
+  const payloadJson = JSON.stringify(args.payload ?? {})
   const cible = {
     entityType: args.entityType,
     entityId: args.entityId,
@@ -124,14 +142,16 @@ export async function enqueueSync(
     create: {
       ...cible,
       userId: args.userId,
-      operation: args.operation,
+      operation,
+      payloadJson,
       state: 'PENDING',
       attempts: 0,
       lastError: '',
       nextAttemptAt: now,
     },
     update: {
-      operation: args.operation,
+      operation,
+      payloadJson,
       state: 'PENDING',
       attempts: 0,
       lastError: '',
@@ -140,7 +160,144 @@ export async function enqueueSync(
   })
 }
 
-/** La cible unique du lot : une ligne de temps vers Google. */
+export interface OutboxFlushReport {
+  traitees: number
+  reussies: number
+  /** échecs rejouables : la ligne reste en file avec un nouveau rendez-vous */
+  replanifiees: number
+  /** lignes passées en `FAILED` : elles restent en base, visibles à l'écran */
+  echouees: number
+}
+
+/** Le message d'échec n'est pas un journal d'exécution : il tient dans la colonne. */
+function borner(message: string): string {
+  return message.slice(0, 500)
+}
+
+function relirePayload(brut: string): Record<string, string> {
+  try {
+    const parse: unknown = JSON.parse(brut)
+    if (parse === null || typeof parse !== 'object' || Array.isArray(parse)) return {}
+    return parse as Record<string, string>
+  } catch {
+    // Un contexte illisible ne condamne pas la ligne : la cible, elle, reste
+    // parfaitement poussable. Lever ici ferait échouer cinq fois une
+    // synchronisation que rien n'empêchait d'aboutir.
+    return {}
+  }
+}
+
+/**
+ * Draine la file d'un compte pour les fournisseurs dont on tient un
+ * gestionnaire.
+ *
+ * **Ce que ce drainage-ci ne suppose pas.** Il ne connaît ni Google ni
+ * Dolibarr, ne construit aucune requête distante et ne sait pas si la clé du
+ * fournisseur appartient à une personne ou à l'instance : il lit des lignes,
+ * appelle un gestionnaire, et applique la politique de reprise du noyau. C'est
+ * ce qui permet à un fournisseur d'instance de consommer la même file qu'un
+ * fournisseur personnel.
+ *
+ * **Ce qu'il suppose, en revanche, et qui est délibéré.** La ligne, elle, est
+ * personnelle : `userId` est obligatoire et scope la lecture, comme toute
+ * fonction de service de ce projet. Le fournisseur peut être commun à tous ;
+ * le CRA qu'on pousse ne l'est jamais.
+ *
+ * **Un fournisseur sans gestionnaire n'est pas un fournisseur en panne.** Ses
+ * lignes ne sont même pas lues : elles attendent en `PENDING` que la clé
+ * d'API soit saisie. Les marquer en échec viderait leur quota de tentatives
+ * avant que le connecteur ait jamais existé, et il faudrait ensuite les
+ * réarmer une par une à la main.
+ */
+export async function flushOutbox(args: {
+  userId: string
+  handlers: Record<string, SyncHandler>
+  limit?: number
+  now?: Date
+}): Promise<OutboxFlushReport> {
+  const now = args.now ?? new Date()
+  const rapport: OutboxFlushReport = { traitees: 0, reussies: 0, replanifiees: 0, echouees: 0 }
+
+  const providers = Object.keys(args.handlers)
+  if (providers.length === 0) return rapport
+
+  // `nextAttemptAt` porte un recul après échec, pas une date d'ouverture : une
+  // ligne jamais tentée est due quelle que soit l'horloge de l'appelant. Même
+  // lecture que le drainage de l'agenda, pour la même raison — comparer une
+  // estampille posée par l'horloge système à un instant injecté rendrait la
+  // file inerte sans que rien ne le signale.
+  const lignes = await prisma.syncOutbox.findMany({
+    where: {
+      userId: args.userId,
+      provider: { in: providers },
+      state: 'PENDING',
+      OR: [{ attempts: 0 }, { nextAttemptAt: { lte: now } }],
+    },
+    orderBy: { nextAttemptAt: 'asc' },
+    take: args.limit ?? TAILLE_LOT,
+  })
+
+  for (const ligne of lignes) {
+    const handler = args.handlers[ligne.provider]
+    if (handler === undefined) continue
+
+    const job: SyncJob = {
+      id: ligne.id,
+      userId: ligne.userId,
+      entityType: ligne.entityType,
+      entityId: ligne.entityId,
+      provider: ligne.provider,
+      operation: ligne.operation as SyncOperation,
+      attempts: ligne.attempts,
+      payload: relirePayload(ligne.payloadJson),
+    }
+
+    rapport.traitees += 1
+
+    // Une exception non prévue ne doit interrompre ni le drainage des autres
+    // lignes ni le quota de celle-ci : elle vaut échec rejouable.
+    let resultat: SyncOutcome
+    try {
+      resultat = job.operation === 'DELETE' ? await handler.remove(job) : await handler.upsert(job)
+    } catch (err) {
+      resultat = {
+        ok: false,
+        retriable: true,
+        message: err instanceof Error ? err.message : String(err),
+      }
+    }
+
+    if (resultat.ok) {
+      await prisma.syncOutbox.delete({ where: { id: ligne.id } })
+      rapport.reussies += 1
+      continue
+    }
+
+    // La politique de reprise vient du noyau, pas d'ici : le recul progressif
+    // et le quota sont les mêmes pour tous les fournisseurs, et les dupliquer
+    // les ferait diverger en silence.
+    const suite = resultat.retriable
+      ? nextAttempt(ligne.attempts, now)
+      : abandon(ligne.attempts, now)
+
+    await prisma.syncOutbox.update({
+      where: { id: ligne.id },
+      data: {
+        attempts: suite.attempts,
+        state: suite.state,
+        nextAttemptAt: suite.nextAttemptAt,
+        lastError: borner(resultat.message),
+      },
+    })
+
+    if (suite.state === 'FAILED') rapport.echouees += 1
+    else rapport.replanifiees += 1
+  }
+
+  return rapport
+}
+
+/** La cible unique du lot 1b : une ligne de temps vers Google. */
 export async function enqueueTimeEntry(
   tx: Prisma.TransactionClient,
   args: { userId: string; entryId: string; operation: SyncOperation; now?: Date },

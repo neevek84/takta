@@ -225,6 +225,12 @@ model SyncOutbox {
   provider      String
   /// 'UPSERT' | 'DELETE'
   operation     String
+  /// contexte de rejeu propre au fournisseur — ce que le drainage doit savoir
+  /// et que la cible ne porte plus au moment où il tourne. JSON lu et écrit en
+  /// bloc uniquement, jamais interrogé finement. '{}' quand il n'y a rien à
+  /// transmettre, ce qui est le cas de l'agenda : sa cible est une saisie, et
+  /// une saisie se relit.
+  payloadJson   String   @default("{}")
   /// 'PENDING' | 'FAILED'
   state         String   @default("PENDING")
   attempts      Int      @default(0)
