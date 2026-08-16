@@ -92,10 +92,22 @@ describe('jeu de migrations SQLite', () => {
     }
   })
 
-  it("ne porte pas de migration_lock.toml : ce jeu n'est jamais confié au CLI Prisma", () => {
-    // `prisma migrate deploy` refuserait de toute façon ce dossier (le verrou
-    // du dépôt déclare postgresql). En poser un ici inviterait à essayer.
-    const entrees = readdirSync(DIR).filter((n) => n === 'migration_lock.toml')
-    expect(entrees).toEqual([])
+  // Ce test affirmait d'abord l'inverse — que le jeu ne devait porter aucun
+  // verrou, « n'étant jamais confié au CLI Prisma ». La prémisse était fausse,
+  // et l'a été démontrée en essayant : le jeu n'est pas confié au CLI à
+  // l'exécution, mais il l'est en MAINTENANCE, par la commande qui le compare
+  // au schéma quand celui-ci change. Sans verrou, elle refuse le dossier —
+  // « Could not determine the connector from the migrations directory » — et
+  // la seule issue restante serait de régénérer le jeu à plat, ce qui
+  // casserait le journal des installations existantes.
+  it('declare sqlite, sans quoi la comparaison au schema est impossible', () => {
+    const lock = readFileSync(path.join(DIR, 'migration_lock.toml'), 'utf8')
+    expect(lock).toContain('provider = "sqlite"')
+  })
+
+  it("ne declare pas le connecteur de l autre jeu", () => {
+    const lock = readFileSync(path.join(DIR, 'migration_lock.toml'), 'utf8')
+    expect(lock).not.toContain('postgresql')
   })
 })
+
