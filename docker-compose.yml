@@ -17,10 +17,29 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # `.dockerignore` exclut `.env` : rien n'entre dans le conteneur qui ne
+    # soit listé ici. Toute variable de `.env.example` doit donc y figurer —
+    # `src/deploy/deployment-config.test.ts` le vérifie à chaque exécution de
+    # la suite.
     environment:
       DATABASE_URL: postgresql://cra:cra@db:5432/cra
-      AUTH_SECRET: ${AUTH_SECRET:?definir AUTH_SECRET}
+      AUTH_SECRET: ${AUTH_SECRET:?definir AUTH_SECRET (openssl rand -base64 32)}
       AUTH_TRUST_HOST: "true"
+      # Chiffre les jetons Google au repos. Exigée au démarrage, et non à la
+      # première connexion Google : absente, elle ne se manifesterait qu'au
+      # retour du consentement, très loin d'ici, sur un écran qui ne peut que
+      # proposer de recommencer. La perdre impose de reconnecter Google —
+      # aucun jeton n'est récupérable sans elle.
+      CREDENTIALS_KEY: ${CREDENTIALS_KEY:?definir CREDENTIALS_KEY (openssl rand -base64 32)}
+      # Connecteur Google : entièrement optionnel. Vides, la connexion est
+      # simplement indisponible et l'application fonctionne sans agenda.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:3000/api/google/callback}
+      CRA_TIMEZONE: ${CRA_TIMEZONE:-Europe/Paris}
+      # Vide = POST /api/sync/flush fermé. Le bouton « Synchroniser
+      # maintenant » suffit sans lui.
+      SYNC_FLUSH_TOKEN: ${SYNC_FLUSH_TOKEN:-}
     ports:
       - "3000:3000"
 

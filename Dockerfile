@@ -18,9 +18,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-# Pas de dossier public/ dans ce projet à ce jour : rien à copier ici.
-# Si un dossier public/ apparaît plus tard, ajouter :
-#   COPY --from=builder /app/public ./public
+# `output: 'standalone'` ne trace que les modules importés par le code : les
+# fichiers statiques de public/ n'y entrent jamais. Sans ce COPY, manifeste,
+# service worker et icônes renvoient 404 dans l'image — le manifeste n'est pas
+# analysé, le service worker n'est pas enregistré, et l'invite « Installer
+# l'application » n'apparaît pas. Ce sont les quatre fichiers que
+# src/middleware.ts laisse justement passer sans session.
+COPY --from=builder /app/public ./public
 # prisma/schema.prisma copie ici est celui MUTE par le RUN ci-dessus
 # (provider = "postgresql"), coherent avec prisma/migrations/migration_lock.toml.
 COPY --from=builder /app/prisma ./prisma

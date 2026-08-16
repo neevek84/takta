@@ -82,11 +82,58 @@ Dockerfile) : le schéma est donc créé/mis à jour sans étape manuelle.
 
 ```bash
 export AUTH_SECRET=$(openssl rand -base64 32)
+export CREDENTIALS_KEY=$(openssl rand -base64 32)
 docker compose up -d --build
 docker compose exec app node scripts/create-user.mjs moi@exemple.fr "Mon Nom" motdepasse
 ```
 
 L'application écoute sur http://localhost:3000
+
+### Variables d'environnement du service `app`
+
+`.dockerignore` exclut `.env` : **rien n'entre dans le conteneur qui ne soit
+listé dans le bloc `environment:` du `docker-compose.yml`.** Ce bloc reprend
+donc toutes les variables de `.env.example`, et
+`src/deploy/deployment-config.test.ts` échoue si l'une d'elles y manque.
+
+| Variable | Obligatoire | Défaut |
+| --- | --- | --- |
+| `AUTH_SECRET` | oui — `docker compose up` refuse de démarrer sans elle | — |
+| `CREDENTIALS_KEY` | oui, même sans Google | — |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | non | vides : connexion Google indisponible |
+| `GOOGLE_REDIRECT_URI` | non | `http://localhost:3000/api/google/callback` |
+| `CRA_TIMEZONE` | non | `Europe/Paris` |
+| `SYNC_FLUSH_TOKEN` | non | vide : `POST /api/sync/flush` fermé |
+
+`CREDENTIALS_KEY` est exigée au démarrage alors que le connecteur Google est,
+lui, entièrement optionnel. C'est délibéré : absente, elle ne se manifesterait
+qu'au retour du consentement Google, très loin du déploiement — et l'écran
+d'alors ne peut proposer que de recommencer une opération qui ne peut jamais
+aboutir. Une variable exigée au démarrage se corrige en une commande ; la même
+variable oubliée se paye en dépannage.
+
+Pour un déploiement derrière un nom de domaine, exporter aussi
+`GOOGLE_REDIRECT_URI=https://votre-domaine/api/google/callback` — la même
+valeur, au caractère près, que celle déclarée dans la console Google Cloud.
+
+### Journaux
+
+`docker compose logs app`. Les lignes du chemin Google et de la
+synchronisation sont préfixées `[cra]` :
+
+```
+[cra] error google.callback userId=… erreur=SecretBoxError message="CREDENTIALS_KEY est absente…"
+[cra] warn  google.connect raison=non-configure manquantes=GOOGLE_CLIENT_ID
+[cra] warn  sync.connecteur userId=… raison=calendrier-absent
+[cra] info  sync.flush.api nonConnecte=false traitees=12 reussies=12 echecs=0
+```
+
+Aucun jeton, secret, clé ni identifiant client n'y figure : les valeurs des
+variables ci-dessus sont effacées avant écriture, ainsi que toute forme
+reconnaissable de jeton (`src/core/log/redact.ts`). Un compte simplement pas
+connecté n'écrit rien — c'est l'état par défaut d'une installation, pas une
+panne. Ce journal est un minimum d'exploitation : il n'est ni daté par nos
+soins, ni conservé, ni corrélé.
 
 Si le démarrage échoue sur `migrate deploy`, consulter
 `docker compose logs app` : la cause la plus probable est une base non
@@ -141,13 +188,22 @@ Deux conséquences pratiques, qui découlent de ce choix :
   changée : `getCredential` renvoie `null` (compte non connecté) et rien ne
   casse. Mais enregistrer des jetons sans clé valide **échoue franchement**,
   avec un message nommant `CREDENTIALS_KEY` — une reconnexion qui ne peut pas
-  aboutir se constate au lieu de poser en base des jetons illisibles.
+  aboutir se constate au lieu de poser en base des jetons illisibles. Le retour
+  de consentement le dit alors à l'écran, **sans conseiller de réessayer**, et
+  laisse une ligne `[cra] error google.callback` côté serveur.
 - **La clé ne voyage pas avec l'archive portable.** `next build` recopie le
   `.env` du dépôt dans `.next/standalone` : une archive construite en l'état
   embarquerait la clé de développement, donc la même clé chez tout le monde.
   L'empaquetage portable (lot 5) doit exclure ce `.env` et **générer
   `CREDENTIALS_KEY` dans le dossier de données**, à côté d'`AUTH_SECRET`, au
   premier lancement.
+
+  **L'image Docker, elle, n'est pas concernée** : `.dockerignore` exclut `.env`
+  *et* `.next`, l'étage `builder` reconstruit donc dans un arbre où aucun `.env`
+  n'existe et `.next/standalone/.env` n'est jamais produit. Constaté en l'état
+  du dépôt : `.next/standalone/.env` existe bien sur le poste (issu d'un
+  `next build` local) et porte `AUTH_SECRET` ; il n'entre pas dans l'image.
+  `src/deploy/deployment-config.test.ts` fige l'exclusion de `.env`.
 
 ## Développement
 
@@ -215,6 +271,16 @@ elles conditionnent le mode local et l'empaquetage à venir.
   conteneur — mais cette chaîne n'a **pas** été exercée par un
   `docker compose up --build` réel. **À valider avant toute mise en
   production.**
+- `src/deploy/deployment-config.test.ts` (dans `npx vitest run`) lit ces deux
+  fichiers en pur texte et échoue si une variable de `.env.example` n'atteint
+  pas le conteneur, si un secret y est écrit en dur, si `public/` n'est pas
+  copié dans l'image, ou si `.dockerignore` cesse d'exclure `.env`. C'est un
+  contrôle **statique** : il prouve la cohérence des fichiers entre eux, jamais
+  qu'un conteneur démarre. Il existe parce que deux défauts de cette famille
+  sont déjà passés — une interface entière livrée sans style au lot 0
+  (`postcss.config.mjs` manquant, 152 tests verts) et `public/` absent de
+  l'image ici même : une configuration de déploiement n'est couverte par aucun
+  test unitaire par défaut.
 - Postgres : **jamais validé empiriquement** ici, aucun serveur n'était
   joignable. Une migration initiale (`prisma/migrations/20260815000000_init/`)
   a été générée hors ligne par diff de schéma (`prisma migrate diff

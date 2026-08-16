@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest'
 
 const { flushAllSyncOutboxes } = vi.hoisted(() => ({ flushAllSyncOutboxes: vi.fn() }))
 vi.mock('@/services/sync/flush', () => ({ flushAllSyncOutboxes }))
@@ -12,10 +12,22 @@ function requete(authorization?: string): Request {
   })
 }
 
+let journal: string[]
+
 beforeEach(() => {
   flushAllSyncOutboxes.mockReset()
   flushAllSyncOutboxes.mockResolvedValue({ comptes: 1, traitees: 3 })
   process.env.SYNC_FLUSH_TOKEN = 'jeton-de-test'
+  journal = []
+  for (const canal of ['error', 'warn', 'info'] as const) {
+    vi.spyOn(console, canal).mockImplementation((...a: unknown[]) => {
+      journal.push(a.map(String).join(' '))
+    })
+  }
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 afterAll(() => {
@@ -56,5 +68,36 @@ describe('POST /api/sync/flush', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ comptes: 1, traitees: 3 })
     expect(flushAllSyncOutboxes).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('journal du déclenchement externe', () => {
+  it('laisse une trace d un refus, sans jamais recopier le jeton', async () => {
+    // Un cron mal configuré recevant 401 en boucle est aujourd'hui totalement
+    // silencieux : côté serveur, rien ne le distingue d'un cron qui ne tourne
+    // pas du tout.
+    await POST(requete('Bearer mauvais-jeton'))
+
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toContain('sync.flush.api')
+    expect(journal[0]).toContain('jeton-refuse')
+    expect(journal[0]).not.toContain('mauvais-jeton')
+    expect(journal[0]).not.toContain('jeton-de-test')
+  })
+
+  it('rend compte du drainage réussi en chiffres', async () => {
+    await POST(requete('Bearer jeton-de-test'))
+
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toContain('sync.flush.api')
+    expect(journal[0]).toContain('traitees=3')
+  })
+
+  it('journalise un drainage qui lève, au lieu de le perdre dans un 500', async () => {
+    flushAllSyncOutboxes.mockRejectedValue(new Error('base injoignable'))
+
+    await expect(POST(requete('Bearer jeton-de-test'))).rejects.toThrow('base injoignable')
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toContain('base injoignable')
   })
 })

@@ -1,5 +1,21 @@
 import { timingSafeEqual } from 'node:crypto'
 import { flushAllSyncOutboxes } from '@/services/sync/flush'
+import { journalAvertissement, journalErreur, journalInfo, type Contexte } from '@/services/log'
+
+/**
+ * Les seuls champs du compte rendu qu'on journalise : des nombres. Rien de ce
+ * que le drainage a rencontré (identifiants d'événement, messages d'erreur
+ * distants) ne passe par ici, et la forme exacte du rapport peut évoluer sans
+ * que ce fichier bouge.
+ */
+function chiffres(rapport: unknown): Contexte {
+  if (typeof rapport !== 'object' || rapport === null) return {}
+  const out: Contexte = {}
+  for (const [cle, valeur] of Object.entries(rapport)) {
+    if (typeof valeur === 'number' || typeof valeur === 'boolean') out[cle] = valeur
+  }
+  return out
+}
 
 /** Comparaison à durée constante : un jeton ne se devine pas octet par octet. */
 function jetonValide(header: string): boolean {
@@ -24,9 +40,26 @@ function jetonValide(header: string): boolean {
  */
 export async function POST(request: Request): Promise<Response> {
   if (!jetonValide(request.headers.get('authorization') ?? '')) {
+    // Un cron mal configuré qui reçoit 401 en boucle est aujourd'hui
+    // indiscernable d'un cron qui ne tourne pas du tout. Le jeton fourni n'est
+    // pas journalisé : c'est le secret, et le comparer se fait ailleurs.
+    journalAvertissement('sync.flush.api', {
+      raison: 'jeton-refuse',
+      configure: (process.env.SYNC_FLUSH_TOKEN ?? '') !== '',
+    })
     return Response.json({ error: 'Jeton de synchronisation invalide.' }, { status: 401 })
   }
 
-  const r = await flushAllSyncOutboxes()
+  let r: Awaited<ReturnType<typeof flushAllSyncOutboxes>>
+  try {
+    r = await flushAllSyncOutboxes()
+  } catch (err) {
+    // La levée continue son chemin (500) : c'est le contrat de l'appelant.
+    // Mais elle ne doit pas partir sans avoir dit ce qui a cassé.
+    journalErreur('sync.flush.api', err)
+    throw err
+  }
+
+  journalInfo('sync.flush.api', chiffres(r))
   return Response.json(r, { status: 200 })
 }

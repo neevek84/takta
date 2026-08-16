@@ -3,6 +3,7 @@ import { PROVIDER_GOOGLE } from '@/core/sync/policy'
 import { ensureDedicatedCalendar, type FetchLike } from '@/integrations/google/calendar'
 import { exchangeCode } from '@/integrations/google/oauth'
 import { revokeCredential, saveCredential, setCalendarId } from '@/services/credentials'
+import { journalErreur } from '@/services/log'
 
 /** Libellé du calendrier dédié — jamais l'agenda principal. */
 export const CALENDRIER_DEDIE = 'CRA — disponibilités'
@@ -30,6 +31,10 @@ export async function connectGoogle(args: {
     await setCalendarId(args.userId, PROVIDER_GOOGLE, calendarId)
     return { calendarId }
   } catch (err) {
+    // L'annulation efface sa propre trace : sans cette ligne, un compte qui
+    // n'arrive jamais à se connecter ne laisse rien derrière lui, ni en base
+    // ni ailleurs.
+    journalErreur('google.connexion', err, { userId: args.userId, etape: 'calendrier-dedie' })
     await revokeCredential(args.userId, PROVIDER_GOOGLE)
     throw err
   }

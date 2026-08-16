@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { SecretBoxError } from '@/core/crypto/secret-box'
 
 const { requireUser, connectGoogle, cookies } = vi.hoisted(() => ({
   requireUser: vi.fn(),
@@ -42,12 +43,24 @@ function destination(reponse: Response): URL {
 }
 
 let jar: ReturnType<typeof bocal>
+let journal: string[]
 
 beforeEach(() => {
   jar = bocal({ google_oauth_state: 'etat-attendu' })
   cookies.mockReset().mockResolvedValue(jar)
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
   connectGoogle.mockReset().mockResolvedValue({ calendarId: 'cal-1' })
+  journal = []
+  vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+    journal.push(a.map(String).join(' '))
+  })
+  vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+    journal.push(a.map(String).join(' '))
+  })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('vérification de l état', () => {
@@ -132,6 +145,38 @@ describe('retours dégradés', () => {
 
     expect(message).toBe('La connexion Google a échoué. Réessayez.')
     expect(message).not.toContain('invalid_grant')
+  })
+
+  it('journalise la cause au lieu de la perdre', async () => {
+    // Sans cette trace, l'exploitant n'a strictement rien : l'écran dit
+    // « Réessayez » et le serveur ne dit rien du tout.
+    connectGoogle.mockRejectedValue(new Error('invalid_grant sur https://oauth2.googleapis.com'))
+
+    await GET(requete('?state=etat-attendu&code=code-google'))
+
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toContain('google.callback')
+    expect(journal[0]).toContain('invalid_grant')
+    expect(journal[0]).toContain('userId=u1')
+    // Le code de consentement est un secret à usage unique : il n'a rien à
+    // faire dans un journal.
+    expect(journal[0]).not.toContain('code-google')
+  })
+
+  it('dit que la clé manque au lieu de conseiller de réessayer', async () => {
+    // Le cas exact de l'ordre du .env.example : les variables Google sont
+    // posées, CREDENTIALS_KEY est oubliée. « Réessayez » envoie l'utilisateur
+    // recommencer une opération qui ne peut jamais aboutir.
+    connectGoogle.mockRejectedValue(
+      new SecretBoxError("CREDENTIALS_KEY est absente de l'environnement."),
+    )
+
+    const reponse = await GET(requete('?state=etat-attendu&code=code-google'))
+    const message = destination(reponse).searchParams.get('message') ?? ''
+
+    expect(message).toContain('CREDENTIALS_KEY')
+    expect(message).not.toContain('Réessayez')
+    expect(journal[0]).toContain('CREDENTIALS_KEY')
   })
 
   it('exige une session avant tout échange', async () => {

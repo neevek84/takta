@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const { requireUser, cookies } = vi.hoisted(() => ({
   requireUser: vi.fn(),
@@ -17,6 +17,7 @@ interface CookiePose {
 }
 
 let poses: CookiePose[]
+let journal: string[]
 
 /** Cookie posé à l'indice donné, ou échec explicite. */
 function pose(index: number): CookiePose {
@@ -36,6 +37,17 @@ beforeEach(() => {
 
   process.env.GOOGLE_CLIENT_ID = 'client-id-de-test'
   process.env.GOOGLE_REDIRECT_URI = 'https://cra.test/api/google/callback'
+
+  journal = []
+  for (const canal of ['error', 'warn', 'info'] as const) {
+    vi.spyOn(console, canal).mockImplementation((...a: unknown[]) => {
+      journal.push(a.map(String).join(' '))
+    })
+  }
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 function requete(): Request {
@@ -85,6 +97,25 @@ describe('départ vers le consentement', () => {
     expect(url.pathname).toBe('/admin/sync')
     expect(url.searchParams.get('message')).toContain('pas configurée')
     expect(poses).toHaveLength(0)
+  })
+
+  it('dit laquelle des variables manque, côté serveur uniquement', async () => {
+    // L'écran reste vague à dessein ; le journal, lui, doit nommer la
+    // variable absente — sinon l'exploitant compare son `.env` à l'aveugle.
+    process.env.GOOGLE_CLIENT_ID = ''
+
+    await GET(requete())
+
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toContain('google.connect')
+    expect(journal[0]).toContain('GOOGLE_CLIENT_ID')
+    // La valeur configurée de l'autre variable n'a rien à faire là.
+    expect(journal[0]).not.toContain('https://cra.test/api/google/callback')
+  })
+
+  it('ne journalise rien quand le départ se passe bien', async () => {
+    await GET(requete())
+    expect(journal).toEqual([])
   })
 
   it('exige une session avant de poser quoi que ce soit', async () => {

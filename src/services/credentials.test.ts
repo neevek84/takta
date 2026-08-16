@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/db/client'
 import { SecretBoxError } from '@/core/crypto/secret-box'
@@ -136,6 +136,44 @@ describe('credentials', () => {
     process.env.CREDENTIALS_KEY = ancienne
   })
 
+  it('dégrade en silence pour l utilisateur, jamais pour l exploitant', async () => {
+    // « Jamais connecté » et « clé perdue » produisent le même `null` et le
+    // même écran. Sans cette ligne de journal, rien au monde ne les sépare.
+    await saveCredential(userId, 'GOOGLE', TOKENS)
+    const ancienne = process.env.CREDENTIALS_KEY
+    const journal: string[] = []
+    const espion = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      journal.push(a.map(String).join(' '))
+    })
+
+    process.env.CREDENTIALS_KEY = randomBytes(32).toString('base64')
+    expect(await getCredential(userId, 'GOOGLE')).toBeNull()
+    process.env.CREDENTIALS_KEY = ancienne
+
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toContain('credentials.lecture')
+    expect(journal[0]).toContain(`userId=${userId}`)
+    expect(journal[0]).toContain('déchiffré')
+    // Le jeton en clair ne sort jamais, même sur le chemin de l'échec.
+    expect(journal[0]).not.toContain(TOKENS.accessToken)
+    expect(journal[0]).not.toContain(TOKENS.refreshToken)
+    espion.mockRestore()
+  })
+
+  it('ne journalise rien pour un compte simplement pas connecté', async () => {
+    // L'état par défaut de toute installation : il ne doit pas remplir les
+    // journaux à chaque ouverture d'un mois.
+    const journal: string[] = []
+    const espion = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      journal.push(a.map(String).join(' '))
+    })
+
+    expect(await getCredential(userId, 'GOOGLE')).toBeNull()
+
+    expect(journal).toEqual([])
+    espion.mockRestore()
+  })
+
   // Hors brief, et c'est le test qui compte le plus ici. La lecture dégrade en
   // silence — c'est voulu — mais l'écriture, elle, doit refuser franchement :
   // sans clé, faire retomber le chiffrement sur une valeur par défaut poserait
@@ -145,7 +183,21 @@ describe('credentials', () => {
     const ancienne = process.env.CREDENTIALS_KEY
     delete process.env.CREDENTIALS_KEY
 
+    // Le type compte autant que le message : c'est lui qui permet au retour de
+    // consentement de dire « ce serveur est mal configuré » au lieu de
+    // « Réessayez », pour une opération qui ne peut jamais aboutir.
+    await expect(saveCredential(userId, 'GOOGLE', TOKENS)).rejects.toThrow(SecretBoxError)
     await expect(saveCredential(userId, 'GOOGLE', TOKENS)).rejects.toThrow(/CREDENTIALS_KEY/)
+    expect(await prisma.providerCredential.count({})).toBe(0)
+
+    process.env.CREDENTIALS_KEY = ancienne
+  })
+
+  it("refuse d'enregistrer des jetons quand la clé n'est pas du base64 valide", async () => {
+    const ancienne = process.env.CREDENTIALS_KEY
+    process.env.CREDENTIALS_KEY = 'motdepasse treslong quiressemble aunecle AAAAAA'
+
+    await expect(saveCredential(userId, 'GOOGLE', TOKENS)).rejects.toThrow(SecretBoxError)
     expect(await prisma.providerCredential.count({})).toBe(0)
 
     process.env.CREDENTIALS_KEY = ancienne

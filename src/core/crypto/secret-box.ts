@@ -35,7 +35,7 @@ export function parseKey(base64: string): Buffer {
   // base64 EST du base64 valide, et rien de syntaxique ne la distingue d'une
   // clé. D'où la commande de génération donnée dans le message.
   if (key.toString('base64').replace(/=+$/, '') !== base64.trim().replace(/=+$/, '')) {
-    throw new Error(
+    throw new SecretBoxError(
       "CREDENTIALS_KEY n'est pas une clé base64 valide de 32 octets. " +
         'Générez-en une avec : openssl rand -base64 32',
     )

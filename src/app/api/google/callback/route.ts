@@ -1,6 +1,20 @@
 import { cookies } from 'next/headers'
 import { requireUser } from '@/auth'
+import { SecretBoxError } from '@/core/crypto/secret-box'
 import { connectGoogle } from '@/services/google/connect'
+import { journalErreur } from '@/services/log'
+
+/**
+ * Une `SecretBoxError` sur ce chemin ne peut venir que de `CREDENTIALS_KEY` :
+ * l'enregistrement des jetons ne fait que chiffrer, jamais déchiffrer. C'est
+ * un défaut de configuration du serveur, pas un aléa — et il faut le dire,
+ * parce que « Réessayez » envoie recommencer une opération qui ne peut jamais
+ * aboutir. Le message la nomme (promesse du README) : c'est un nom de
+ * variable, jamais sa valeur.
+ */
+const MESSAGE_CLE_ABSENTE =
+  'Connexion Google impossible : ce serveur n’a pas de CREDENTIALS_KEY valide. ' +
+  'Recommencer ne changera rien — voir les journaux du serveur.'
 
 /**
  * La destination du retour est écrite ici, jamais lue dans la requête : un
@@ -35,7 +49,12 @@ export async function GET(request: Request): Promise<Response> {
 
   try {
     await connectGoogle({ userId: user.id, code })
-  } catch {
+  } catch (err) {
+    // La cause reste hors de l'écran — elle nomme Google, des URL, parfois un
+    // code HTTP — mais elle ne doit plus disparaître : sans cette ligne, une
+    // connexion qui ne peut pas aboutir est indiscernable d'un aléa réseau.
+    journalErreur('google.callback', err, { userId: user.id })
+    if (err instanceof SecretBoxError) return retour(request, MESSAGE_CLE_ABSENTE)
     return retour(request, 'La connexion Google a échoué. Réessayez.')
   }
 

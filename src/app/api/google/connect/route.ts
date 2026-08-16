@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { cookies } from 'next/headers'
 import { requireUser } from '@/auth'
 import { buildConsentUrl } from '@/integrations/google/oauth'
+import { journalAvertissement } from '@/services/log'
 
 export async function GET(request: Request): Promise<Response> {
   await requireUser()
@@ -10,9 +11,14 @@ export async function GET(request: Request): Promise<Response> {
   // est un état légitime, pas une panne. Sans ce garde-fou, le visiteur
   // atterrirait sur la page d'erreur de Google, chez Google, sans rien
   // comprendre ni pouvoir revenir.
-  const configure =
-    (process.env.GOOGLE_CLIENT_ID ?? '') !== '' && (process.env.GOOGLE_REDIRECT_URI ?? '') !== ''
-  if (!configure) {
+  const manquantes = ['GOOGLE_CLIENT_ID', 'GOOGLE_REDIRECT_URI'].filter(
+    (nom) => (process.env[nom] ?? '') === '',
+  )
+  if (manquantes.length > 0) {
+    // L'écran reste vague — le visiteur ne peut rien y faire. Le journal, lui,
+    // nomme les variables absentes : sans cela, l'exploitant compare son
+    // `.env` au `.env.example` à l'aveugle. Des noms, jamais des valeurs.
+    journalAvertissement('google.connect', { raison: 'non-configure', manquantes: manquantes.join(',') })
     const url = new URL('/admin/sync', request.url)
     url.searchParams.set('message', "La connexion Google n'est pas configurée sur ce serveur.")
     return Response.redirect(url.toString(), 302)

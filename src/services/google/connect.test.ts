@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/db/client'
 import { getCredential, saveCredential } from '@/services/credentials'
@@ -127,6 +127,33 @@ describe('connexion', () => {
 
     await expect(connectGoogle({ userId, code: 'code', fetchFn })).rejects.toThrow()
     expect(await prisma.providerCredential.count({ where: { userId } })).toBe(0)
+  })
+
+  it('journalise l annulation, qui efface sa propre trace en base', async () => {
+    // L'annulation est correcte, mais elle ne laisse rien derrière elle : sans
+    // cette ligne, un compte qui n'arrive jamais à se connecter ne produit
+    // aucune trace du tout, ni en base ni ailleurs.
+    const journal: string[] = []
+    const espion = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      journal.push(a.map(String).join(' '))
+    })
+
+    let appels = 0
+    const fetchFn: typeof api.fetchFn = async (url, init) => {
+      appels += 1
+      if (appels > 1) api.failNext('SERVEUR')
+      return api.fetchFn(url, init)
+    }
+
+    await expect(connectGoogle({ userId, code: 'code', fetchFn })).rejects.toThrow()
+
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toContain('google.connexion')
+    expect(journal[0]).toContain(`userId=${userId}`)
+    // Le jeton d'accès fraîchement obtenu ne doit jamais atteindre la sortie.
+    const jeton = (await prisma.providerCredential.findFirst({ where: { userId } })) ?? null
+    expect(jeton).toBeNull()
+    espion.mockRestore()
   })
 })
 
