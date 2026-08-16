@@ -8,6 +8,7 @@ import {
   getWebhook,
   getWebhookSecret,
   listWebhooks,
+  readSeuilSuspension,
   updateWebhook,
   WebhookValidationError,
 } from './subscriptions'
@@ -218,6 +219,22 @@ describe('reprise après suspension', () => {
     const manques = await readAuditSince({ since: w.lastSeq, limit: 500 })
     expect(manques.map((e) => e.seq)).toEqual([1, 2, 3])
     expect(repris.lastSeq).toBe(3)
+  })
+})
+
+describe('seuil de suspension', () => {
+  it('rend le seuil configuré, celui-là même que la livraison applique', async () => {
+    // L'écran affiche « n échecs sur ce seuil » : un seuil affiché autre que
+    // celui qui suspend serait pire qu'un seuil caché.
+    await prisma.settings.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', webhookMaxEchecs: 7 },
+      update: { webhookMaxEchecs: 7 },
+    })
+
+    expect(await readSeuilSuspension()).toBe(7)
+
+    await prisma.settings.update({ where: { id: 'singleton' }, data: { webhookMaxEchecs: 10 } })
   })
 })
 

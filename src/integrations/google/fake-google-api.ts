@@ -13,8 +13,30 @@
  * heure mal formée, couleur hors palette, route inconnue, corps JSON envoyé
  * là où l'échange de jeton exige un formulaire. Un double complaisant
  * validerait un connecteur qui ne marcherait pas.
+ *
+ * Il est enfin le **gardien du catalogue** : toute requête dont le couple
+ * (méthode, gabarit) n'est pas déclaré dans `./catalogue.ts` lève, et les
+ * gabarits réellement frappés sont enregistrés dans `gabaritsObserves`, ce que
+ * `couverture.test.ts` compare au catalogue.
  */
+import { cleAppel, gabaritCorrespondant } from '@/core/integrations/catalogue'
 import type { FetchLike } from './calendar'
+import { BASE_GOOGLE, CATALOGUE_GOOGLE } from './catalogue'
+
+/**
+ * Levée — jamais rendue en 404 : le connecteur traduit 404 en `NOT_FOUND`, et
+ * `deleteEvent` avale délibérément `NOT_FOUND`. Un refus par 404 laisserait
+ * donc un appel non catalogué passer au vert sur ce chemin précis.
+ */
+export class AppelNonCatalogueError extends Error {
+  constructor(methode: string, url: string) {
+    super(
+      `Appel non catalogué : ${methode} ${url}. Déclarez-le dans ` +
+        `src/integrations/google/catalogue.ts avant de l'émettre.`,
+    )
+    this.name = 'AppelNonCatalogueError'
+  }
+}
 
 export interface FakeCall {
   method: string
@@ -40,6 +62,8 @@ export interface FakeGoogleApi {
   calendars: Map<string, { id: string; summary: string }>
   /** jetons acceptés par l'échange OAuth, pour les tâches 7 et 10 */
   oauth: { accessToken: string; refreshToken: string; expiresIn: number; refusRefresh: boolean }
+  /** gabarits du catalogue réellement frappés, dans l'ordre */
+  gabaritsObserves: string[]
 
   failNext(mode: 'RESEAU' | 'EXPIRE' | 'SERVEUR' | 'REQUETE'): void
   expirerJeton(): void
@@ -141,6 +165,7 @@ function verifierFreeBusy(body: unknown): string | null {
 
 export function createFakeGoogleApi(): FakeGoogleApi {
   const calls: FakeCall[] = []
+  const gabaritsObserves: string[] = []
   const events = new Map<string, FakeEvent>()
   const busy = new Map<string, Array<{ start: string; end: string }>>()
   const calendars = new Map<string, { id: string; summary: string }>()
@@ -179,6 +204,17 @@ export function createFakeGoogleApi(): FakeGoogleApi {
   const fetchFn: FetchLike = async (url, init) => {
     const body: unknown = lireCorps(init)
     calls.push({ method: init.method, url, headers: init.headers, body })
+
+    // Le catalogue passe avant tout le reste, panne armée comprise : une
+    // route non déclarée doit se voir même sur le chemin d'échec.
+    const declare = gabaritCorrespondant({
+      catalogue: CATALOGUE_GOOGLE,
+      base: BASE_GOOGLE,
+      methode: init.method,
+      url,
+    })
+    if (declare === null) throw new AppelNonCatalogueError(init.method, url)
+    gabaritsObserves.push(cleAppel(declare))
 
     if (prochainEchec !== null) {
       const mode = prochainEchec
@@ -293,12 +329,15 @@ export function createFakeGoogleApi(): FakeGoogleApi {
       }
     }
 
-    return erreur(404, `Route non simulée : ${init.method} ${url}`)
+    // Cataloguée mais non simulée ici : c'est un trou du double, pas un
+    // comportement de Google. Le dire au lieu de rendre un 404 crédible.
+    throw new Error(`Route cataloguée mais non simulée par le double : ${init.method} ${url}`)
   }
 
   return {
     fetchFn,
     calls,
+    gabaritsObserves,
     events,
     busy,
     calendars,

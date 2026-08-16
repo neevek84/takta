@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { prisma } from '@/db/client'
 import { parseSubscription, serializeSubscription, type AuditAction } from '@/core/audit/events'
 import { currentAuditSeq } from '@/services/audit'
+import { readSettingsRow } from '@/services/settings'
 
 export type WebhookState = 'ACTIF' | 'SUSPENDU'
 
@@ -103,6 +104,19 @@ export async function createWebhook(
     },
   })
   return toView(row)
+}
+
+/**
+ * Le nombre d'échecs consécutifs au bout duquel un abonnement est suspendu.
+ *
+ * Exposé pour l'écran, et pas seulement pour la livraison : ce compteur est
+ * **commun à tous les événements** de l'abonnement, si bien que deux
+ * événements malheureux se cumulent et rapprochent de la suspension un
+ * abonnement dont l'URL répond par ailleurs. Afficher le compte et son seuil
+ * est le seul moyen de ne pas découvrir la suspension après coup.
+ */
+export async function readSeuilSuspension(): Promise<number> {
+  return (await readSettingsRow()).webhookMaxEchecs
 }
 
 export async function listWebhooks(userId: string): Promise<WebhookView[]> {

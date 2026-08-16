@@ -38,7 +38,7 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 - **`src/core/` n'importe jamais `@prisma/client`, `next`, ni React.** Domaine pur.
 - **Aucun enum Prisma, aucun décimal, aucun tableau, aucune requête fine sur du JSON.** Portabilité SQLite/Postgres. Le JSON se lit et s'écrit en bloc.
 - **Entiers partout** : temps en **minutes**, jours en **centièmes de jour**, montants en **centimes**, durée d'une journée en **minutes**.
-- **Toute fonction de service prend un `userId` et scope ses requêtes dessus** — provision multi-consultants.
+- **Toute fonction de service prend un `userId` et scope ses requêtes dessus** — provision multi-consultants. **Trois exceptions, et elles portent leur raison** : `flushAllProviders`, `distributeWebhooks` et `tick` sont réveillés par un **jeton d'instance**, pas par une session — ils n'ont personne à scoper et doivent servir tous les comptes. `readAuditSince` et `verifyJournalChain` de même, pour le jeton d'API. Toute autre fonction non scopée est un défaut. **Corollaire, et il est rude** : `tick` exécute les travaux pour le **compte le plus ancien**, si bien qu'un second consultant ne recevrait aucun rappel — `/admin/supervision` le dit à l'écran, mais le dire n'est pas le corriger.
 - **Aucune page ni action serveur n'interroge Prisma directement** en court-circuitant la couche service.
 - **Le contrôle de capacité porte sur le total de la journée**, toutes lignes confondues, pas sur l'exclusivité. Trois modes.
 - **Week-ends et jours fériés sont saisissables**, jamais bloquants. Le grisé est un repère.

@@ -36,6 +36,16 @@ export interface JobView {
   nextRunAt: Date
   lastState: string
   lastError: string
+  /**
+   * Le verrou d'exécution : non nul tant qu'un réveil travaille.
+   *
+   * Rendu à l'écran parce que la prise du verrou **n'est pas atomique** — la
+   * lecture de `runningSince` et son écriture sont deux requêtes distinctes,
+   * et un second déclenchement glissé entre les deux exécuterait le même
+   * travail. Voir cet état, c'est au moins savoir qu'il ne faut pas cliquer
+   * « Exécuter » maintenant.
+   */
+  enCoursDepuis: Date | null
 }
 
 /**
@@ -81,8 +91,14 @@ export async function syncJobDefinitions(): Promise<void> {
  * Un réveil externe n'a pas de session, et le produit est explicitement
  * mono-organisation — porter une notion d'utilisateur courant ici
  * réintroduirait un multi-tenant qu'aucune autre table ne connaît.
+ *
+ * **Exporté pour que la supervision le dise à l'écran**, et depuis cette
+ * fonction-ci : un écran qui rejouerait la même requête de son côté
+ * finirait par désigner un autre compte que celui qui travaille vraiment.
+ * La conséquence à afficher est rude — un second consultant ne reçoit
+ * aucun rappel, et rien d'autre ne le lui apprend.
  */
-async function proprietaire(): Promise<string> {
+export async function instanceOwnerId(): Promise<string> {
   const user = await prisma.user.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } })
   return user?.id ?? ''
 }
@@ -206,7 +222,7 @@ export async function tick(
   const handlers = args.handlers ?? JOB_HANDLERS
 
   await syncJobDefinitions()
-  const userId = args.userId ?? (await proprietaire())
+  const userId = args.userId ?? (await instanceOwnerId())
 
   const dus = await prisma.scheduledJob.findMany({
     where: { enabled: true, nextRunAt: { lte: now } },
@@ -301,6 +317,7 @@ export async function listJobs(): Promise<JobView[]> {
       nextRunAt: ligne?.nextRunAt ?? new Date(0),
       lastState: ligne?.lastState ?? '',
       lastError: ligne?.lastError ?? '',
+      enCoursDepuis: ligne?.runningSince ?? null,
     }
   })
 }

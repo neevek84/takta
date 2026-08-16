@@ -19,6 +19,12 @@ const LIENS = [
   { href: '/admin/google', label: 'Google' },
   // Un écran de supervision qu'aucun lien n'atteint ne supervise rien.
   { href: '/admin/sync', label: 'Synchro' },
+  // Les URL que l'application appelle se déclarent sur cet écran, et nulle
+  // part ailleurs.
+  { href: '/admin/webhooks', label: 'Abonnements' },
+  // Les alertes, l'état des travaux et l'historique du journal. « Les
+  // avertissements vivent dans l'outil » : encore faut-il y entrer.
+  { href: '/admin/supervision', label: 'Supervision' },
 ]
 
 export default async function AppLayout({ children }: { children: ReactNode }) {

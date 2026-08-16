@@ -368,10 +368,14 @@ describe('sévérité du double', () => {
     expect(res.status).toBe(400)
   })
 
-  it('refuse une route qu il ne simule pas', async () => {
+  it('refuse une route qu il ne simule pas, en levant et non en 404', async () => {
+    // Ce test rendait 404 avant que le double ne devienne le gardien du
+    // catalogue. Un 404 est traduit par le connecteur en `NOT_FOUND`, que
+    // `deleteEvent` avale : le refus doit lever pour se voir sur ce chemin.
     const acl = (await urlEvents()).replace(/\/events$/, '/acl')
-    const res = await api.fetchFn(acl, { method: 'GET', headers: ENTETES })
-    expect(res.status).toBe(404)
+    await expect(api.fetchFn(acl, { method: 'GET', headers: ENTETES })).rejects.toThrow(
+      /non catalogué/,
+    )
   })
 })
 
@@ -414,5 +418,35 @@ describe('sévérité du double — échange de jeton', () => {
     )
     expect(jetons.accessToken).not.toBe('')
     expect(jetons.refreshToken).not.toBe('')
+  })
+})
+
+/**
+ * Le double est le gardien du catalogue : ce qui n'y est pas déclaré ne passe
+ * pas. Voir `src/integrations/google/catalogue.ts`.
+ */
+describe('le double refuse ce que le catalogue ne déclare pas', () => {
+  it('lève sur une route absente du catalogue, sans la traduire en 404', async () => {
+    await expect(
+      api.fetchFn('https://www.googleapis.com/calendar/v3/settings', {
+        method: 'GET',
+        headers: { authorization: 'Bearer jeton-factice' },
+      }),
+    ).rejects.toThrow(/non catalogué[\s\S]*src\/integrations\/google\/catalogue\.ts/)
+  })
+
+  it('enregistre le gabarit catalogué de chaque appel reçu', async () => {
+    await connector().createEvent(draft())
+    expect(api.gabaritsObserves).toEqual(['POST /calendars/{calendarId}/events'])
+  })
+
+  it('refuse aussi une route non cataloguée quand une panne est armée', async () => {
+    api.failNext('SERVEUR')
+    await expect(
+      api.fetchFn('https://www.googleapis.com/calendar/v3/settings', {
+        method: 'GET',
+        headers: { authorization: 'Bearer jeton-factice' },
+      }),
+    ).rejects.toThrow(/non catalogué/)
   })
 })
