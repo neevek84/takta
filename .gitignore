@@ -17,3 +17,6 @@ dist/
 coverage/
 .DS_Store
 *.log
+
+# Bases jetables des executions de tests (vitest.globalSetup.ts)
+prisma/test-*.db*

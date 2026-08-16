@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
+import { TEST_DB_PATH } from './vitest.globalSetup'
 
 // NOTE: `environmentMatchGlobs` (per-glob test environment) does not exist in
 // the installed Vitest 4.x — it was removed in favor of `test.projects`.
@@ -28,6 +29,11 @@ export default defineConfig({
     // parallèle produit des échecs non déterministes. La suite tourne en
     // moins d'une seconde, la sérialisation ne coûte rien.
     fileParallelism: false,
+    // Cette base est propre à l'exécution : jamais `dev.db`, que des tests
+    // écrivent réellement (la ligne singleton `Settings`, entre autres). Voir
+    // vitest.globalSetup.ts pour le détail.
+    globalSetup: ['./vitest.globalSetup.ts'],
+    env: { DATABASE_URL: `file:${TEST_DB_PATH}` },
   },
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
