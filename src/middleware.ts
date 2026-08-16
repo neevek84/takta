@@ -51,14 +51,23 @@ export default function middleware(request: NextRequest, event: NextFetchEvent) 
  * 307 vers `/login` puis du `text/html` — un cron ou n8n n'en tirerait rien,
  * et le refus ressemblerait à un succès.
  *
- * L'exclusion est celle du **routage**, pas de l'autorisation : la route
- * refuse elle-même toute requête sans jeton valide (voir
- * `src/app/api/sync/flush/route.ts`), et elle ne s'ouvre pas pour autant —
- * sans `SYNC_FLUSH_TOKEN`, elle reste fermée.
+ * `api/webhooks` en sort pour la même raison, et pas une autre : le
+ * prestataire de signature n'a pas de compte et ne porte aucun cookie. Il est
+ * authentifié par la **signature HMAC de sa charge utile**, jamais par un
+ * jeton d'URL ni par une session. Gaté, il recevrait un 307 vers `/login` que
+ * son client HTTP compterait comme une livraison réussie — le CRA ne se
+ * validerait jamais, et rien ne le dirait.
+ *
+ * L'exclusion est celle du **routage**, pas de l'autorisation : chaque route
+ * refuse elle-même toute requête non authentifiée (voir
+ * `src/app/api/sync/flush/route.ts` et
+ * `src/app/api/webhooks/signature/route.ts`), et elles ne s'ouvrent pas pour
+ * autant — sans `SYNC_FLUSH_TOKEN` ni `SIGNATURE_WEBHOOK_SECRET`, elles
+ * restent fermées.
  *
  * Elle ne touche pas aux fichiers publics de la PWA ci-dessus, qui passent,
  * eux, par le middleware et en ressortent aussitôt.
  */
 export const config = {
-  matcher: ['/((?!api/auth|api/sync|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!api/auth|api/sync|api/webhooks|_next/static|_next/image|favicon.ico).*)'],
 }

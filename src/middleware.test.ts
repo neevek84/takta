@@ -106,12 +106,22 @@ describe('middleware — le déclenchement externe n est pas gaté par la sessio
     expect(matcher.test('/api/sync/flush')).toBe(false)
   })
 
+  it('laisse POST /api/webhooks/signature hors du champ du middleware', () => {
+    // Le prestataire de signature n'a pas de compte et ne porte aucun cookie :
+    // il est authentifié par la signature HMAC de sa charge utile. Gaté, il
+    // recevrait un 307 vers /login — que Documenso compterait comme une
+    // livraison réussie, et le CRA ne se validerait jamais.
+    expect(matcher.test('/api/webhooks/signature')).toBe(false)
+  })
+
   it('garde les pages applicatives dans le champ du middleware', () => {
     // Le garde-fou de l'exclusion ci-dessus : une exclusion trop large
     // ouvrirait l'application entière sans qu'aucune assertion ne bouge.
     expect(matcher.test('/saisie/2026-03')).toBe(true)
     expect(matcher.test('/admin/sync')).toBe(true)
     expect(matcher.test('/')).toBe(true)
+    // « webhooks » n'ouvre pas tout ce qui y ressemble ailleurs.
+    expect(matcher.test('/missions/webhooks')).toBe(true)
   })
 
   it('redirige la page de supervision sans session vers /login', async () => {

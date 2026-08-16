@@ -40,6 +40,21 @@ services:
       # Vide = POST /api/sync/flush fermé. Le bouton « Synchroniser
       # maintenant » suffit sans lui.
       SYNC_FLUSH_TOKEN: ${SYNC_FLUSH_TOKEN:-}
+      # Jeton d'instance de l'API d'événements et du réveil de l'ordonnanceur.
+      # Vide = ces endpoints restent fermés : une installation qui n'expose
+      # rien à l'extérieur doit pouvoir démarrer.
+      CRA_API_TOKEN: ${CRA_API_TOKEN:-}
+      # Seul secret SMTP ; le reste de la configuration se saisit en base.
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # Signature électronique : entièrement optionnelle. Vides, le connecteur
+      # n'existe pas — le PDF se génère et se télécharge, et les transitions du
+      # CRA restent manuelles.
+      DOCUMENSO_URL: ${DOCUMENSO_URL:-}
+      DOCUMENSO_API_KEY: ${DOCUMENSO_API_KEY:-}
+      # Vide = POST /api/webhooks/signature refuse tout. Un point d'entrée qui
+      # verrouille un mois ne s'ouvre pas « par défaut » ; le bouton de
+      # rafraîchissement et les transitions manuelles suffisent sans lui.
+      SIGNATURE_WEBHOOK_SECRET: ${SIGNATURE_WEBHOOK_SECRET:-}
     ports:
       - "3000:3000"
 
