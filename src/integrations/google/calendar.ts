@@ -90,6 +90,34 @@ function toRemote(raw: GoogleEvent): RemoteEvent {
   }
 }
 
+/**
+ * Retrouve le calendrier dédié par son libellé, ou le crée.
+ *
+ * Jamais l'agenda principal : le calendrier dédié est affichable ou masquable
+ * d'un clic et effaçable d'un geste, ce qui est la condition pour que
+ * l'application ait le droit d'y écrire.
+ */
+export async function ensureDedicatedCalendar(
+  fetchFn: FetchLike,
+  accessToken: string,
+  summary: string,
+): Promise<string> {
+  const liste = (await request(
+    fetchFn,
+    accessToken,
+    'GET',
+    `${BASE}/users/me/calendarList?maxResults=250`,
+  )) as { items?: Array<{ id: string; summary?: string }> }
+
+  const existant = (liste.items ?? []).find((c) => c.summary === summary)
+  if (existant !== undefined) return existant.id
+
+  const cree = (await request(fetchFn, accessToken, 'POST', `${BASE}/calendars`, {
+    summary,
+  })) as { id: string }
+  return cree.id
+}
+
 export function createGoogleCalendarConnector(args: {
   fetchFn: FetchLike
   accessToken: string
