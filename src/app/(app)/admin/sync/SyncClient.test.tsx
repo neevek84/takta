@@ -148,6 +148,7 @@ describe('synchroniser maintenant', () => {
       reussies: 2,
       conflits: 1,
       echecs: 0,
+      reste: 0,
     })
     renderSync()
 
@@ -168,6 +169,7 @@ describe('synchroniser maintenant', () => {
       reussies: 0,
       conflits: 0,
       echecs: 0,
+      reste: 0,
     })
     renderSync()
 
@@ -178,5 +180,113 @@ describe('synchroniser maintenant', () => {
         'Aucun agenda joignable. La saisie continue de fonctionner normalement.',
       )
     })
+  })
+
+  // Un compte rendu « 50 traité(s), 50 synchronisé(s) » sans mention du reste
+  // est indiscernable d'une file vidée : l'utilisateur referme l'écran en
+  // croyant son agenda à jour.
+  it('annonce ce qui reste à drainer au lieu de laisser croire à une file vidée', async () => {
+    synchroniserMaintenant.mockResolvedValue({
+      nonConnecte: false,
+      traitees: 1000,
+      reussies: 1000,
+      conflits: 0,
+      echecs: 0,
+      reste: 16,
+    })
+    renderSync()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Synchroniser maintenant' }))
+
+    await waitFor(() => {
+      const texte = screen.getByRole('alert').textContent ?? ''
+      expect(texte).toContain('16')
+      expect(texte).toMatch(/reste/i)
+    })
+  })
+
+  it('ne parle pas de reste quand la file est vidée', async () => {
+    synchroniserMaintenant.mockResolvedValue({
+      nonConnecte: false,
+      traitees: 3,
+      reussies: 3,
+      conflits: 0,
+      echecs: 0,
+      reste: 0,
+    })
+    renderSync()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Synchroniser maintenant' }))
+
+    await waitFor(() => expect(screen.getByRole('status')).toBeTruthy())
+    expect(screen.getByRole('status').textContent).not.toMatch(/reste/i)
+  })
+})
+
+/**
+ * Aucun ordonnanceur n'existe dans le dépôt : ni `instrumentation.ts`, ni
+ * `setInterval`, ni service dans `docker-compose.yml`, ni entrée cron. Annoncer
+ * un drainage périodique ferait croire à l'utilisateur que son agenda part tout
+ * seul alors que ce bouton est le seul écoulement de l'installation nominale.
+ */
+describe('ce que l écran promet du drainage', () => {
+  it('ne promet aucun drainage automatique', () => {
+    renderSync()
+    expect(screen.queryByText(/tout seul/i)).toBeNull()
+    expect(screen.queryByText(/périodique/i)).toBeNull()
+  })
+
+  it('dit comment poser un drainage périodique pour qui en veut un', () => {
+    renderSync()
+    expect(screen.getByText(/Aucun drainage automatique/i)).toBeTruthy()
+    expect(screen.getByText(/\/api\/sync\/flush/)).toBeTruthy()
+    expect(screen.getByText(/SYNC_FLUSH_TOKEN/)).toBeTruthy()
+  })
+})
+
+/**
+ * Une action serveur qui lève (panne base, session expirée, contrainte
+ * d'unicité) produit sinon un rejet non traité : le bouton se rétablit, rien ne
+ * s'affiche, et l'utilisateur conclut que son geste a été pris en compte. C'est
+ * le vecteur qui rendrait un arbitrage destructeur parfaitement silencieux.
+ */
+describe('quand une action serveur échoue', () => {
+  it('annonce l échec de l arbitrage au lieu de ne rien dire', async () => {
+    arbitrer.mockRejectedValue(new Error('connexion perdue'))
+    renderSync({ conflicts: [conflit] })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accepter' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(/échoué|impossible/i)
+    })
+    // Et surtout : rien n'annonce un succès.
+    expect(screen.queryByText('Divergence arbitrée.')).toBeNull()
+  })
+
+  it('annonce l échec du rejeu', async () => {
+    rejouer.mockRejectedValue(new Error('connexion perdue'))
+    renderSync({ failures: [echec] })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rejouer' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(/échoué|impossible/i)
+    })
+    expect(screen.queryByText('Ligne remise en file.')).toBeNull()
+  })
+
+  it('annonce l échec de la synchronisation et rend la main', async () => {
+    synchroniserMaintenant.mockRejectedValue(new Error('connexion perdue'))
+    renderSync()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Synchroniser maintenant' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(/échoué|impossible/i)
+    })
+    // Le bouton reste utilisable : un échec ne doit pas laisser l'écran inerte.
+    const bouton = screen.getByRole('button', { name: 'Synchroniser maintenant' })
+    expect(bouton.hasAttribute('disabled')).toBe(false)
   })
 })

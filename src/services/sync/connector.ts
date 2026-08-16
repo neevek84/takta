@@ -3,6 +3,7 @@ import { PROVIDER_GOOGLE } from '@/core/sync/policy'
 import { createGoogleCalendarConnector, type FetchLike } from '@/integrations/google/calendar'
 import { refreshAccessToken } from '@/integrations/google/oauth'
 import { getCredential, updateAccessToken } from '@/services/credentials'
+import { journalAvertissement, journalErreur } from '@/services/log'
 
 /** Fuseau des blocs poussés. Un déploiement hors métropole le surcharge. */
 export const TIME_ZONE = process.env.CRA_TIMEZONE ?? 'Europe/Paris'
@@ -17,6 +18,11 @@ const MARGE_MS = 60_000
  * compte non connecté, calendrier dédié absent, clé de chiffrement perdue,
  * rafraîchissement refusé. Un seul `null` à traiter chez l'appelant, et aucune
  * exception qui puisse remonter jusqu'à la page de saisie.
+ *
+ * Indistincts pour l'appelant, ces cas ne le sont plus pour l'exploitant :
+ * chacun laisse une ligne, sauf le seul qui n'est pas une panne — le compte
+ * jamais connecté, qui est l'état par défaut de toute installation et ne doit
+ * pas remplir les journaux à chaque ouverture de mois.
  */
 export async function resolveConnector(
   userId: string,
@@ -28,10 +34,17 @@ export async function resolveConnector(
   let creds: Awaited<ReturnType<typeof getCredential>>
   try {
     creds = await getCredential(userId, PROVIDER_GOOGLE)
-  } catch {
+  } catch (err) {
+    journalErreur('sync.connecteur', err, { userId, etape: 'lecture-jetons' })
     return null
   }
-  if (creds === null || creds.calendarId === '') return null
+  if (creds === null) return null
+  if (creds.calendarId === '') {
+    // Jetons présents, agenda absent : rien ne partira jamais, et l'écran dit
+    // « non connecté ». Sans cette ligne, ce demi-état est invisible.
+    journalAvertissement('sync.connecteur', { userId, raison: 'calendrier-absent' })
+    return null
+  }
 
   let accessToken = creds.accessToken
   if (creds.expiresAt.getTime() <= now.getTime() + MARGE_MS) {
@@ -39,9 +52,12 @@ export async function resolveConnector(
       const renouvele = await refreshAccessToken(fetchFn, creds.refreshToken)
       accessToken = renouvele.accessToken
       await updateAccessToken(userId, PROVIDER_GOOGLE, renouvele.accessToken, renouvele.expiresAt)
-    } catch {
+    } catch (err) {
       // Un rafraîchissement impossible se lit comme « non connecté » : la
-      // saisie continue, la synchronisation reprendra à la reconnexion.
+      // saisie continue, la synchronisation reprendra à la reconnexion. Mais
+      // « Google refuse le rafraîchissement » et « quota épuisé » ne sont pas
+      // la même panne, et seul le message de l'exception les sépare.
+      journalErreur('sync.connecteur', err, { userId, etape: 'rafraichissement' })
       return null
     }
   }

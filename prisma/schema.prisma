@@ -21,6 +21,7 @@ model User {
   outbox      SyncOutbox[]
   conflicts   SyncConflict[]
   credentials ProviderCredential[]
+  links       ExternalLink[]
 }
 
 model Client {
@@ -142,8 +143,28 @@ model Cra {
   @@index([userId])
 }
 
+/// Le pont vers l'événement distant : c'est lui, et lui seul, qui porte
+/// l'identifiant du bloc à retirer de l'agenda.
+///
+/// `userId` rattache le lien à son propriétaire, comme `SyncOutbox`,
+/// `SyncConflict` et `ProviderCredential`. Sans lui, supprimer un compte
+/// laissait ses liens en base indéfiniment, et plus rien ne pouvait les
+/// retrouver : tout le code les lit par le triplet ci-dessous, dont
+/// l'`entityId` désigne une saisie partie, elle, en cascade.
+///
+/// Aucune clé étrangère vers `TimeEntry` en revanche, et c'est délibéré : la
+/// cascade paraîtrait symétrique, mais elle détruirait le lien à l'instant
+/// même où la suppression est mise en file — le bloc resterait dans l'agenda
+/// pour toujours, sans plus rien en base pour l'en retirer. Le lien doit
+/// survivre à sa saisie, jusqu'au drainage qui le consomme.
+///
+/// `userId` reste hors de la contrainte d'unicité : `entityId` est un `cuid`,
+/// donc déjà porteur du propriétaire, et l'y ajouter ne fermerait rien de
+/// plus tout en renommant la clé composite que lisent `flush.ts` et
+/// `conflicts.ts`.
 model ExternalLink {
   id         String    @id @default(cuid())
+  userId     String
   entityType String
   entityId   String
   provider   String
@@ -154,8 +175,11 @@ model ExternalLink {
   /// Vide tant que rien n'a été poussé.
   etag       String    @default("")
 
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@unique([entityType, entityId, provider])
   @@index([provider, externalId])
+  @@index([userId])
 }
 
 model Settings {

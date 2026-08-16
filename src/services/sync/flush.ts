@@ -17,6 +17,16 @@ export interface FlushReport {
   echecs: number
 }
 
+/**
+ * Taille d'un lot de drainage.
+ *
+ * Une seule définition pour les trois appelants : une valeur par défaut
+ * recopiée à chaque étage se contredit sans que rien ne le dise, et c'est
+ * exactement le genre de constante qu'aucun test ne pince quand elle est
+ * dupliquée.
+ */
+export const TAILLE_LOT = 50
+
 type Row = Awaited<ReturnType<typeof prisma.syncOutbox.findFirstOrThrow>>
 
 function cibleDe(row: Row) {
@@ -84,6 +94,7 @@ async function traiterUpsert(connector: CalendarConnector, row: Row, now: Date):
     await prisma.externalLink.create({
       data: {
         ...cibleDe(row),
+        userId: row.userId,
         externalId: cree.externalId,
         etag: cree.etag,
         syncState: 'SYNCED',
@@ -177,7 +188,7 @@ export async function flushSyncOutbox(args: {
       OR: [{ attempts: 0 }, { nextAttemptAt: { lte: now } }],
     },
     orderBy: { nextAttemptAt: 'asc' },
-    take: args.limit ?? 50,
+    take: args.limit ?? TAILLE_LOT,
   })
 
   const report: FlushReport = {
@@ -235,12 +246,94 @@ export async function flushSyncOutbox(args: {
  */
 const MAX_PASSES = 20
 
+export interface DrainReport extends FlushReport {
+  /**
+   * Lignes encore dues à l'instant du drainage, une fois les passes épuisées.
+   *
+   * `0` = file vidée. Sans ce chiffre, un compte rendu « 50 traité(s), 50
+   * synchronisé(s) » est strictement indiscernable d'une file vidée : le
+   * consultant croit avoir terminé et referme l'écran. Les lignes reculées
+   * après un échec transitoire n'y figurent pas — elles ne sont pas dues
+   * maintenant, et recliquer ne les ferait pas partir plus tôt.
+   */
+  reste: number
+}
+
+/** Lignes de la file dues à cet instant, sans les reculs après échec. */
+function compterDues(userId: string, now: Date): Promise<number> {
+  return prisma.syncOutbox.count({
+    where: {
+      userId,
+      state: 'PENDING',
+      OR: [{ attempts: 0 }, { nextAttemptAt: { lte: now } }],
+    },
+  })
+}
+
+/**
+ * Draine la file d'un compte **jusqu'au bout**, en enchaînant les passes.
+ *
+ * C'est le drainage que déclenche le bouton « Synchroniser maintenant », seul
+ * moyen d'écoulement de l'installation autoportante : s'arrêter au lot de
+ * `limit` lignes y laisserait l'agenda incomplet sans que rien ne le dise.
+ *
+ * Le connecteur est résolu **une fois** puis réutilisé par toutes les passes —
+ * le résoudre à chaque passe rafraîchirait vingt fois le même jeton. L'appelant
+ * qui en tient déjà un le passe (`flushAllSyncOutboxes`, les tests).
+ */
+export async function drainSyncOutbox(args: {
+  userId: string
+  limit?: number
+  now?: Date
+  connector?: CalendarConnector | null
+  fetchFn?: FetchLike
+  /** borne de sécurité, injectée par les tests */
+  maxPasses?: number
+}): Promise<DrainReport> {
+  const now = args.now ?? new Date()
+  const limit = args.limit ?? TAILLE_LOT
+  const maxPasses = args.maxPasses ?? MAX_PASSES
+
+  const connector =
+    args.connector !== undefined
+      ? args.connector
+      : await resolveConnector(args.userId, {
+          ...(args.fetchFn === undefined ? {} : { fetchFn: args.fetchFn }),
+          now,
+        })
+
+  const cumul: DrainReport = {
+    nonConnecte: connector === null,
+    traitees: 0,
+    reussies: 0,
+    conflits: 0,
+    echecs: 0,
+    reste: 0,
+  }
+
+  if (connector !== null) {
+    for (let passe = 0; passe < maxPasses; passe++) {
+      const r = await flushSyncOutbox({ userId: args.userId, limit, now, connector })
+      cumul.traitees += r.traitees
+      cumul.reussies += r.reussies
+      cumul.conflits += r.conflits
+      cumul.echecs += r.echecs
+      // Une passe non pleine a vu le fond de la file : la suivante ne
+      // trouverait que des lignes reculées après échec, pas encore dues.
+      if (r.traitees < limit) break
+    }
+  }
+
+  cumul.reste = await compterDues(args.userId, now)
+  return cumul
+}
+
 /**
  * Draine la file de chaque compte connecté. C'est ce que l'endpoint interne
  * appelle : il n'a pas de session, donc pas d'utilisateur courant.
  */
 export async function flushAllSyncOutboxes(
-  limit = 50,
+  limit = TAILLE_LOT,
   /** injectées par les tests ; la production n'en passe aucune */
   deps: { now?: Date; fetchFn?: FetchLike } = {},
 ): Promise<{ comptes: number; traitees: number }> {
@@ -260,13 +353,8 @@ export async function flushAllSyncOutboxes(
     })
     if (connector === null) continue
 
-    for (let passe = 0; passe < MAX_PASSES; passe++) {
-      const r = await flushSyncOutbox({ userId: compte.userId, limit, now, connector })
-      traitees += r.traitees
-      // Une passe non pleine a vu le fond de la file : la suivante ne
-      // trouverait que des lignes reculées après échec, pas encore dues.
-      if (r.traitees < limit) break
-    }
+    const r = await drainSyncOutbox({ userId: compte.userId, limit, now, connector })
+    traitees += r.traitees
   }
 
   return { comptes: comptes.length, traitees }

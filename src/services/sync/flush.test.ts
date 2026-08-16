@@ -8,7 +8,8 @@ import { saveEntry } from '@/services/time-entries'
 import { saveCredential } from '@/services/credentials'
 import { createGoogleCalendarConnector } from '@/integrations/google/calendar'
 import { createFakeGoogleApi, type FakeGoogleApi } from '@/integrations/google/fake-google-api'
-import { flushAllSyncOutboxes, flushSyncOutbox } from './flush'
+import { TIME_ZONE } from './connector'
+import { drainSyncOutbox, flushAllSyncOutboxes, flushSyncOutbox } from './flush'
 
 const DEDIE = 'cra-dedie@group.calendar.google.com'
 const NOW = new Date('2026-03-20T10:00:00.000Z')
@@ -108,6 +109,25 @@ describe('poussée', () => {
     const corps = api.dernierAppel().body as Record<string, unknown>
     expect(corps.summary).toBe('FLUSH client · Refonte · Dév')
     expect(corps.start).toEqual({ dateTime: '2026-03-12T09:00:00', timeZone: expect.any(String) })
+  })
+
+  // Les heures poussées sont des heures locales naïves : c'est le fuseau qui
+  // les situe. Le drainage est le seul endroit du dépôt qui consomme
+  // `CRA_TIMEZONE` — une régression y décalerait tous les blocs de l'agenda
+  // d'une à deux heures sans qu'aucune minute ne bouge en base.
+  it('pousse les heures dans le fuseau configuré', async () => {
+    await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    const corps = api.dernierAppel().body as {
+      start: { timeZone: string }
+      end: { timeZone: string }
+    }
+    expect(corps.start.timeZone).toBe(TIME_ZONE)
+    expect(corps.end.timeZone).toBe(TIME_ZONE)
+    // Et le fuseau lui-même est celui du déploiement, métropole par défaut :
+    // un `TIME_ZONE` fixé à 'UTC' passerait les deux assertions ci-dessus.
+    expect(TIME_ZONE).toBe(process.env.CRA_TIMEZONE ?? 'Europe/Paris')
   })
 
   it('ne repousse rien au drainage suivant', async () => {
@@ -431,19 +451,92 @@ describe('isolation par utilisateur', () => {
   })
 })
 
-describe('drainage de tous les comptes', () => {
-  /** Lignes visant des saisies absentes : consommées sans le moindre appel réseau. */
-  async function fileFantome(id: string, combien: number): Promise<void> {
-    await prisma.syncOutbox.createMany({
-      data: Array.from({ length: combien }, (_, i) => ({
-        userId: id,
-        entityType: 'TimeEntry',
-        entityId: `fantome-${id}-${i}`,
-        provider: 'GOOGLE',
-        operation: 'UPSERT',
-      })),
+/** Lignes visant des saisies absentes : consommées sans le moindre appel réseau. */
+async function fileFantome(id: string, combien: number): Promise<void> {
+  await prisma.syncOutbox.createMany({
+    data: Array.from({ length: combien }, (_, i) => ({
+      userId: id,
+      entityType: 'TimeEntry',
+      entityId: `fantome-${id}-${i}`,
+      provider: 'GOOGLE',
+      operation: 'UPSERT',
+    })),
+  })
+}
+
+describe('drainage d un compte, jusqu au bout', () => {
+  // `flushSyncOutbox` s'arrête à `limit` lignes. Le déclenchement manuel est le
+  // SEUL drainage disponible par défaut : s'il n'enchaîne pas, le consultant
+  // clique, lit un compte rendu vert, et son agenda garde des journées libres
+  // qu'il croit bloquées. Trois prestations remplies sur un mois produisent
+  // déjà ~66 lignes.
+  it('enchaîne les passes jusqu à vider une file plus longue que la limite', async () => {
+    await fileFantome(userId, 55)
+
+    const r = await drainSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect({ traitees: r.traitees, reussies: r.reussies, reste: r.reste }).toEqual({
+      traitees: 55,
+      reussies: 55,
+      reste: 0,
     })
-  }
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+  })
+
+  // Et quand il en reste vraiment, le compte rendu le dit : un rapport sans
+  // indicateur de reste est strictement indiscernable d'une file vidée.
+  it('annonce le reste quand il en reste', async () => {
+    await fileFantome(userId, 5)
+
+    const r = await drainSyncOutbox({
+      userId,
+      now: NOW,
+      connector: connector(),
+      limit: 2,
+      maxPasses: 2,
+    })
+
+    expect({ traitees: r.traitees, reste: r.reste }).toEqual({ traitees: 4, reste: 1 })
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(1)
+  })
+
+  // Une ligne reculée après échec n'est pas « du reste à drainer maintenant » :
+  // la compter ferait recliquer l'utilisateur pour rien, indéfiniment.
+  it('ne compte pas dans le reste une ligne reculée après échec', async () => {
+    await saisir('2026-03-12')
+    api.failNext('RESEAU')
+
+    const r = await drainSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect({ traitees: r.traitees, reste: r.reste }).toEqual({ traitees: 1, reste: 0 })
+    expect((await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })).state).toBe('PENDING')
+  })
+
+  it('ne draine que la file du compte demandé', async () => {
+    await fileFantome(userId, 2)
+    await fileFantome(autreId, 3)
+
+    const r = await drainSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(r.traitees).toBe(2)
+    expect(await prisma.syncOutbox.count({ where: { userId: autreId } })).toBe(3)
+  })
+
+  it('rend le cas non connecté tel quel, sans rien marquer en échec', async () => {
+    await fileFantome(userId, 2)
+
+    const r = await drainSyncOutbox({ userId, now: NOW, connector: null })
+
+    expect({ nonConnecte: r.nonConnecte, traitees: r.traitees, reste: r.reste }).toEqual({
+      nonConnecte: true,
+      traitees: 0,
+      reste: 2,
+    })
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(2)
+  })
+})
+
+describe('drainage de tous les comptes', () => {
 
   async function connecter(id: string): Promise<void> {
     await saveCredential(id, 'GOOGLE', {

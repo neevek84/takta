@@ -47,17 +47,18 @@ function instantane(patch: { summary?: string; startLocal?: string; endLocal?: s
   }
 }
 
-async function saisirLeDouze(): Promise<string> {
+async function saisirLeDouze(slotId = ''): Promise<string> {
   const r = await saveEntry({
     userId,
     lineId: lineA,
     date: '2026-03-12',
     minutes: 240,
     kind: 'REALISE',
+    slotId,
   })
   expect(r.ok).toBe(true)
   const entry = await prisma.timeEntry.findFirstOrThrow({
-    where: { userId, lineId: lineA, date: new Date('2026-03-12T00:00:00.000Z') },
+    where: { userId, lineId: lineA, date: new Date('2026-03-12T00:00:00.000Z'), slotId },
   })
   return entry.id
 }
@@ -67,11 +68,13 @@ async function divergence(patch: {
   summary?: string
   startLocal?: string
   endLocal?: string
+  slotId?: string
 }): Promise<{ conflictId: string; entryId: string; externalId: string }> {
-  const entryId = await saisirLeDouze()
+  const entryId = await saisirLeDouze(patch.slotId ?? '')
 
   await prisma.externalLink.create({
     data: {
+      userId,
       ...cibleDe(entryId),
       externalId: EXTERNAL_ID,
       etag: '"1"',
@@ -101,6 +104,7 @@ async function disparition(): Promise<{ conflictId: string; entryId: string }> {
 
   await prisma.externalLink.create({
     data: {
+      userId,
       ...cibleDe(entryId),
       externalId: EXTERNAL_ID,
       etag: '"1"',
@@ -298,6 +302,150 @@ describe('accepter — le garde-fou', () => {
     expect(survivante?.minutes).toBe(480)
     expect(await prisma.timeEntry.findUnique({ where: { id: entryId } })).not.toBeNull()
     expect((await listOpenConflicts(userId)).length).toBe(1)
+  })
+})
+
+describe('accepter — le jour d accueil est déjà saisi', () => {
+  /** Le jour visé par l'événement, déjà occupé par la même prestation. */
+  async function occuperLeTreize(minutes: number, slotId = ''): Promise<string> {
+    const r = await saveEntry({
+      userId,
+      lineId: lineA,
+      date: '2026-03-13',
+      minutes,
+      kind: 'REALISE',
+      slotId,
+    })
+    expect(r.ok).toBe(true)
+    const entry = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: lineA, date: new Date('2026-03-13T00:00:00.000Z'), slotId },
+    })
+    await prisma.externalLink.create({
+      data: {
+        userId,
+        ...cibleDe(entry.id),
+        externalId: 'evt-2',
+        etag: '"1"',
+        syncState: 'SYNCED',
+        syncedAt: NOW,
+      },
+    })
+    return entry.id
+  }
+
+  // `saveEntry` **upserte** sur (ligne, utilisateur, jour, créneau) : écrire la
+  // position d'accueil sans regarder ce qui s'y trouve substitue la durée de
+  // l'événement à la saisie qui l'occupait, puis la suppression de l'ancienne
+  // achève la perte. Une donnée en moins, sans un mot à l'écran — l'inverse
+  // exact de ce que l'arbitrage promet.
+  it("refuse au lieu d'écraser la saisie qui occupe déjà le jour d'accueil", async () => {
+    const { conflictId, entryId } = await divergence({
+      startLocal: '2026-03-13T09:00:00',
+      endLocal: '2026-03-13T11:00:00',
+    })
+    const treizeId = await occuperLeTreize(480)
+
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r).toMatchObject({ ok: false, reason: 'JOUR_OCCUPE' })
+
+    // Les deux saisies sont intactes, chacune à sa place.
+    const treize = await prisma.timeEntry.findUniqueOrThrow({ where: { id: treizeId } })
+    expect(treize.minutes).toBe(480)
+    const origine = await prisma.timeEntry.findUniqueOrThrow({ where: { id: entryId } })
+    expect({ date: origine.date, minutes: origine.minutes }).toEqual({
+      date: new Date('2026-03-12T00:00:00.000Z'),
+      minutes: 240,
+    })
+
+    // Chaque lien pointe toujours sa propre saisie : rien n'a été repointé.
+    const liens = await prisma.externalLink.findMany({ orderBy: { externalId: 'asc' } })
+    expect(liens.map((l) => [l.externalId, l.entityId])).toEqual([
+      [EXTERNAL_ID, entryId],
+      ['evt-2', treizeId],
+    ])
+
+    // Et la divergence reste arbitrable : rien n'a été consommé pour rien.
+    expect((await listOpenConflicts(userId)).length).toBe(1)
+  })
+
+  it('nomme le jour en cause dans le motif', async () => {
+    const { conflictId } = await divergence({
+      startLocal: '2026-03-13T09:00:00',
+      endLocal: '2026-03-13T11:00:00',
+    })
+    await occuperLeTreize(480)
+
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.message).toContain('2026-03-13')
+  })
+
+  // Le pendant : une journée occupée sur un AUTRE créneau que celui visé n'est
+  // pas une collision — refuser là serait refuser une saisie parfaitement
+  // possible.
+  it("n'oppose pas un créneau voisin à l'arbitrage", async () => {
+    const { conflictId, entryId } = await divergence({
+      startLocal: '2026-03-13T09:00:00',
+      endLocal: '2026-03-13T13:00:00',
+      slotId: 'matin',
+    })
+    const treizeId = await occuperLeTreize(240, 'apres-midi')
+
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r).toEqual({ ok: true, resolution: 'ACCEPTER' })
+
+    expect(await prisma.timeEntry.findUnique({ where: { id: entryId } })).toBeNull()
+    expect(
+      (await prisma.timeEntry.findUniqueOrThrow({ where: { id: treizeId } })).minutes,
+    ).toBe(240)
+    const deplacee = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: lineA, slotId: 'matin' },
+    })
+    expect(deplacee.date).toEqual(new Date('2026-03-13T00:00:00.000Z'))
+  })
+})
+
+describe('accepter — le créneau de la saisie', () => {
+  // `slotId: ''` en dur transformait toute saisie « matin » en journée entière,
+  // y compris pour une divergence purement cosmétique (libellé changé chez
+  // Google) : l'arbitrage rendait alors la journée entière indisponible.
+  it('conserve le créneau quand seul le libellé a changé chez Google', async () => {
+    const { conflictId, entryId } = await divergence({
+      summary: 'Renommé à la main',
+      slotId: 'matin',
+    })
+
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r).toEqual({ ok: true, resolution: 'ACCEPTER' })
+
+    const apres = await prisma.timeEntry.findFirstOrThrow({ where: { userId, lineId: lineA } })
+    expect({ id: apres.id, slotId: apres.slotId, date: apres.date }).toEqual({
+      id: entryId,
+      slotId: 'matin',
+      date: new Date('2026-03-12T00:00:00.000Z'),
+    })
+    expect(await prisma.timeEntry.count({ where: { userId } })).toBe(1)
+
+    // Le lien suit la saisie — qui n'a pas bougé — et adopte l'etag distant.
+    const link = await prisma.externalLink.findFirstOrThrow({})
+    expect({ entityId: link.entityId, etag: link.etag }).toEqual({ entityId: entryId, etag: '"2"' })
+  })
+
+  it('conserve le créneau quand la saisie change de jour', async () => {
+    const { conflictId } = await divergence({
+      startLocal: '2026-03-18T09:00:00',
+      endLocal: '2026-03-18T13:00:00',
+      slotId: 'matin',
+    })
+
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r).toEqual({ ok: true, resolution: 'ACCEPTER' })
+
+    const deplacee = await prisma.timeEntry.findFirstOrThrow({ where: { userId } })
+    expect({ slotId: deplacee.slotId, date: deplacee.date }).toEqual({
+      slotId: 'matin',
+      date: new Date('2026-03-18T00:00:00.000Z'),
+    })
   })
 })
 

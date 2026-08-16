@@ -17,22 +17,77 @@ export const RETENTION_JOURS = 90
  * saisie, que personne ne draine et que rien ne retire.
  *
  * La purge vit ici plutôt que dans le drainage : un compte jamais connecté
- * est précisément celui pour lequel le drainage ne tourne pas. Elle ne peut
- * rien retirer d'exploitable — une ligne due depuis trois mois décrit une
- * intention que l'utilisateur a, depuis, réécrite ou oubliée, et la saisie
- * elle-même reste intacte en base.
+ * est précisément celui pour lequel le drainage ne tourne pas.
+ *
+ * Deux filtres bornent ce qu'elle a le droit de retirer, et aucun des deux
+ * n'est décoratif :
+ *
+ *   - `state: 'PENDING'` — une ligne `FAILED` est le seul témoin d'un échec,
+ *     et `abandon()` (`core/sync/policy.ts`) lui donne un `nextAttemptAt` à
+ *     l'instant de l'échec : elle vieillit donc comme une autre. L'effacer
+ *     viderait l'écran de supervision de ses échecs, exactement ce que le
+ *     commentaire d'`abandon()` interdit — « la ligne reste en base ».
+ *
+ *   - une suppression **dont le lien externe survit** — elle décrit un bloc
+ *     qui existe dans l'agenda et qu'il faut en retirer, et sa saisie a déjà
+ *     disparu de la base : rien ne remettra jamais cette ligne en file.
+ *     L'effacer laisse un bloc fantôme **définitif**, qui occupe une journée
+ *     qu'on pourrait revendre — le cas même que la transaction de
+ *     `time-entries.ts` existe pour empêcher.
+ *
+ * Le second filtre porte sur le lien, pas sur l'opération, et c'est ce qui
+ * l'empêche de rouvrir la fuite qu'on ferme ici : sans `ExternalLink`, une
+ * suppression n'a jamais rien poussé, donc rien à retirer — c'est déjà ce que
+ * conclut `traiterSuppression` (`flush.ts`) quand elle en drainerait une. Les
+ * garder toutes ferait grossir la file sans borne sur le compte jamais
+ * connecté, puisque chaque `clearMonth` frappe des saisies aux `cuid` neufs,
+ * donc des lignes neuves.
+ *
+ * Reste le cas de l'`UPSERT` périmé dont le lien survit : le bloc poussé jadis
+ * garde une valeur dépassée. Il part quand même, et c'est assumé — celui-là se
+ * répare tout seul à la prochaine retouche de la cellule, qui remet un
+ * `UPSERT` en file. C'est la seule des trois situations qui soit rattrapable.
  */
 async function purgerLignesPerimees(
   tx: Prisma.TransactionClient,
   args: { userId: string; provider: string; now: Date },
 ): Promise<void> {
-  await tx.syncOutbox.deleteMany({
+  const perimees = await tx.syncOutbox.findMany({
     where: {
       userId: args.userId,
       provider: args.provider,
+      state: 'PENDING',
       nextAttemptAt: { lt: new Date(args.now.getTime() - RETENTION_JOURS * 86_400_000) },
     },
+    select: { id: true, entityType: true, entityId: true, operation: true },
   })
+  if (perimees.length === 0) return
+
+  const suppressions = perimees.filter((l) => l.operation === 'DELETE')
+  const retirables = perimees.filter((l) => l.operation !== 'DELETE').map((l) => l.id)
+
+  // Second aller-retour seulement s'il y a une suppression à trancher : le cas
+  // courant — un compte jamais connecté qui accumule des `UPSERT` — n'en
+  // paie pas le coût.
+  if (suppressions.length > 0) {
+    const liens = await tx.externalLink.findMany({
+      // Scopé sur `userId`, comme toute requête de service — ce que le
+      // rattachement posé sur `ExternalLink` rend enfin possible.
+      where: {
+        userId: args.userId,
+        provider: args.provider,
+        entityId: { in: suppressions.map((l) => l.entityId) },
+      },
+      select: { entityType: true, entityId: true },
+    })
+    const lies = new Set(liens.map((l) => `${l.entityType}/${l.entityId}`))
+    for (const l of suppressions) {
+      if (!lies.has(`${l.entityType}/${l.entityId}`)) retirables.push(l.id)
+    }
+  }
+
+  if (retirables.length === 0) return
+  await tx.syncOutbox.deleteMany({ where: { id: { in: retirables } } })
 }
 
 /**

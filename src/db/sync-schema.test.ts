@@ -3,6 +3,7 @@ import { prisma } from './client'
 
 let userId = ''
 let autreId = ''
+let lineId = ''
 
 const CIBLE = { entityType: 'TimeEntry', entityId: 'entry-1', provider: 'GOOGLE' }
 
@@ -15,6 +16,10 @@ beforeAll(async () => {
     data: { email: 'sync-schema-autre@test.local', name: 'A', passwordHash: 'x' },
   })
   autreId = a.id
+
+  const c = await prisma.client.create({ data: { name: 'SYNC-SCHEMA client' } })
+  const m = await prisma.mission.create({ data: { clientId: c.id, label: 'M' } })
+  lineId = (await prisma.missionLine.create({ data: { missionId: m.id, label: 'L' } })).id
 })
 
 beforeEach(async () => {
@@ -29,9 +34,11 @@ afterAll(async () => {
   await prisma.syncConflict.deleteMany({})
   await prisma.providerCredential.deleteMany({})
   await prisma.externalLink.deleteMany({})
+  await prisma.timeEntry.deleteMany({ where: { lineId } })
   await prisma.user.deleteMany({
     where: { email: { in: ['sync-schema@test.local', 'sync-schema-autre@test.local'] } },
   })
+  await prisma.client.deleteMany({ where: { name: 'SYNC-SCHEMA client' } })
   await prisma.$disconnect()
 })
 
@@ -146,11 +153,68 @@ describe('ProviderCredential', () => {
 describe('ExternalLink', () => {
   it('porte un etag, vide tant que rien n a été poussé', async () => {
     const l = await prisma.externalLink.create({
-      data: { ...CIBLE, externalId: 'evt-1' },
+      data: { ...CIBLE, userId, externalId: 'evt-1' },
     })
     expect(l.etag).toBe('')
 
     const relu = await prisma.externalLink.update({ where: { id: l.id }, data: { etag: '"3"' } })
     expect(relu.etag).toBe('"3"')
+  })
+
+  // Sans rattachement, supprimer un compte laissait ses liens en base pour
+  // toujours : des lignes que plus aucune requête ne retrouve, puisque tout
+  // le code les lit par `(entityType, entityId, provider)` — un triplet dont
+  // l'`entityId` vient d'une saisie qui, elle, a bien disparu en cascade.
+  it('disparaît avec son utilisateur', async () => {
+    await prisma.externalLink.create({
+      data: { ...CIBLE, userId: autreId, externalId: 'evt-autre' },
+    })
+    await prisma.user.delete({ where: { id: autreId } })
+    expect(await prisma.externalLink.count()).toBe(0)
+
+    const a = await prisma.user.create({
+      data: { email: 'sync-schema-autre@test.local', name: 'A', passwordHash: 'x' },
+    })
+    autreId = a.id
+  })
+
+  // Le pendant, et il compte autant : le lien ne suit PAS la saisie. C'est
+  // lui, et lui seul, qui porte l'identifiant du bloc à retirer de l'agenda ;
+  // la ligne `DELETE` mise en file par la suppression n'a rien d'autre à
+  // consulter. Une clé étrangère `entityId -> TimeEntry` avec cascade
+  // paraîtrait symétrique et rendrait le bloc fantôme définitif.
+  it('survit à la saisie supprimée, sans quoi le bloc ne pourrait plus être retiré', async () => {
+    const entry = await prisma.timeEntry.create({
+      data: {
+        lineId,
+        userId,
+        date: new Date('2026-03-12T00:00:00.000Z'),
+        minutes: 240,
+        kind: 'REALISE',
+        minutesParJour: 480,
+      },
+    })
+    await prisma.externalLink.create({
+      data: {
+        userId,
+        entityType: 'TimeEntry',
+        entityId: entry.id,
+        provider: 'GOOGLE',
+        externalId: 'evt-a-retirer',
+      },
+    })
+
+    await prisma.timeEntry.delete({ where: { id: entry.id } })
+
+    const reste = await prisma.externalLink.findUnique({
+      where: {
+        entityType_entityId_provider: {
+          entityType: 'TimeEntry',
+          entityId: entry.id,
+          provider: 'GOOGLE',
+        },
+      },
+    })
+    expect(reste?.externalId).toBe('evt-a-retirer')
   })
 })

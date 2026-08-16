@@ -27,6 +27,7 @@ export type ResolveResult =
         | 'NON_AFFECTE'
         | 'SAISIE_ABSENTE'
         | 'INSTANTANE_ILLISIBLE'
+        | 'JOUR_OCCUPE'
       message: string
     }
 
@@ -253,13 +254,49 @@ export async function resolveConflict(args: {
   }
 
   const nouvelleDate = (snapshot.startLocal as string).slice(0, 10)
-  const deplacement = nouvelleDate !== ancienneDate || entry.slotId !== ''
+  // Le créneau de la saisie est **conservé** : l'instantané distant n'en porte
+  // aucun, et le réécrire à la journée transformerait un « matin » en journée
+  // entière — y compris pour une divergence purement cosmétique, où rien ne
+  // justifie de rendre l'après-midi indisponible. Seul ce que Google dit
+  // vraiment (le jour et la durée) est adopté.
+  const slotCible = entry.slotId
+  const deplacement = nouvelleDate !== ancienneDate
 
   // Le déplacement suppose de retirer la saisie de sa place actuelle : si ce
   // retrait est déjà voué au refus, on refuse ici, avant toute écriture (voir
   // `moisVerrouille`).
   if (deplacement && (await moisVerrouille(args.userId, entry.lineId, ancienneDate))) {
     return refus('VERROUILLE')
+  }
+
+  // `saveEntry` **upserte** sur (ligne, utilisateur, jour, créneau) : écrire la
+  // position d'accueil sans regarder ce qui s'y trouve substituerait la durée
+  // de l'événement à la saisie qui l'occupait, que la suppression de l'ancienne
+  // achèverait de faire disparaître. Un arbitrage ne prend jamais cette
+  // décision à la place de l'utilisateur : il la lui rend, motif à l'appui.
+  //
+  // Fusionner serait tout aussi arbitraire, et repointer le lien buterait de
+  // toute façon sur l'unicité (entityType, entityId, provider) : la saisie
+  // d'accueil a déjà le sien.
+  const occupant = await prisma.timeEntry.findFirst({
+    where: {
+      userId: args.userId,
+      lineId: entry.lineId,
+      date: new Date(`${nouvelleDate}T00:00:00.000Z`),
+      slotId: slotCible,
+      id: { not: entry.id },
+    },
+    select: { id: true },
+  })
+  if (occupant !== null) {
+    return {
+      ok: false,
+      reason: 'JOUR_OCCUPE',
+      message:
+        `Le ${nouvelleDate} porte déjà une saisie sur cette prestation : l'accepter ` +
+        "l'écraserait. Déplacez ou supprimez cette saisie, puis réessayez — ou " +
+        'rétablissez plutôt la version du CRA.',
+    }
   }
 
   // On écrit la nouvelle position AVANT d'effacer l'ancienne : l'ordre inverse
@@ -270,7 +307,7 @@ export async function resolveConflict(args: {
     date: nouvelleDate,
     minutes,
     kind: kindSaisie,
-    slotId: '',
+    slotId: slotCible,
   })
   if (!ecriture.ok) return refus(ecriture.reason)
 
@@ -293,7 +330,7 @@ export async function resolveConflict(args: {
         date: nouvelleDate,
         minutes: 0,
         kind: kindSaisie,
-        slotId: '',
+        slotId: slotCible,
       })
       return refus(suppression.reason)
     }
@@ -304,7 +341,7 @@ export async function resolveConflict(args: {
       userId: args.userId,
       lineId: entry.lineId,
       date: new Date(`${nouvelleDate}T00:00:00.000Z`),
-      slotId: '',
+      slotId: slotCible,
     },
   })
 

@@ -3,14 +3,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const {
   requireUser,
   revalidatePath,
-  flushSyncOutbox,
+  drainSyncOutbox,
   resolveConflict,
   retrySyncRow,
   disconnectGoogle,
 } = vi.hoisted(() => ({
   requireUser: vi.fn(),
   revalidatePath: vi.fn(),
-  flushSyncOutbox: vi.fn(),
+  drainSyncOutbox: vi.fn(),
   resolveConflict: vi.fn(),
   retrySyncRow: vi.fn(),
   disconnectGoogle: vi.fn(),
@@ -18,19 +18,19 @@ const {
 
 vi.mock('@/auth', () => ({ requireUser }))
 vi.mock('next/cache', () => ({ revalidatePath }))
-vi.mock('@/services/sync/flush', () => ({ flushSyncOutbox }))
+vi.mock('@/services/sync/flush', () => ({ drainSyncOutbox }))
 vi.mock('@/services/sync/conflicts', () => ({ resolveConflict }))
 vi.mock('@/services/sync/queue', () => ({ retrySyncRow }))
 vi.mock('@/services/google/connect', () => ({ disconnectGoogle }))
 
 import { arbitrer, rejouer, revoquerGoogle, synchroniserMaintenant } from './actions'
 
-const RAPPORT = { nonConnecte: false, traitees: 1, reussies: 1, conflits: 0, echecs: 0 }
+const RAPPORT = { nonConnecte: false, traitees: 1, reussies: 1, conflits: 0, echecs: 0, reste: 0 }
 
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
   revalidatePath.mockReset()
-  flushSyncOutbox.mockReset().mockResolvedValue(RAPPORT)
+  drainSyncOutbox.mockReset().mockResolvedValue(RAPPORT)
   resolveConflict.mockReset().mockResolvedValue({ ok: true, resolution: 'RETABLIR' })
   retrySyncRow.mockReset().mockResolvedValue(true)
   disconnectGoogle.mockReset().mockResolvedValue(undefined)
@@ -56,7 +56,7 @@ describe('chaque action exige une session', () => {
 
       await expect(appeler()).rejects.toThrow('Non authentifié')
 
-      expect(flushSyncOutbox).not.toHaveBeenCalled()
+      expect(drainSyncOutbox).not.toHaveBeenCalled()
       expect(resolveConflict).not.toHaveBeenCalled()
       expect(retrySyncRow).not.toHaveBeenCalled()
       expect(disconnectGoogle).not.toHaveBeenCalled()
@@ -65,10 +65,18 @@ describe('chaque action exige une session', () => {
 })
 
 describe('chaque action agit sur le seul compte de la session', () => {
-  it('draine la file de la session, et rend le rapport tel quel', async () => {
+  // `drainSyncOutbox` et non `flushSyncOutbox` : ce bouton est le seul
+  // drainage disponible par défaut, et une seule passe s'arrêterait au lot en
+  // rendant un compte rendu indiscernable d'une file vidée.
+  it('draine la file de la session jusqu au bout, et rend le rapport tel quel', async () => {
     expect(await synchroniserMaintenant()).toEqual(RAPPORT)
-    expect(flushSyncOutbox).toHaveBeenCalledWith({ userId: 'u1' })
+    expect(drainSyncOutbox).toHaveBeenCalledWith({ userId: 'u1' })
     expect(revalidatePath).toHaveBeenCalledWith('/admin/sync')
+  })
+
+  it('relaie le reste annoncé par le drainage', async () => {
+    drainSyncOutbox.mockResolvedValue({ ...RAPPORT, traitees: 1000, reste: 42 })
+    expect(await synchroniserMaintenant()).toMatchObject({ reste: 42 })
   })
 
   it('arbitre pour la session, et relaie le verdict du service', async () => {

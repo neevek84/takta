@@ -52,12 +52,14 @@ beforeAll(async () => {
 beforeEach(async () => {
   file.indisponible = false
   await prisma.syncOutbox.deleteMany({})
+  await prisma.externalLink.deleteMany({})
   await prisma.timeEntry.deleteMany({ where: { userId: { in: [userId, autreId] } } })
   await prisma.cra.deleteMany({ where: { userId } })
   await updateSettings({ minutesParJour: 480, capacityMode: 'BLOCAGE', capacityCentiemes: 100 })
 })
 
 afterAll(async () => {
+  await prisma.externalLink.deleteMany({})
   await prisma.cra.deleteMany({ where: { userId } })
   await prisma.user.deleteMany({
     where: { email: { in: ['outbox@test.local', 'outbox-autre@test.local'] } },
@@ -213,6 +215,87 @@ describe('la file reste bornée', () => {
     await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
 
     expect(await prisma.syncOutbox.findUnique({ where: { id: recente.id } })).not.toBeNull()
+  })
+
+  // `abandon()` fixe `nextAttemptAt` à l'instant de l'échec : une ligne FAILED
+  // vieillit donc comme une autre, et une purge qui ne filtre pas l'état
+  // l'efface au bout de 90 jours. `core/sync/policy.ts` promet l'inverse mot
+  // pour mot — « la ligne reste en base […] une file qui perdrait ses échecs
+  // produirait un agenda silencieusement faux ». Sans ce test, la promesse est
+  // écrite et jamais vérifiée.
+  it('garde une ligne en échec, même périmée', async () => {
+    const echec = await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'TimeEntry',
+        entityId: 'saisie-en-echec',
+        provider: 'GOOGLE',
+        operation: 'UPSERT',
+        state: 'FAILED',
+        attempts: 5,
+        lastError: 'Agenda injoignable : fetch failed',
+        nextAttemptAt: new Date(Date.now() - (RETENTION_JOURS + 1) * 86_400_000),
+      },
+    })
+
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
+
+    expect(await prisma.syncOutbox.findUnique({ where: { id: echec.id } })).not.toBeNull()
+    // Le symptôme tel que l'utilisateur le voit : l'écran de supervision.
+    expect((await listFailedSyncRows(userId)).map((r) => r.id)).toEqual([echec.id])
+  })
+
+  // Une suppression due porte un `ExternalLink` : le bloc existe dans l'agenda,
+  // et cette ligne est la seule chose en base qui sache qu'il faut le retirer.
+  // L'effacer laisse un bloc fantôme définitif — la saisie, elle, a déjà
+  // disparu, donc rien ne remettra jamais la suppression en file.
+  it('garde une suppression due, même périmée, tant que son lien externe existe', async () => {
+    const perimee = await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'TimeEntry',
+        entityId: 'saisie-supprimee',
+        provider: 'GOOGLE',
+        operation: 'DELETE',
+        nextAttemptAt: new Date(Date.now() - (RETENTION_JOURS + 1) * 86_400_000),
+      },
+    })
+    await prisma.externalLink.create({
+      data: {
+        userId,
+        entityType: 'TimeEntry',
+        entityId: 'saisie-supprimee',
+        provider: 'GOOGLE',
+        externalId: 'evt-fantome',
+      },
+    })
+
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
+
+    expect(await prisma.syncOutbox.findUnique({ where: { id: perimee.id } })).not.toBeNull()
+  })
+
+  // Le pendant du test précédent, et ce qui empêche la protection des
+  // suppressions de rouvrir la fuite que la purge existe pour fermer : sans
+  // lien externe, la suppression n'a jamais rien poussé, donc rien à retirer.
+  // Chaque `clearMonth` d'un compte non connecté frappe des saisies aux `cuid`
+  // neufs, donc des lignes de file neuves : les garder toutes ferait grossir
+  // la file sans borne, exactement le défaut d'origine.
+  it('retire une suppression périmée qui n a jamais rien poussé', async () => {
+    const perimee = await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'TimeEntry',
+        entityId: 'saisie-jamais-poussee',
+        provider: 'GOOGLE',
+        operation: 'DELETE',
+        nextAttemptAt: new Date(Date.now() - (RETENTION_JOURS + 1) * 86_400_000),
+      },
+    })
+
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
+
+    expect(await prisma.syncOutbox.findUnique({ where: { id: perimee.id } })).toBeNull()
   })
 })
 

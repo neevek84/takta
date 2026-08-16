@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/Card'
 import type { ConflictResolution } from '@/core/sync/policy'
 import type { OpenConflict } from '@/services/sync/conflicts'
 import type { FailedSyncRow } from '@/services/sync/queue'
-import type { FlushReport } from '@/services/sync/flush'
+import type { DrainReport } from '@/services/sync/flush'
 import { arbitrer, rejouer, revoquerGoogle, synchroniserMaintenant } from './actions'
 
 const ISSUES: Array<{ resolution: ConflictResolution; label: string }> = [
@@ -21,10 +21,50 @@ const KIND_LABELS: Record<string, string> = {
   REMOTE_DELETED: "L'événement a été supprimé de l'agenda",
 }
 
-function compteRendu(r: FlushReport): string {
-  return r.nonConnecte
-    ? 'Aucun agenda joignable. La saisie continue de fonctionner normalement.'
-    : `${r.traitees} élément(s) traité(s) : ${r.reussies} synchronisé(s), ${r.conflits} divergence(s), ${r.echecs} échec(s).`
+/**
+ * Un seul message à l'écran à la fois : deux bandeaux concurrents laisseraient
+ * un refus d'hier cohabiter avec un succès d'aujourd'hui.
+ *
+ * `info` attend son tour (`status`), `warning` et `danger` interrompent
+ * (`alert`) : un reste à drainer et une action qui a levé doivent être
+ * annoncés, un compte rendu nominal non.
+ */
+type Message = { tone: 'info' | 'warning' | 'danger'; title?: string; texte: string }
+
+function compteRendu(r: DrainReport): Message {
+  if (r.nonConnecte) {
+    return {
+      tone: 'info',
+      texte: 'Aucun agenda joignable. La saisie continue de fonctionner normalement.',
+    }
+  }
+
+  const fait = `${r.traitees} élément(s) traité(s) : ${r.reussies} synchronisé(s), ${r.conflits} divergence(s), ${r.echecs} échec(s).`
+
+  // Sans cette phrase, « 50 traité(s), 50 synchronisé(s) » est strictement
+  // indiscernable d'une file vidée : l'utilisateur referme l'écran en croyant
+  // son agenda à jour, et des journées qu'il pense bloquées restent libres.
+  return r.reste === 0
+    ? { tone: 'info', texte: fait }
+    : {
+        tone: 'warning',
+        title: 'File non vidée',
+        texte: `${fait} Il en reste ${r.reste} à traiter : relancez la synchronisation.`,
+      }
+}
+
+/**
+ * Toute action serveur peut lever : panne de base, session expirée, contrainte
+ * violée. Sans ce traitement, le rejet reste non traité — le bouton se
+ * rétablit, aucun message n'apparaît, et l'utilisateur conclut que son geste a
+ * été pris en compte. C'est le vecteur qui rend un défaut d'écriture muet.
+ */
+function panne(quoi: string): Message {
+  return {
+    tone: 'danger',
+    title: 'Action impossible',
+    texte: `${quoi} a échoué. Rien n'a peut-être été enregistré : rechargez l'écran, puis réessayez.`,
+  }
 }
 
 export function SyncClient(props: {
@@ -32,23 +72,39 @@ export function SyncClient(props: {
   conflicts: OpenConflict[]
   failures: FailedSyncRow[]
 }) {
-  const [info, setInfo] = useState<string | null>(null)
-  const [refus, setRefus] = useState<string | null>(null)
+  const [message, setMessage] = useState<Message | null>(null)
   const [enCours, setEnCours] = useState(false)
 
   async function onArbitrer(id: string, resolution: ConflictResolution): Promise<void> {
-    const r = await arbitrer(id, resolution)
-    // Si la règle refuse, le conflit reste ouvert et le motif est affiché :
-    // un arbitrage silencieusement sans effet serait pire que pas d'arbitrage.
-    setRefus(r.ok ? null : r.message)
-    setInfo(r.ok ? 'Divergence arbitrée.' : null)
+    try {
+      const r = await arbitrer(id, resolution)
+      // Si la règle refuse, le conflit reste ouvert et le motif est affiché :
+      // un arbitrage silencieusement sans effet serait pire que pas d'arbitrage.
+      setMessage(
+        r.ok
+          ? { tone: 'info', texte: 'Divergence arbitrée.' }
+          : { tone: 'warning', title: 'Arbitrage refusé', texte: r.message },
+      )
+    } catch {
+      setMessage(panne("L'arbitrage de la divergence"))
+    }
+  }
+
+  async function onRejouer(id: string): Promise<void> {
+    try {
+      await rejouer(id)
+      setMessage({ tone: 'info', texte: 'Ligne remise en file.' })
+    } catch {
+      setMessage(panne('La remise en file'))
+    }
   }
 
   async function onSynchroniser(): Promise<void> {
-    setRefus(null)
     setEnCours(true)
     try {
-      setInfo(compteRendu(await synchroniserMaintenant()))
+      setMessage(compteRendu(await synchroniserMaintenant()))
+    } catch {
+      setMessage(panne('La synchronisation'))
     } finally {
       // Un second déclenchement pendant le premier repousserait les mêmes
       // lignes deux fois ; le bouton reste rendu, simplement inactif.
@@ -59,10 +115,12 @@ export function SyncClient(props: {
   return (
     <div className="flex flex-col gap-6">
       {/* `Banner` porte le rôle : `status` attend son tour, `alert` interrompt. */}
-      {info !== null && <Banner tone="info">{info}</Banner>}
-      {refus !== null && (
-        <Banner tone="warning" title="Arbitrage refusé">
-          {refus}
+      {message !== null && (
+        <Banner
+          tone={message.tone}
+          {...(message.title === undefined ? {} : { title: message.title })}
+        >
+          {message.texte}
         </Banner>
       )}
 
@@ -93,9 +151,20 @@ export function SyncClient(props: {
 
       <Card title="Synchronisation">
         <div className="flex flex-col items-start gap-3 text-sm">
+          {/*
+            Rien n’ordonnance le drainage dans le dépôt : ni `instrumentation.ts`,
+            ni `setInterval`, ni service, ni cron. Annoncer un écoulement
+            automatique ferait croire que l’agenda part tout seul alors que ce
+            bouton est le seul. On dit donc ce qui est, et ce qu’il faut poser
+            pour obtenir mieux.
+          */}
           <p className="text-muted">
-            Le drainage part aussi tout seul, à chaque déclenchement périodique. Ce bouton ne fait
-            que l’avancer.
+            Aucun drainage automatique n’est installé : ce bouton est le seul écoulement de la file.
+          </p>
+          <p className="text-muted">
+            Pour un drainage régulier, faites appeler <code>POST /api/sync/flush</code> par un cron
+            ou par n8n, après avoir défini <code>SYNC_FLUSH_TOKEN</code> — vide, l’endpoint reste
+            fermé.
           </p>
           <Button variant="primary" loading={enCours} onClick={() => void onSynchroniser()}>
             Synchroniser maintenant
@@ -141,13 +210,7 @@ export function SyncClient(props: {
                 <p className="text-muted">
                   {f.operation} · {f.attempts} tentative(s) · {f.lastError}
                 </p>
-                <Button
-                  className="mt-2"
-                  onClick={async () => {
-                    await rejouer(f.id)
-                    setInfo('Ligne remise en file.')
-                  }}
-                >
+                <Button className="mt-2" onClick={() => void onRejouer(f.id)}>
                   Rejouer
                 </Button>
               </li>
