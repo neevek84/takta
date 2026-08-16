@@ -10,7 +10,7 @@
  */
 
 /** Nom du fournisseur, tel qu'il est stocké dans `ProviderCredential`. */
-export const DOLIBARR = 'dolibarr'
+export const DOLIBARR = 'DOLIBARR'
 
 export interface DolibarrThirdparty {
   id: number

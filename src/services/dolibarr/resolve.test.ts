@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } 
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/db/client'
 import { saveInstanceCredential } from '@/services/credentials'
+import { PROVIDER_GOOGLE } from '@/core/sync/policy'
 import { DOLIBARR } from './api'
 import { getDolibarrApi } from './resolve'
 
@@ -80,5 +81,22 @@ describe('résolution du client Dolibarr', () => {
       baseUrl: URL_FACTICE,
     })
     expect(await getDolibarrApi()).toBeNull()
+  })
+})
+
+// Le fournisseur s'écrivait `'dolibarr'` en minuscules quand Google s'écrit
+// `'GOOGLE'`. Rien ne cassait : un appelant qui aurait écrit la clé en dur
+// l'aurait simplement rangée sous un fournisseur que la lecture ne regarde
+// pas, et l'échec aurait été muet — pas d'erreur, pas de jeton, pas
+// d'explication. La convention est donc verrouillée plutôt que rappelée.
+describe('convention des clés de fournisseur', () => {
+  it('écrit tous les fournisseurs en capitales', () => {
+    for (const provider of [DOLIBARR, PROVIDER_GOOGLE]) {
+      expect(provider).toBe(provider.toUpperCase())
+    }
+  })
+
+  it('ne confond pas deux fournisseurs', () => {
+    expect(DOLIBARR).not.toBe(PROVIDER_GOOGLE)
   })
 })
