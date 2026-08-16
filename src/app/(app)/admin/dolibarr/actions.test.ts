@@ -109,7 +109,10 @@ describe('chaque action exige une session', () => {
     ['connecterDolibarr', () => connecterDolibarr(null, formulaireConnexion())],
     ['deconnecterDolibarr', () => deconnecterDolibarr()],
     ['rattacherTiers', () => rattacherTiers(form({ dolibarrId: '1', clientId: 'c1' }))],
-    ['rattacherProjet', () => rattacherProjet(form({ dolibarrId: '1', missionId: 'm1' }))],
+    [
+      'rattacherProjet',
+      () => rattacherProjet(form({ dolibarrId: '1', missionId: 'm1', ref: 'PJ001', socid: '5' })),
+    ],
     ['detacher', () => detacher(form({ entityType: 'Client', entityId: 'c1' }))],
     ['pousserClient', () => pousserClient(form({ clientId: 'c1' }))],
   ]
@@ -253,12 +256,16 @@ describe('rattachement des tiers', () => {
 
 describe('rattachement des projets', () => {
   it('crée la mission sous le client choisi quand aucune mission n est visée', async () => {
-    await rattacherProjet(form({ dolibarrId: '30', missionId: '', clientId: 'c1', titre: 'ITSM' }))
+    await rattacherProjet(
+      form({ dolibarrId: '30', missionId: '', clientId: 'c1', titre: 'ITSM', ref: 'PJ030', socid: '5' }),
+    )
 
     expect(createMissionFromDolibarr).toHaveBeenCalledWith({
       userId: 'u1',
       clientId: 'c1',
       dolibarrProjectId: 30,
+      projectRef: 'PJ030',
+      projectSocid: 5,
       label: 'ITSM',
     })
     expect(attachMission).not.toHaveBeenCalled()
@@ -271,14 +278,50 @@ describe('rattachement des projets', () => {
   })
 
   it('rattache à la mission choisie', async () => {
-    await rattacherProjet(form({ dolibarrId: '30', missionId: 'm1', clientId: 'c1' }))
+    await rattacherProjet(form({ dolibarrId: '30', missionId: 'm1', clientId: 'c1', ref: 'PJ030', socid: '5' }))
 
     expect(attachMission).toHaveBeenCalledWith({
       userId: 'u1',
       missionId: 'm1',
       dolibarrProjectId: 30,
+      projectRef: 'PJ030',
+      projectSocid: 5,
     })
     expect(createMissionFromDolibarr).not.toHaveBeenCalled()
+  })
+
+  it('transmet l absence de tiers du projet comme null, pas comme une chaîne vide', async () => {
+    // Un projet sans tiers Dolibarr existe : le champ caché arrive vide, et ce
+    // n'est pas la même chose qu'un tiers 0.
+    await rattacherProjet(form({ dolibarrId: '30', missionId: 'm1', ref: 'PJ030', socid: '' }))
+
+    expect(attachMission).toHaveBeenCalledWith({
+      userId: 'u1',
+      missionId: 'm1',
+      dolibarrProjectId: 30,
+      projectRef: 'PJ030',
+      projectSocid: null,
+    })
+  })
+
+  it('annonce le refus du service au lieu de laisser planter la page', async () => {
+    // Le service (`attachMission`) porte la règle de cohérence tiers ; cette
+    // action se contente de rapporter son refus à l'écran, comme
+    // `pousserClient` le fait déjà pour une panne Dolibarr.
+    attachMission.mockRejectedValue(
+      new Error(
+        'Le projet « PJ030 » appartient au tiers Dolibarr n° 5, mais « ACME » est rattaché au tiers Dolibarr n° 7.',
+      ),
+    )
+
+    await rattacherProjet(form({ dolibarrId: '30', missionId: 'm1', ref: 'PJ030', socid: '5' }))
+
+    expect(redirect).toHaveBeenCalledTimes(1)
+    const cible = decodeURIComponent(String(redirect.mock.calls[0]![0]))
+    expect(cible).toContain('PJ030')
+    expect(cible).toContain('tiers Dolibarr n° 5')
+    expect(cible).toContain('tone=danger')
+    expect(revalidatePath).not.toHaveBeenCalled()
   })
 })
 
@@ -314,6 +357,8 @@ describe('pousserClient', () => {
     })
     expect(redirect).toHaveBeenCalledTimes(1)
     expect(String(redirect.mock.calls[0]![0])).toContain('/admin/dolibarr?message=')
+    // Un succès s'affiche en succès, jamais en alerte.
+    expect(String(redirect.mock.calls[0]![0])).toContain('tone=success')
   })
 
   it('dit que Dolibarr n est pas connecté au lieu de ne rien faire', async () => {
@@ -324,6 +369,9 @@ describe('pousserClient', () => {
     await pousserClient(form({ clientId: 'c1' }))
 
     expect(pushClientToDolibarr).not.toHaveBeenCalled()
+    // Une panne ne s'affiche pas comme un succès : la tonalité le distingue,
+    // et pas seulement la couleur — le texte le dit aussi.
+    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
     expect(redirect).toHaveBeenCalledTimes(1)
     expect(decodeURIComponent(String(redirect.mock.calls[0]![0]))).toContain('pas connecté')
   })
@@ -335,5 +383,6 @@ describe('pousserClient', () => {
 
     expect(redirect).toHaveBeenCalledTimes(1)
     expect(decodeURIComponent(String(redirect.mock.calls[0]![0]))).toContain('injoignable')
+    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
   })
 })

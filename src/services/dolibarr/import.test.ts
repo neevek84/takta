@@ -70,8 +70,10 @@ describe('import initial', () => {
   })
 
   it('signale une mission rattachée avec son libellé', async () => {
-    const projet = api.seedProject({ ref: 'PJ001', title: 'IMPORT ITSM', socid: 1 })
+    const tiers = api.seedThirdparty('IMPORT ACME')
+    const projet = api.seedProject({ ref: 'PJ001', title: 'IMPORT ITSM', socid: tiers.id })
     const client = await createClient('IMPORT client')
+    await attachClient({ userId, clientId: client.id, dolibarrThirdpartyId: tiers.id })
     const mission = await createMission({ clientId: client.id, label: 'IMPORT mission à moi' })
     await createLine({
       missionId: mission.id,
@@ -80,7 +82,13 @@ describe('import initial', () => {
       soldCentiemes: 1000,
       tjmCents: 60000,
     })
-    await attachMission({ userId, missionId: mission.id, dolibarrProjectId: projet.id })
+    await attachMission({
+      userId,
+      missionId: mission.id,
+      dolibarrProjectId: projet.id,
+      projectRef: projet.ref,
+      projectSocid: projet.socid,
+    })
 
     const c = await listImportCandidates(userId, api)
     expect(c.projets[0]!.missionId).toBe(mission.id)
@@ -92,8 +100,10 @@ describe('import initial', () => {
     // l'écran proposerait de rattacher un projet déjà pris et créerait un
     // doublon. Le **libellé**, lui, suit le cloisonnement des missions — comme
     // partout ailleurs dans l'application.
-    const projet = api.seedProject({ ref: 'PJ001', title: 'IMPORT ITSM', socid: 1 })
+    const tiers = api.seedThirdparty('IMPORT ACME')
+    const projet = api.seedProject({ ref: 'PJ001', title: 'IMPORT ITSM', socid: tiers.id })
     const client = await createClient('IMPORT client')
+    await attachClient({ userId: autreUserId, clientId: client.id, dolibarrThirdpartyId: tiers.id })
     const mission = await createMission({ clientId: client.id, label: 'IMPORT mission des autres' })
     await createLine({
       missionId: mission.id,
@@ -102,7 +112,13 @@ describe('import initial', () => {
       soldCentiemes: 1000,
       tjmCents: 60000,
     })
-    await attachMission({ userId: autreUserId, missionId: mission.id, dolibarrProjectId: projet.id })
+    await attachMission({
+      userId: autreUserId,
+      missionId: mission.id,
+      dolibarrProjectId: projet.id,
+      projectRef: projet.ref,
+      projectSocid: projet.socid,
+    })
 
     const c = await listImportCandidates(userId, api)
     expect(c.projets[0]!.missionId).toBe(mission.id)
@@ -199,12 +215,16 @@ describe('import initial', () => {
 
   it('crée une mission locale à partir d un projet', async () => {
     const c = await createClient('IMPORT client')
-    const projet = api.seedProject({ ref: 'PJ001', title: 'IMPORT ITSM', socid: 1 })
+    const tiers = api.seedThirdparty('IMPORT ACME')
+    await attachClient({ userId, clientId: c.id, dolibarrThirdpartyId: tiers.id })
+    const projet = api.seedProject({ ref: 'PJ001', title: 'IMPORT ITSM', socid: tiers.id })
 
     const { missionId } = await createMissionFromDolibarr({
       userId,
       clientId: c.id,
       dolibarrProjectId: projet.id,
+      projectRef: projet.ref,
+      projectSocid: projet.socid,
       label: 'IMPORT ITSM',
     })
 
@@ -285,7 +305,13 @@ describe('import initial', () => {
 
     await attachClient({ userId, clientId: c1.id, dolibarrThirdpartyId: t1.id })
     await attachClient({ userId, clientId: c2.id, dolibarrThirdpartyId: t2.id })
-    await attachMission({ userId, missionId: mission.id, dolibarrProjectId: projet.id })
+    await attachMission({
+      userId,
+      missionId: mission.id,
+      dolibarrProjectId: projet.id,
+      projectRef: projet.ref,
+      projectSocid: projet.socid,
+    })
 
     await detachEntity({ userId, entityType: 'Client', entityId: c1.id })
 
@@ -296,6 +322,96 @@ describe('import initial', () => {
     expect(restants).toHaveLength(2)
     expect(restants).toContainEqual({ entityType: 'Client', entityId: c2.id })
     expect(restants).toContainEqual({ entityType: 'Mission', entityId: mission.id })
+  })
+
+  it('refuse de rattacher le projet du tiers A à une mission du client B', async () => {
+    // Le danger fermé par cette tâche : sans ce refus, les temps partiraient
+    // quand même, et la demande de facture avec eux, chez le mauvais client.
+    const tiersA = api.seedThirdparty('IMPORT A')
+    const tiersB = api.seedThirdparty('IMPORT B')
+    const projetDeA = api.seedProject({ ref: 'PJ-A', title: 'IMPORT projet A', socid: tiersA.id })
+    const clientB = await createClient('IMPORT client B')
+    await attachClient({ userId, clientId: clientB.id, dolibarrThirdpartyId: tiersB.id })
+    const missionDeB = await createMission({ clientId: clientB.id, label: 'IMPORT mission B' })
+
+    await expect(
+      attachMission({
+        userId,
+        missionId: missionDeB.id,
+        dolibarrProjectId: projetDeA.id,
+        projectRef: projetDeA.ref,
+        projectSocid: projetDeA.socid,
+      }),
+    ).rejects.toThrow(/PJ-A.*IMPORT client B/s)
+
+    expect(
+      await prisma.externalLink.count({ where: { entityType: 'Mission', entityId: missionDeB.id } }),
+    ).toBe(0)
+  })
+
+  it('refuse de créer une mission sous un client dont le tiers ne correspond pas au projet, sans laisser de mission orpheline', async () => {
+    const tiersA = api.seedThirdparty('IMPORT A')
+    const tiersB = api.seedThirdparty('IMPORT B')
+    const projetDeA = api.seedProject({ ref: 'PJ-A', title: 'IMPORT projet A', socid: tiersA.id })
+    const clientB = await createClient('IMPORT client B')
+    await attachClient({ userId, clientId: clientB.id, dolibarrThirdpartyId: tiersB.id })
+
+    await expect(
+      createMissionFromDolibarr({
+        userId,
+        clientId: clientB.id,
+        dolibarrProjectId: projetDeA.id,
+        projectRef: projetDeA.ref,
+        projectSocid: projetDeA.socid,
+        label: 'IMPORT mission orpheline',
+      }),
+    ).rejects.toThrow(/PJ-A.*IMPORT client B/s)
+
+    expect(await prisma.mission.count({ where: { clientId: clientB.id } })).toBe(0)
+  })
+
+  it('refuse de rattacher un projet à tiers tant que le client de la mission n est pas rattaché', async () => {
+    // L'ordre des opérations : rattacher la mission avant le client ne
+    // fournit aucun tiers attendu à comparer. Rien ne l'autorise en silence.
+    const tiers = api.seedThirdparty('IMPORT ACME')
+    const projet = api.seedProject({ ref: 'PJ001', title: 'IMPORT ITSM', socid: tiers.id })
+    const client = await createClient('IMPORT client non rattaché')
+    const mission = await createMission({ clientId: client.id, label: 'IMPORT mission' })
+
+    await expect(
+      attachMission({
+        userId,
+        missionId: mission.id,
+        dolibarrProjectId: projet.id,
+        projectRef: projet.ref,
+        projectSocid: projet.socid,
+      }),
+    ).rejects.toThrow(/PJ001.*aucun tiers Dolibarr/s)
+
+    expect(
+      await prisma.externalLink.count({ where: { entityType: 'Mission', entityId: mission.id } }),
+    ).toBe(0)
+  })
+
+  it('accepte un projet sans tiers Dolibarr, sans rien exiger de la cohérence', async () => {
+    // Dolibarr autorise un projet sans tiers (par exemple interne) : rien à
+    // contredire, donc rien à refuser, même si le client de la mission n est
+    // pas rattaché.
+    const projet = api.seedProject({ ref: 'PJ-INTERNE', title: 'IMPORT interne', socid: null })
+    const client = await createClient('IMPORT client')
+    const mission = await createMission({ clientId: client.id, label: 'IMPORT mission' })
+
+    await attachMission({
+      userId,
+      missionId: mission.id,
+      dolibarrProjectId: projet.id,
+      projectRef: projet.ref,
+      projectSocid: projet.socid,
+    })
+
+    expect(
+      await prisma.externalLink.count({ where: { entityType: 'Mission', entityId: mission.id } }),
+    ).toBe(1)
   })
 
   it('propage la panne au lieu de rendre une liste silencieusement vide', async () => {

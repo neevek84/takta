@@ -27,10 +27,14 @@ import { rattacherTiers, rattacherProjet, detacher, pousserClient } from './acti
 export default async function AdminDolibarrPage({
   searchParams,
 }: {
-  searchParams: Promise<{ message?: string }>
+  searchParams: Promise<{ message?: string; tone?: string }>
 }) {
   const user = await requireUser()
-  const { message } = await searchParams
+  const { message, tone } = await searchParams
+  // Une tonalité forgée ou absente retombe sur « success » : c'est déjà le
+  // comportement historique de ce canal, pour les messages qui ne portent pas
+  // de tonalité explicite.
+  const toneMessage = tone === 'danger' ? 'danger' : 'success'
 
   const [credential, api, clients, missions] = await Promise.all([
     getInstanceCredential(DOLIBARR),
@@ -54,7 +58,7 @@ export default async function AdminDolibarrPage({
     <PageShell title="Administration · Dolibarr">
       {message !== undefined && (
         <div className="mb-6">
-          <Banner tone="success">{message}</Banner>
+          <Banner tone={toneMessage}>{message}</Banner>
         </div>
       )}
 
@@ -166,6 +170,8 @@ export default async function AdminDolibarrPage({
                         >
                           <input type="hidden" name="dolibarrId" value={p.id} />
                           <input type="hidden" name="titre" value={p.title} />
+                          <input type="hidden" name="ref" value={p.ref} />
+                          <input type="hidden" name="socid" value={p.socid ?? ''} />
                           <Select
                             label={`Mission locale pour « ${p.ref} »`}
                             name="missionId"

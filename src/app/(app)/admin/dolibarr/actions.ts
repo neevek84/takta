@@ -119,24 +119,43 @@ export async function rattacherTiers(formData: FormData): Promise<void> {
   revalidatePath(CHEMIN)
 }
 
+/**
+ * Rattache un projet Dolibarr, à une mission existante ou à une mission créée
+ * pour l'occasion.
+ *
+ * Refuse — et le dit à l'écran, pas par une erreur technique — quand le tiers
+ * du projet ne correspond pas au tiers déjà rattaché au client de la
+ * mission : `attachMission` et `createMissionFromDolibarr` portent le refus,
+ * cette action se contente de l'annoncer au lieu de laisser planter la page.
+ */
 export async function rattacherProjet(formData: FormData): Promise<void> {
   const user = await requireUser()
   const dolibarrProjectId = Number(formData.get('dolibarrId'))
+  const projectRef = String(formData.get('ref') ?? '')
+  const socidBrut = String(formData.get('socid') ?? '')
+  const projectSocid = socidBrut === '' ? null : Number(socidBrut)
   const missionId = String(formData.get('missionId') ?? '')
 
-  if (missionId === '') {
-    const clientId = String(formData.get('clientId') ?? '')
-    // Une mission sans client n'existe pas au modèle : la création échouerait
-    // sur la clé étrangère, après avoir laissé croire à un rattachement.
-    if (clientId === '') return
-    await createMissionFromDolibarr({
-      userId: user.id,
-      clientId,
-      dolibarrProjectId,
-      label: String(formData.get('titre') ?? ''),
-    })
-  } else {
-    await attachMission({ userId: user.id, missionId, dolibarrProjectId })
+  try {
+    if (missionId === '') {
+      const clientId = String(formData.get('clientId') ?? '')
+      // Une mission sans client n'existe pas au modèle : la création échouerait
+      // sur la clé étrangère, après avoir laissé croire à un rattachement.
+      if (clientId === '') return
+      await createMissionFromDolibarr({
+        userId: user.id,
+        clientId,
+        dolibarrProjectId,
+        projectRef,
+        projectSocid,
+        label: String(formData.get('titre') ?? ''),
+      })
+    } else {
+      await attachMission({ userId: user.id, missionId, dolibarrProjectId, projectRef, projectSocid })
+    }
+  } catch (err) {
+    redirect(annonce(err instanceof Error ? err.message : String(err), 'danger'))
+    return
   }
   revalidatePath(CHEMIN)
 }
@@ -172,11 +191,12 @@ export async function pousserClient(formData: FormData): Promise<void> {
 
   const api = await getDolibarrApi()
   if (api === null) {
-    redirect(annonce("Dolibarr n'est pas connecté : aucun tiers n'a été créé."))
+    redirect(annonce("Dolibarr n'est pas connecté : aucun tiers n'a été créé.", 'danger'))
     return
   }
 
   let message: string
+  let tone: 'success' | 'danger' = 'success'
   try {
     await pushClientToDolibarr({ userId: user.id, clientId, api })
     message = 'Le tiers a été créé dans Dolibarr.'
@@ -184,12 +204,19 @@ export async function pousserClient(formData: FormData): Promise<void> {
     // La saisie et la validation des CRA continuent : cet écran est le seul à
     // dépendre de Dolibarr, et il le dit au lieu de tomber.
     message = `Dolibarr n'a pas pu créer le tiers : ${err instanceof Error ? err.message : String(err)}`
+    tone = 'danger'
   }
 
   revalidatePath(CHEMIN)
-  redirect(annonce(message))
+  redirect(annonce(message, tone))
 }
 
-function annonce(message: string): string {
-  return `${CHEMIN}?message=${encodeURIComponent(message)}`
+/**
+ * Un message porté par la redirection, avec sa tonalité : un refus affiché
+ * comme un succès (bandeau vert, coche) contredirait le texte qu'il porte —
+ * exactement le genre de confusion qu'une information non redondante avec la
+ * seule couleur doit éviter.
+ */
+function annonce(message: string, tone: 'success' | 'danger' = 'success'): string {
+  return `${CHEMIN}?message=${encodeURIComponent(message)}&tone=${tone}`
 }

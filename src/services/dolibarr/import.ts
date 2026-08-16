@@ -1,6 +1,7 @@
 import { prisma } from '@/db/client'
 import { createClient } from '@/services/clients'
 import { createMission } from '@/services/missions'
+import { verifierCoherenceTiers } from '@/core/dolibarr/coherence'
 import { DOLIBARR, type DolibarrApi } from './api'
 
 export interface RemoteThirdparty {
@@ -173,11 +174,52 @@ export async function createClientFromDolibarr(args: {
   return { clientId: c.id }
 }
 
+/**
+ * Le tiers Dolibarr déjà rattaché à un client local, ou `null` si ce client
+ * n'est rattaché à aucun tiers.
+ *
+ * Filtré sur `provider: DOLIBARR` pour la même raison que
+ * `liensParExternalId` : `ExternalLink` est générique depuis la tâche 6.
+ */
+async function tiersAttendu(clientId: string): Promise<number | null> {
+  const lien = await prisma.externalLink.findUnique({
+    where: {
+      entityType_entityId_provider: { entityType: 'Client', entityId: clientId, provider: DOLIBARR },
+    },
+    select: { externalId: true },
+  })
+  return lien === null ? null : Number(lien.externalId)
+}
+
+/**
+ * Rattache une mission existante à un projet Dolibarr.
+ *
+ * Refuse si le tiers du projet (`projectSocid`) ne correspond pas au tiers
+ * déjà rattaché au client de la mission : rien n'empêcherait sinon de
+ * rattacher le projet du tiers A à une mission du client B, et la demande de
+ * facture partirait chez le mauvais client une fois les temps poussés.
+ */
 export async function attachMission(args: {
   userId: string
   missionId: string
   dolibarrProjectId: number
+  /** référence du projet Dolibarr, pour nommer un éventuel refus */
+  projectRef: string
+  /** tiers auquel Dolibarr rattache le projet ; null si le projet n'en porte aucun */
+  projectSocid: number | null
 }): Promise<void> {
+  const mission = await prisma.mission.findUniqueOrThrow({
+    where: { id: args.missionId },
+    select: { client: { select: { id: true, name: true } } },
+  })
+
+  verifierCoherenceTiers({
+    projectRef: args.projectRef,
+    projectSocid: args.projectSocid,
+    clientLabel: mission.client.name,
+    expectedThirdpartyId: await tiersAttendu(mission.client.id),
+  })
+
   await poser({
     userId: args.userId,
     entityType: 'Mission',
@@ -186,12 +228,34 @@ export async function attachMission(args: {
   })
 }
 
+/**
+ * Crée une mission locale sous un client existant, à partir d'un projet
+ * Dolibarr — même refus de cohérence qu'`attachMission`, et vérifié **avant**
+ * de créer quoi que ce soit : un refus après coup laisserait une mission
+ * orpheline, jamais rattachée, mais bien réelle en base.
+ */
 export async function createMissionFromDolibarr(args: {
   userId: string
   clientId: string
   dolibarrProjectId: number
+  /** référence du projet Dolibarr, pour nommer un éventuel refus */
+  projectRef: string
+  /** tiers auquel Dolibarr rattache le projet ; null si le projet n'en porte aucun */
+  projectSocid: number | null
   label: string
 }): Promise<{ missionId: string }> {
+  const client = await prisma.client.findUniqueOrThrow({
+    where: { id: args.clientId },
+    select: { name: true },
+  })
+
+  verifierCoherenceTiers({
+    projectRef: args.projectRef,
+    projectSocid: args.projectSocid,
+    clientLabel: client.name,
+    expectedThirdpartyId: await tiersAttendu(args.clientId),
+  })
+
   const m = await createMission({ clientId: args.clientId, label: args.label })
   await poser({
     userId: args.userId,
