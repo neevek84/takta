@@ -88,7 +88,9 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 **Contrainte d'exécution** : les implémentations de lots différents **ne peuvent pas tourner en parallèle** — elles touchent les mêmes fichiers. Seules les tâches *à l'intérieur* d'un lot se parallélisent, sur des périmètres disjoints. L'écriture des plans, elle, se parallélise sans risque.
 
-**Arbitrage déjà tranché** : `SyncOutbox` et `ProviderCredential` sont portées par le **lot 1b**, et le lot 2 les consomme. `ProviderCredential.userId` est **nullable** — une clé Dolibarr appartient à l'instance, un jeton Google est personnel.
+**Arbitrage déjà tranché** : `SyncOutbox` et `ProviderCredential` sont portées par le **lot 1b**, et le lot 2 les consomme.
+
+**Arbitrage corrigé** : `ProviderCredential.userId` avait été noté **nullable**, au motif qu'une clé Dolibarr appartient à l'instance quand un jeton Google est personnel. **C'était faux, et pour la raison déjà apprise au lot 0** : la colonne entre dans `@@unique([userId, provider])`, or `NULL` n'est jamais égal à `NULL` — deux clés d'instance `(NULL, 'DOLIBARR')` passeraient la contrainte. Elle est donc `NOT NULL`. Le besoin réel — distinguer ce qui appartient à l'instance de ce qui appartient à une personne — **reste à trancher avant le lot 2** : soit une ligne `User` conventionnelle pour les clés d'instance, soit un `ownerScope` entrant dans l'unicité. Aucune des deux ne demande de colonne nullable.
 
 ---
 
