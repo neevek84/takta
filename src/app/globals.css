@@ -1,61 +1,66 @@
 @import "tailwindcss";
 
-/* Jetons par défaut — identité KreativPM.
+/* Jetons par défaut — thème clair.
+   Ce bloc est le *plancher* : la palette enregistrée est injectée à chaque
+   rendu dans un `<style>` hors couche (`themeStylesheet`, lot 1f), qui
+   l'emporte sur les valeurs d'`@layer theme` produites ici. Ces valeurs-là ne
+   servent qu'au cas où la base est injoignable, et n'ont donc à porter qu'un
+   seul thème : le clair, qui est le défaut.
    Bloc `@theme` classique, jamais en mode « inline » : les utilitaires
-   doivent référencer `var(--color-…)` pour que le thème enregistré, injecté
-   sur <html>, les change sans reconstruction. Voir la décision en tête du
-   plan 1e. */
+   doivent référencer `var(--color-…)` pour que le thème enregistré les change
+   sans reconstruction. Voir la décision en tête du plan 1e. */
 @theme {
-  --color-page: #faf5ed;
+  --color-page: #f6f6f5;
   --color-surface: #ffffff;
-  --color-off: #efeae0;
-  --color-off-strong: #e4dccc;
+  --color-off: #e9e9e8;
+  --color-off-strong: #d8d8d7;
 
-  --color-ink: #342820;
-  --color-ink-deep: #2a211a;
-  --color-muted: #5f5e5a;
-  --color-on-accent: #2a211a;
-  --color-on-dark: #faf5ed;
+  --color-ink: #1f2321;
+  --color-ink-deep: #161917;
+  --color-muted: #555956;
+  --color-on-accent: #ffffff;
+  --color-on-dark: #f6f6f5;
 
-  --color-accent: #d4943f;
-  --color-accent-dark: #b57730;
-  --color-link: #8c5a23;
-  --color-rule: #d8cfbf;
-  --color-focus: #a86c2b;
+  --color-accent: #3f4744;
+  --color-accent-dark: #2c3230;
+  --color-link: #2f4a45;
+  --color-rule: #cdcecd;
+  --color-focus: #3f4744;
 
-  --color-success: #e9f0de;
-  --color-success-ink: #3b5322;
-  --color-success-edge: #b9ce9b;
-  --color-warning: #fbefd8;
-  --color-warning-ink: #6d4a10;
-  --color-warning-edge: #e6c68a;
-  --color-danger: #fae7e0;
-  --color-danger-ink: #8a3418;
-  --color-danger-edge: #edb9a4;
-  --color-info: #efeae0;
-  --color-info-ink: #4f4636;
-  --color-info-edge: #d8cfbf;
+  --color-success: #e7efe7;
+  --color-success-ink: #2f4a33;
+  --color-success-edge: #b7cdb9;
+  --color-warning: #f3eee2;
+  --color-warning-ink: #5e4c22;
+  --color-warning-edge: #d8c89e;
+  --color-danger: #f3e7e5;
+  --color-danger-ink: #7a2e24;
+  --color-danger-edge: #dcb2ac;
+  --color-info: #eaedef;
+  --color-info-ink: #33414a;
+  --color-info-edge: #c3ccd2;
 
   /* Palette catégorielle : distingue des prestations entre elles, sans porter
-     aucun jugement — voir `src/core/theme/tokens.ts` et `src/core/saisie/colors.ts`. */
-  --color-cat-a: #f29892;
-  --color-cat-a-ink: #3f1512;
-  --color-cat-a-edge: #c69895;
-  --color-cat-b: #f2b892;
-  --color-cat-b-ink: #35261d;
-  --color-cat-b-edge: #eba170;
-  --color-cat-c: #f7e5bf;
-  --color-cat-c-ink: #352d1d;
-  --color-cat-c-edge: #f1d59d;
-  --color-cat-d: #f2e892;
-  --color-cat-d-ink: #35331d;
-  --color-cat-d-edge: #ebde70;
-  --color-cat-e: #f292b8;
-  --color-cat-e-ink: #3f1224;
-  --color-cat-e-edge: #c695a9;
-  --color-cat-f: #f9e1e5;
-  --color-cat-f-ink: #411018;
-  --color-cat-f-edge: #dfc3c8;
+     aucun jugement. Étalonnée au lot 1f pour se distinguer aussi des fonds qui
+     la portent — voir `src/core/theme/tokens.ts` et `src/core/saisie/colors.ts`. */
+  --color-cat-a: #eaada3;
+  --color-cat-a-ink: #5a1f16;
+  --color-cat-a-edge: #df9287;
+  --color-cat-b: #d9b95e;
+  --color-cat-b-ink: #3e310f;
+  --color-cat-b-edge: #c8a035;
+  --color-cat-c: #77d13c;
+  --color-cat-c-ink: #1f380e;
+  --color-cat-c-edge: #68b931;
+  --color-cat-d: #35d0c5;
+  --color-cat-d-ink: #0e3836;
+  --color-cat-d-edge: #31b8af;
+  --color-cat-e: #b0b9ed;
+  --color-cat-e-ink: #1e2a77;
+  --color-cat-e-edge: #98a2e3;
+  --color-cat-f: #eaa5e1;
+  --color-cat-f-ink: #591650;
+  --color-cat-f-edge: #df88d4;
 
   /* Polices embarquées, exposées par next/font/local dans le layout racine. */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;

@@ -1,6 +1,5 @@
 import {
   contrastRatio,
-  relativeLuminance,
   formatRatio,
   parseHexColor,
   AA_TEXT_RATIO,
@@ -151,9 +150,84 @@ export const TOKEN_LABELS: Record<keyof ThemeTokens, string> = {
 }
 
 /**
+ * Palette catégorielle des thèmes **clairs**, étalonnée par le calcul et non
+ * choisie à l'œil (lot 1f).
+ *
+ * Les six teintes livrées par le lot 1e vivaient dans une fenêtre chaude —
+ * corail, abricot, crème, jaune, rose, rose pâle. Elles tenaient bien leur
+ * écart deux à deux (20,97 au pire), mais cet écart-là ne dépend pas du fond :
+ * c'est une distance entre deux teintes. Ce qui dépend du fond, et que rien ne
+ * vérifiait, c'est l'écart entre une teinte et **la surface qui la porte**.
+ * Mesuré : `catF` (rose pâle) n'était qu'à 10,0 du fond des week-ends sur la
+ * palette de la marque, et à 9,2 du fond des fériés sur la neutre — une
+ * cellule remplie ne se lisait plus comme remplie. C'était bien, en partie, le
+ * thème d'entreprise ; mais la palette neutre livrée en souffrait autant.
+ *
+ * Le correctif ne baisse pas le seuil : il replace les six teintes sur six
+ * secteurs de teinte répartis (≈8°, 44°, 96°, 176°, 232°, 308°), à une clarté
+ * commune de L*≈76 pour le fond, L*≈68 pour la bordure et L*≈21 pour l'encre.
+ * La clarté commune est ce qui garantit l'écart aux fonds clairs (L* ≥ 85) par
+ * la seule différence de clarté, sans dépendre de la teinte ; les secteurs
+ * répartis garantissent l'écart deux à deux.
+ */
+const CATEGORIES_CLAIR = {
+  catA: '#eaada3',
+  catAInk: '#5a1f16',
+  catAEdge: '#df9287',
+  catB: '#d9b95e',
+  catBInk: '#3e310f',
+  catBEdge: '#c8a035',
+  catC: '#77d13c',
+  catCInk: '#1f380e',
+  catCEdge: '#68b931',
+  catD: '#35d0c5',
+  catDInk: '#0e3836',
+  catDEdge: '#31b8af',
+  catE: '#b0b9ed',
+  catEInk: '#1e2a77',
+  catEEdge: '#98a2e3',
+  catF: '#eaa5e1',
+  catFInk: '#591650',
+  catFEdge: '#df88d4',
+} as const
+
+/**
+ * Palette catégorielle du thème **sombre**, construite et non dérivée.
+ *
+ * Rien n'y est l'inverse de `CATEGORIES_CLAIR` : les fonds descendent à
+ * L*≈34 avec une saturation nettement plus basse (0,34 contre 0,62), et
+ * l'encre monte à L*≈92 sans être blanche. Une inversion de clarté aurait
+ * conservé la saturation du clair et produit six aplats criards sur un fond
+ * sombre — c'est exactement ce que la spec écarte.
+ */
+const CATEGORIES_SOMBRE = {
+  catA: '#76423a',
+  catAInk: '#f0e5e4',
+  catAEdge: '#915248',
+  catB: '#5c4f2d',
+  catBInk: '#ece8db',
+  catBEdge: '#716238',
+  catC: '#3d582b',
+  catCInk: '#e1ebdb',
+  catCEdge: '#4b6d35',
+  catD: '#2b5855',
+  catDInk: '#dbebea',
+  catDEdge: '#356c68',
+  catE: '#424c87',
+  catEInk: '#e6e7f2',
+  catEEdge: '#525ea7',
+  catF: '#773a6e',
+  catFInk: '#f1e4ef',
+  catFEdge: '#914888',
+} as const
+
+/**
  * Identité KreativPM, relevée sur kreativpm.fr puis corrigée par le calcul :
  * l'or n'est jamais du texte (2,38:1 sur le crème), et le texte interactif
  * reçoit un ambre assombri à 5,37:1.
+ *
+ * Depuis le lot 1f, ce n'est plus le défaut mais un préréglage — la marque
+ * habille l'application, elle ne la définit plus.
  */
 export const THEME_KREATIVPM: ThemeTokens = {
   page: '#faf5ed',
@@ -190,49 +264,36 @@ export const THEME_KREATIVPM: ThemeTokens = {
   infoInk: '#4f4636',
   infoEdge: '#d8cfbf',
 
-  // Palette catégorielle : six teintes chaudes choisies par recherche — pour
-  // chacune, fond, bordure et encre sont réglés pour tenir 4,5:1 à la fois
-  // (calcul dans `tokens.test.ts`) —, puis vérifiées deux à deux à l'écart
-  // perceptif CIE76 (`colorDistance`, `MIN_CATEGORY_DISTANCE`). Aucun hasard
-  // dans le choix des teintes : `success`/`warning`/`danger`/`info` n'en
-  // offraient que quatre, toutes hors de la famille chaude de la marque.
-  catA: '#f29892',
-  catAInk: '#3f1512',
-  catAEdge: '#c69895',
-  catB: '#f2b892',
-  catBInk: '#35261d',
-  catBEdge: '#eba170',
-  catC: '#f7e5bf',
-  catCInk: '#352d1d',
-  catCEdge: '#f1d59d',
-  catD: '#f2e892',
-  catDInk: '#35331d',
-  catDEdge: '#ebde70',
-  catE: '#f292b8',
-  catEInk: '#3f1224',
-  catEEdge: '#c695a9',
-  catF: '#f9e1e5',
-  catFInk: '#411018',
-  catFEdge: '#dfc3c8',
+  // Les six teintes catégorielles ne portent pas l'identité de marque à elles
+  // seules — `page`/`ink`/`accent` en sont déjà chargés. Elles sont donc
+  // celles de tout thème clair, et c'est le calcul qui l'autorise : mesurées
+  // sur *ce* fond crème, elles gardent 24,6 au pire face aux quatre fonds.
+  // Les six teintes chaudes du lot 1e, elles, tombaient à 10,0.
+  ...CATEGORIES_CLAIR,
 }
 
-/** Préréglage sobre, pour qui déploie l'application sans la marque. */
-export const THEME_NEUTRE: ThemeTokens = {
+/**
+ * Thème clair — le défaut depuis le lot 1f. Neutre et dense : rien n'y attire
+ * l'œil que les chiffres. Les fonds de grille sont plus étagés que ceux de
+ * l'ancien préréglage neutre (ΔL* 8,3 et 6,0 contre 5,9 et 4,2), la lisibilité
+ * de la grille étant le motif même du lot.
+ */
+export const THEME_CLAIR: ThemeTokens = {
   page: '#f6f6f5',
   surface: '#ffffff',
-  off: '#eeeeed',
-  offStrong: '#e2e2e1',
+  off: '#e9e9e8',
+  offStrong: '#d8d8d7',
 
   ink: '#1f2321',
   inkDeep: '#161917',
-  muted: '#5a5f5c',
+  muted: '#555956',
   onAccent: '#ffffff',
   onDark: '#f6f6f5',
 
   accent: '#3f4744',
   accentDark: '#2c3230',
   link: '#2f4a45',
-  rule: '#d5d7d6',
+  rule: '#cdcecd',
   focus: '#3f4744',
 
   success: '#e7efe7',
@@ -248,40 +309,115 @@ export const THEME_NEUTRE: ThemeTokens = {
   infoInk: '#33414a',
   infoEdge: '#c3ccd2',
 
-  // Même palette catégorielle que KreativPM : les six teintes ne portent pas
-  // l'identité de marque à elles seules — `page`/`ink`/`accent` en sont déjà
-  // chargés — et sont indépendantes des autres jetons du préréglage. Rien
-  // n'empêche un administrateur de les réétalonner depuis `/admin/theme`.
-  catA: '#f29892',
-  catAInk: '#3f1512',
-  catAEdge: '#c69895',
-  catB: '#f2b892',
-  catBInk: '#35261d',
-  catBEdge: '#eba170',
-  catC: '#f7e5bf',
-  catCInk: '#352d1d',
-  catCEdge: '#f1d59d',
-  catD: '#f2e892',
-  catDInk: '#35331d',
-  catDEdge: '#ebde70',
-  catE: '#f292b8',
-  catEInk: '#3f1224',
-  catEEdge: '#c695a9',
-  catF: '#f9e1e5',
-  catFInk: '#411018',
-  catFEdge: '#dfc3c8',
+  ...CATEGORIES_CLAIR,
 }
 
-export const DEFAULT_THEME: ThemeTokens = THEME_KREATIVPM
+/**
+ * Thème sombre — **construit, pas dérivé**.
+ *
+ * Aucun jeton n'est l'inverse de clarté de son homologue clair. Les fonds
+ * s'étagent dans le bas de l'échelle (L* 19,7 / 13,6 / 9,7 / 5,0 pour
+ * surface / page / off / offStrong, en gardant l'ordre du clair : la surface
+ * ouvrée au-dessus de la page, les jours chômés en dessous), l'encre s'arrête
+ * à L*≈92 au lieu du blanc pur, et les accents perdent en saturation ce qu'ils
+ * gagneraient en criard. Inverser les luminances du clair aurait conservé ses
+ * saturations et produit exactement l'interface grise et sale que la spec
+ * écarte — `tokens.test.ts` le vérifie en comparant les chromas.
+ */
+export const THEME_SOMBRE: ThemeTokens = {
+  page: '#202329',
+  surface: '#2c3037',
+  off: '#181b20',
+  offStrong: '#0f1114',
+
+  ink: '#e6e8ec',
+  inkDeep: '#0a0c0e',
+  muted: '#a4abb4',
+  onAccent: '#10131a',
+  onDark: '#e6e8ec',
+
+  accent: '#7fa8d6',
+  accentDark: '#557fae',
+  link: '#9bc0e8',
+  rule: '#3a3f47',
+  focus: '#9bc0e8',
+
+  success: '#1b2a20',
+  successInk: '#8fd0a2',
+  successEdge: '#2f4a38',
+  warning: '#2b2417',
+  warningInk: '#e0be74',
+  warningEdge: '#4a3d21',
+  danger: '#2c1c19',
+  dangerInk: '#f0a08c',
+  dangerEdge: '#4d2f28',
+  info: '#1b232b',
+  infoInk: '#a8c4d8',
+  infoEdge: '#31414e',
+
+  ...CATEGORIES_SOMBRE,
+}
+
+/**
+ * Palette de repli, et seule palette que `globals.css` déclare en dur. Le
+ * clair : c'est le thème qu'un poste sans préférence, ou une base vide,
+ * doit obtenir.
+ */
+export const DEFAULT_THEME: ThemeTokens = THEME_CLAIR
+
+/**
+ * Nature d'un préréglage : sur quel versant du thème il peut être appliqué.
+ * L'écran d'administration s'en sert pour ne pas proposer un préréglage clair
+ * dans l'emplacement sombre — ce que `findConfigIssues` refuserait de toute
+ * façon, mais qu'il vaut mieux ne pas laisser tenter.
+ */
+export type ThemeNature = 'clair' | 'sombre'
 
 export const THEME_PRESETS: ReadonlyArray<{
-  id: 'KREATIVPM' | 'NEUTRE'
+  id: 'CLAIR' | 'SOMBRE' | 'KREATIVPM'
   label: string
+  nature: ThemeNature
   tokens: ThemeTokens
 }> = [
-  { id: 'KREATIVPM', label: 'KreativPM', tokens: THEME_KREATIVPM },
-  { id: 'NEUTRE', label: 'Neutre', tokens: THEME_NEUTRE },
+  { id: 'CLAIR', label: 'Clair', nature: 'clair', tokens: THEME_CLAIR },
+  { id: 'SOMBRE', label: 'Sombre', nature: 'sombre', tokens: THEME_SOMBRE },
+  { id: 'KREATIVPM', label: 'KreativPM', nature: 'clair', tokens: THEME_KREATIVPM },
 ]
+
+/**
+ * Comment le thème appliqué se choisit.
+ *
+ * `systeme` est le défaut : la feuille injectée porte les deux palettes et
+ * laisse `prefers-color-scheme` trancher, sans JavaScript ni scintillement.
+ * Un choix explicite — `clair` ou `sombre` — remplace cette préférence ; il
+ * vit dans la ligne singleton des réglages, et survit donc à un redémarrage
+ * comme à un vidage du navigateur.
+ *
+ * La spec écarte un thème *par utilisateur* (§7) : l'application est
+ * mono-organisation. Le mode est un réglage d'instance, la préférence du
+ * système reste, elle, propre à chaque poste.
+ */
+export const THEME_MODES = ['systeme', 'clair', 'sombre'] as const
+export type ThemeMode = (typeof THEME_MODES)[number]
+
+export const THEME_MODE_LABELS: Record<ThemeMode, string> = {
+  systeme: 'Suivre la préférence du système',
+  clair: 'Toujours clair',
+  sombre: 'Toujours sombre',
+}
+
+/** Les deux palettes et la règle qui décide laquelle s'applique. */
+export interface ThemeConfig {
+  mode: ThemeMode
+  clair: ThemeTokens
+  sombre: ThemeTokens
+}
+
+export const DEFAULT_THEME_CONFIG: ThemeConfig = {
+  mode: 'systeme',
+  clair: THEME_CLAIR,
+  sombre: THEME_SOMBRE,
+}
 
 export interface TokenPair {
   text: keyof ThemeTokens
@@ -443,11 +579,28 @@ export const NON_TEXT_PAIRS: readonly TokenPair[] = [
 ]
 
 /**
- * Écart minimal de luminance relative entre deux fonds de cellule voisins.
- * Sous cet écart, les trois états de la grille — ouvré, non ouvré, férié —
- * ne se distinguent plus qu'à la teinte.
+ * Écart minimal de **clarté CIE (L\*)** entre deux fonds de cellule voisins.
+ * Sous cet écart, les trois états de la grille — ouvré, non ouvré, férié — ne
+ * se distinguent plus qu'à la teinte.
+ *
+ * Le lot 1e mesurait cet écart en luminance relative WCAG (Y ≥ 0,05). Cette
+ * grandeur n'est pas perceptivement uniforme : elle s'écrase près du noir. Un
+ * thème sombre ne peut structurellement pas y satisfaire — trois fonds séparés
+ * de 0,05 en Y demanderaient une surface la plus claire à Y ≥ 0,10, soit un
+ * gris moyen, ce qui n'est plus un thème sombre. Le seuil n'a pas été baissé :
+ * la grandeur a été changée pour celle qui mesure ce qu'on veut mesurer.
+ *
+ * Le contrôle ne s'en trouve pas affaibli côté clair, au contraire. Près du
+ * blanc (L\*≈95), la dérivée dY/dL\* vaut ≈0,024 : ΔL\* ≥ 4 y impose ΔY ≳ 0,09,
+ * soit près du double de l'ancien seuil. `tokens.test.ts` le vérifie plutôt que
+ * de le croire sur parole.
+ *
+ * La valeur : ~1 unité de L\* est le plus petit pas perceptible sur de grandes
+ * plages adjacentes ; 4 garde une marge de sécurité sans interdire les
+ * étagements serrés dont un thème sombre a besoin. Les trois palettes livrées
+ * tiennent entre 4,66 et 8,30.
  */
-export const MIN_LUMINANCE_GAP = 0.05
+export const MIN_LIGHTNESS_GAP = 4
 
 /**
  * Fonds de cellule, du plus clair au plus sombre. L'ordre est l'invariant :
@@ -512,6 +665,21 @@ export function colorDistance(hexA: string, hexB: string): number {
   return Math.sqrt((a.l - b.l) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2)
 }
 
+/** Clarté CIE L\*, de 0 (noir) à 100 (blanc). Perceptivement uniforme. */
+export function lightness(hex: string): number {
+  return versLab(versXyz(hex)).l
+}
+
+/**
+ * Chroma CIE C\*ab — la « pureté » d'une teinte, indépendante de sa clarté.
+ * Sert à vérifier que le thème sombre n'est pas une inversion du clair : une
+ * inversion conserve le chroma, une construction le baisse.
+ */
+export function chroma(hex: string): number {
+  const { a, b } = versLab(versXyz(hex))
+  return Math.sqrt(a * a + b * b)
+}
+
 /**
  * Seuil minimal de ΔE*ab entre deux fonds catégoriels. Repères usuels de la
  * colorimétrie : ~2,3 est le plus petit écart perceptible dans des conditions
@@ -523,6 +691,43 @@ export function colorDistance(hexA: string, hexB: string): number {
  * palette livrée ci-dessous tient 20,97 au pire couple, largement au-dessus.
  */
 export const MIN_CATEGORY_DISTANCE = 15
+
+/**
+ * Toutes les paires de surfaces qui doivent rester discernables l'une de
+ * l'autre — **dérivées, jamais énumérées**.
+ *
+ * Deux familles, et la seconde est celle qui manquait :
+ *
+ * 1. les six fonds catégoriels deux à deux — deux prestations affichées côte à
+ *    côte dans le calendrier ;
+ * 2. chaque fond catégoriel contre chacun des `FONDS_DE_TEXTE` — une cellule
+ *    *remplie* contre une cellule *vide*. Le lot 1e ne vérifiait que la
+ *    première famille, et la seconde échouait en silence sur les deux palettes
+ *    livrées : `catF` n'était qu'à 10,0 (ΔE\*ab) du fond des week-ends sur la
+ *    palette de la marque, `catC` à 12,5 du fond des fériés. La distance entre
+ *    deux teintes ne dépend pas du fond ; la distance d'une teinte à son fond,
+ *    si — c'est tout l'objet du soupçon « c'est peut-être mon thème
+ *    d'entreprise qui fout le bazar », et il était fondé.
+ *
+ * Écrire ces 39 paires à la main les aurait rendues fausses à la première
+ * septième catégorie. Elles se déduisent de `CATEGORY_BACKGROUNDS` et de
+ * `FONDS_DE_TEXTE`, qui se déduisent eux-mêmes de `CATEGORIES` et du contrat
+ * d'usage — ajouter une catégorie ajoute ses paires sans qu'on y pense.
+ *
+ * Ce que la liste n'inclut délibérément pas : les `FONDS_DE_TEXTE` entre eux.
+ * `page` et `surface` sont voisins **par construction** dans les trois thèmes,
+ * et leur étagement utile — celui de la grille — relève de `GRID_BACKGROUNDS`
+ * et de son écart de clarté, pas d'un écart de teinte.
+ */
+export const DISTINCTION_PAIRS: readonly {
+  a: keyof ThemeTokens
+  b: keyof ThemeTokens
+}[] = [
+  ...CATEGORY_BACKGROUNDS.flatMap((a, i) =>
+    CATEGORY_BACKGROUNDS.slice(i + 1).map((b) => ({ a, b })),
+  ),
+  ...CATEGORY_BACKGROUNDS.flatMap((a) => FONDS_DE_TEXTE.map((b): { a: keyof ThemeTokens; b: keyof ThemeTokens } => ({ a, b }))),
+]
 
 export interface ContrastIssue {
   kind: 'contraste'
@@ -537,9 +742,25 @@ export interface SeparationIssue {
   /** fond censé être le plus clair des deux */
   lighter: keyof ThemeTokens
   darker: keyof ThemeTokens
-  /** écart de luminance mesuré ; négatif si l'ordre est inversé */
+  /** écart de clarté L\* mesuré ; négatif si l'ordre est inversé */
   gap: number
   required: number
+}
+
+/**
+ * Une palette rangée du mauvais côté : un thème clair dont la page est plus
+ * sombre que son encre, ou l'inverse. Sans ce contrôle, coller la palette
+ * claire dans l'emplacement sombre s'enregistrerait sans un mot — chaque
+ * couple tenant son contraste — et l'utilisateur qui bascule son système en
+ * sombre recevrait un aplat blanc en pleine nuit.
+ */
+export interface PolarityIssue {
+  kind: 'polarite'
+  attendu: ThemeNature
+  /** clarté L\* du fond de page */
+  pageLightness: number
+  /** clarté L\* de l'encre */
+  inkLightness: number
 }
 
 export interface DistinctionIssue {
@@ -551,7 +772,7 @@ export interface DistinctionIssue {
   required: number
 }
 
-export type ThemeIssue = ContrastIssue | SeparationIssue | DistinctionIssue
+export type ThemeIssue = ContrastIssue | SeparationIssue | DistinctionIssue | PolarityIssue
 
 /**
  * Le seul contrôle que traverse une palette enregistrée. Il porte les deux
@@ -584,26 +805,60 @@ export function findContrastIssues(tokens: ThemeTokens): ThemeIssue[] {
   for (let i = 0; i + 1 < GRID_BACKGROUNDS.length; i++) {
     const lighter = GRID_BACKGROUNDS[i]!
     const darker = GRID_BACKGROUNDS[i + 1]!
-    const gap = relativeLuminance(tokens[lighter]) - relativeLuminance(tokens[darker])
-    if (gap < MIN_LUMINANCE_GAP) {
-      issues.push({ kind: 'separation', lighter, darker, gap, required: MIN_LUMINANCE_GAP })
+    const gap = lightness(tokens[lighter]) - lightness(tokens[darker])
+    if (gap < MIN_LIGHTNESS_GAP) {
+      issues.push({ kind: 'separation', lighter, darker, gap, required: MIN_LIGHTNESS_GAP })
     }
   }
 
-  // Distinction deux à deux de la palette catégorielle : le contraste sur le
-  // fond ci-dessus ne dit rien de la distance entre deux teintes elles-mêmes.
-  for (let i = 0; i + 1 < CATEGORY_BACKGROUNDS.length; i++) {
-    for (let j = i + 1; j < CATEGORY_BACKGROUNDS.length; j++) {
-      const a = CATEGORY_BACKGROUNDS[i]!
-      const b = CATEGORY_BACKGROUNDS[j]!
-      const distance = colorDistance(tokens[a], tokens[b])
-      if (distance < MIN_CATEGORY_DISTANCE) {
-        issues.push({ kind: 'distinction', a, b, distance, required: MIN_CATEGORY_DISTANCE })
-      }
+  // Distinction des surfaces : ni le contraste ci-dessus, ni l'étagement de
+  // clarté ne disent quoi que ce soit de la distance de teinte entre deux
+  // aplats. La liste des paires est dérivée — voir `DISTINCTION_PAIRS`.
+  for (const { a, b } of DISTINCTION_PAIRS) {
+    const distance = colorDistance(tokens[a], tokens[b])
+    if (distance < MIN_CATEGORY_DISTANCE) {
+      issues.push({ kind: 'distinction', a, b, distance, required: MIN_CATEGORY_DISTANCE })
     }
   }
 
   return issues
+}
+
+/**
+ * Le contrôle complet d'une configuration : les deux palettes, chacune passée
+ * au crible de `findContrastIssues`, plus la polarité de chacune. Le mode ne
+ * s'y contrôle pas — c'est une énumération, et le schéma du service la refuse
+ * avant d'arriver ici.
+ *
+ * Le versant est rendu avec le défaut : sans lui, un message d'erreur nommerait
+ * un couple fautif sans dire dans laquelle des deux palettes le corriger.
+ */
+export function findConfigIssues(
+  config: ThemeConfig,
+): { palette: ThemeNature; issue: ThemeIssue }[] {
+  const out: { palette: ThemeNature; issue: ThemeIssue }[] = []
+  for (const palette of ['clair', 'sombre'] as const) {
+    const tokens = config[palette]
+    for (const issue of findPolarityIssues(tokens, palette)) out.push({ palette, issue })
+    for (const issue of findContrastIssues(tokens)) out.push({ palette, issue })
+  }
+  return out
+}
+
+/**
+ * Une palette claire a sa page plus claire que son encre ; une palette sombre,
+ * l'inverse. C'est le seul invariant qui distingue les deux emplacements —
+ * tous les autres contrôles sont symétriques et ne verraient pas l'échange.
+ */
+export function findPolarityIssues(
+  tokens: ThemeTokens,
+  attendu: ThemeNature,
+): PolarityIssue[] {
+  const pageLightness = lightness(tokens.page)
+  const inkLightness = lightness(tokens.ink)
+  const clair = pageLightness > inkLightness
+  if (clair === (attendu === 'clair')) return []
+  return [{ kind: 'polarite', attendu, pageLightness, inkLightness }]
 }
 
 /**
@@ -616,9 +871,9 @@ function formatSeuil(value: number): string {
   return value.toFixed(2).replace('.', ',')
 }
 
-/** Écart de luminance : trois décimales, un seuil de 0,05 étant fin. */
+/** Écart de clarté L\* : une décimale, un seuil de 4 n'a pas besoin de plus. */
 function formatGap(value: number): string {
-  return (Math.floor(value * 1000) / 1000).toFixed(3).replace('.', ',')
+  return (Math.floor(value * 10) / 10).toFixed(1).replace('.', ',')
 }
 
 /** Écart perceptif CIE76 : une décimale, un seuil de 15 n'a pas besoin de plus. */
@@ -630,18 +885,30 @@ export function describeContrastIssue(issue: ThemeIssue): string {
   if (issue.kind === 'separation') {
     return (
       `Les fonds « ${TOKEN_LABELS[issue.lighter]} » et « ${TOKEN_LABELS[issue.darker]} » ` +
-      `ne se séparent que de ${formatGap(issue.gap)} en luminance ; le minimum exigé est ` +
+      `ne se séparent que de ${formatGap(issue.gap)} en clarté (L*) ; le minimum exigé est ` +
       `${formatGap(issue.required)}. Sans cet écart, les états de la grille ne se ` +
       `distinguent plus que par la teinte.`
     )
   }
 
+  if (issue.kind === 'polarite') {
+    return issue.attendu === 'sombre'
+      ? `La palette sombre est en réalité une palette claire : son fond de page ` +
+          `(L* ${formatGap(issue.pageLightness)}) est plus clair que son encre ` +
+          `(L* ${formatGap(issue.inkLightness)}). Un poste réglé en sombre recevrait un ` +
+          `aplat clair en pleine nuit.`
+      : `La palette claire est en réalité une palette sombre : son fond de page ` +
+          `(L* ${formatGap(issue.pageLightness)}) est plus sombre que son encre ` +
+          `(L* ${formatGap(issue.inkLightness)}).`
+  }
+
   if (issue.kind === 'distinction') {
     return (
-      `Les teintes catégorielles « ${TOKEN_LABELS[issue.a]} » et « ${TOKEN_LABELS[issue.b]} » ` +
+      `Les surfaces « ${TOKEN_LABELS[issue.a]} » et « ${TOKEN_LABELS[issue.b]} » ` +
       `ne s’écartent que de ${formatDistance(issue.distance)} (ΔE*ab) ; le minimum exigé est ` +
       `${formatDistance(issue.required)}. En dessous, deux prestations affichées côte à côte ` +
-      `dans le calendrier deviendraient indiscernables l’une de l’autre.`
+      `dans le calendrier — ou une cellule remplie et une cellule vide — deviendraient ` +
+      `indiscernables l’une de l’autre.`
     )
   }
 

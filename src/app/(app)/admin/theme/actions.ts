@@ -2,14 +2,21 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireUser } from '@/auth'
-import { updateTheme, resetTheme, ThemeValidationError } from '@/services/theme'
-import { THEME_TOKEN_KEYS } from '@/core/theme/tokens'
+import { updateThemeConfig, resetTheme, ThemeValidationError } from '@/services/theme'
+import { THEME_TOKEN_KEYS, type ThemeNature } from '@/core/theme/tokens'
 
 export type SaveThemeState = { ok: true } | { ok: false; errors: string[] } | null
 
+/** Les champs d'un versant, tels que `ThemeForm` les nomme. */
+function relever(formData: FormData, nature: ThemeNature): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of THEME_TOKEN_KEYS) out[key] = formData.get(`${nature}.${key}`)
+  return out
+}
+
 /**
  * Transcrit le formulaire et relaie le verdict. Aucune règle de couleur ici :
- * elles vivent toutes dans `validateTheme`, côté service.
+ * elles vivent toutes dans `validateThemeConfig`, côté service.
  */
 export async function saveTheme(
   _prevState: SaveThemeState,
@@ -17,13 +24,14 @@ export async function saveTheme(
 ): Promise<SaveThemeState> {
   await requireUser()
 
-  const brut: Record<string, unknown> = {}
-  for (const key of THEME_TOKEN_KEYS) {
-    brut[key] = formData.get(key)
+  const brut = {
+    mode: formData.get('mode'),
+    clair: relever(formData, 'clair'),
+    sombre: relever(formData, 'sombre'),
   }
 
   try {
-    await updateTheme(brut)
+    await updateThemeConfig(brut)
   } catch (err) {
     if (err instanceof ThemeValidationError) return { ok: false, errors: err.errors }
     throw err

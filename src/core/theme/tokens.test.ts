@@ -7,23 +7,32 @@ import {
   THEME_TOKEN_KEYS,
   TOKEN_LABELS,
   THEME_KREATIVPM,
-  THEME_NEUTRE,
+  THEME_CLAIR,
+  THEME_SOMBRE,
   THEME_PRESETS,
+  THEME_MODES,
+  THEME_MODE_LABELS,
   DEFAULT_THEME,
+  DEFAULT_THEME_CONFIG,
   TEXT_PAIRS,
   NON_TEXT_PAIRS,
-  MIN_LUMINANCE_GAP,
+  MIN_LIGHTNESS_GAP,
   FONDS_DE_TEXTE,
   ENCRES_ETAT,
   CATEGORY_BACKGROUNDS,
+  DISTINCTION_PAIRS,
   MIN_CATEGORY_DISTANCE,
   colorDistance,
+  lightness,
+  chroma,
   findContrastIssues,
+  findConfigIssues,
   describeContrastIssue,
   type ThemeTokens,
   type ContrastIssue,
   type SeparationIssue,
   type DistinctionIssue,
+  type PolarityIssue,
   type ThemeIssue,
 } from './tokens'
 
@@ -33,10 +42,13 @@ const separations = (issues: ThemeIssue[]): SeparationIssue[] =>
   issues.filter((i): i is SeparationIssue => i.kind === 'separation')
 const distinctions = (issues: ThemeIssue[]): DistinctionIssue[] =>
   issues.filter((i): i is DistinctionIssue => i.kind === 'distinction')
+const polarites = (issues: ThemeIssue[]): PolarityIssue[] =>
+  issues.filter((i): i is PolarityIssue => i.kind === 'polarite')
 
 const PALETTES: ReadonlyArray<[string, ThemeTokens]> = [
+  ['Clair', THEME_CLAIR],
+  ['Sombre', THEME_SOMBRE],
   ['KreativPM', THEME_KREATIVPM],
-  ['Neutre', THEME_NEUTRE],
 ]
 
 describe('inventaire des jetons', () => {
@@ -58,14 +70,43 @@ describe('inventaire des jetons', () => {
     }
   })
 
-  it('prend KreativPM pour défaut', () => {
-    expect(DEFAULT_THEME).toEqual(THEME_KREATIVPM)
+  it('prend le clair pour défaut, la marque n’étant plus qu’un préréglage', () => {
+    expect(DEFAULT_THEME).toEqual(THEME_CLAIR)
+    expect(DEFAULT_THEME).not.toEqual(THEME_KREATIVPM)
   })
 
-  it('expose les deux préréglages annoncés', () => {
-    expect(THEME_PRESETS.map((p) => p.id)).toEqual(['KREATIVPM', 'NEUTRE'])
-    expect(THEME_PRESETS[0]!.tokens).toEqual(THEME_KREATIVPM)
-    expect(THEME_PRESETS[1]!.tokens).toEqual(THEME_NEUTRE)
+  it('expose les trois préréglages annoncés, chacun avec son versant', () => {
+    expect(THEME_PRESETS.map((p) => [p.id, p.nature])).toEqual([
+      ['CLAIR', 'clair'],
+      ['SOMBRE', 'sombre'],
+      ['KREATIVPM', 'clair'],
+    ])
+    expect(THEME_PRESETS[0]!.tokens).toEqual(THEME_CLAIR)
+    expect(THEME_PRESETS[1]!.tokens).toEqual(THEME_SOMBRE)
+    expect(THEME_PRESETS[2]!.tokens).toEqual(THEME_KREATIVPM)
+  })
+
+  // Le versant annoncé n'est pas une étiquette : c'est ce que `findConfigIssues`
+  // contrôlera. Un préréglage rangé du mauvais côté serait refusé au moment
+  // même où l'écran propose de l'appliquer.
+  it('range chaque préréglage du côté que le contrôle lui donnerait', () => {
+    for (const preset of THEME_PRESETS) {
+      const clair = lightness(preset.tokens.page) > lightness(preset.tokens.ink)
+      expect(clair, preset.id).toBe(preset.nature === 'clair')
+    }
+  })
+
+  it('part de la préférence du système, avec les deux palettes livrées', () => {
+    expect(DEFAULT_THEME_CONFIG).toEqual({
+      mode: 'systeme',
+      clair: THEME_CLAIR,
+      sombre: THEME_SOMBRE,
+    })
+  })
+
+  it('donne un libellé français à chacun des trois modes', () => {
+    expect([...THEME_MODES]).toEqual(['systeme', 'clair', 'sombre'])
+    for (const mode of THEME_MODES) expect(THEME_MODE_LABELS[mode]).toBeTruthy()
   })
 })
 
@@ -247,13 +288,13 @@ describe('describeContrastIssue', () => {
       kind: 'separation',
       lighter: 'off',
       darker: 'offStrong',
-      gap: 0.012,
-      required: MIN_LUMINANCE_GAP,
+      gap: 1.2,
+      required: MIN_LIGHTNESS_GAP,
     })
     expect(message).toContain('fond des jours non ouvrés')
     expect(message).toContain('fond des jours fériés')
-    expect(message).toContain('0,012')
-    expect(message).toContain('0,050')
+    expect(message).toContain('1,2')
+    expect(message).toContain('4,0')
   })
 })
 
@@ -263,12 +304,12 @@ describe('lisibilité monochrome des fonds de grille', () => {
   for (const [nom, palette] of PALETTES) {
     it(`${nom} : surface, off et offStrong se séparent en luminance`, () => {
       const l = {
-        surface: relativeLuminance(palette.surface),
-        off: relativeLuminance(palette.off),
-        offStrong: relativeLuminance(palette.offStrong),
+        surface: lightness(palette.surface),
+        off: lightness(palette.off),
+        offStrong: lightness(palette.offStrong),
       }
-      expect(l.surface - l.off).toBeGreaterThanOrEqual(MIN_LUMINANCE_GAP)
-      expect(l.off - l.offStrong).toBeGreaterThanOrEqual(MIN_LUMINANCE_GAP)
+      expect(l.surface - l.off).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP)
+      expect(l.off - l.offStrong).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP)
     })
   }
 
@@ -334,18 +375,40 @@ describe('distinction de la palette catégorielle', () => {
   }
 
   it('garde une marge réelle, pas un passage de justesse', () => {
-    let pire = Infinity
-    for (let i = 0; i + 1 < CATEGORY_BACKGROUNDS.length; i++) {
-      for (let j = i + 1; j < CATEGORY_BACKGROUNDS.length; j++) {
-        const a = CATEGORY_BACKGROUNDS[i]!
-        const b = CATEGORY_BACKGROUNDS[j]!
-        pire = Math.min(pire, colorDistance(THEME_KREATIVPM[a], THEME_KREATIVPM[b]))
+    // Sur *toutes* les paires dérivées, teintes contre fonds comprises — le
+    // pire couple de la palette de la marque était justement là.
+    const pires = new Map<string, number>()
+    for (const [nom, palette] of PALETTES) {
+      let pire = Infinity
+      for (const { a, b } of DISTINCTION_PAIRS) {
+        pire = Math.min(pire, colorDistance(palette[a], palette[b]))
       }
+      pires.set(nom, Math.round(pire * 100) / 100)
     }
-    // Le pire couple est `catA`/`catB` — corail contre abricot, les deux
-    // teintes les plus proches en teinte de la famille chaude retenue.
-    expect(pire).toBeCloseTo(20.97, 1)
+    expect(Object.fromEntries(pires)).toEqual({
+      Clair: 27.05,
+      Sombre: 19.59,
+      KreativPM: 24.61,
+    })
   })
+
+  // Le soupçon du porteur, mis en calcul : les six teintes ont été étalonnées
+  // dans une fenêtre chaude, sur un fond crème. Leur écart *deux à deux* ne
+  // dépend pas du fond — c'est une distance entre deux teintes — et tient donc
+  // à l'identique sur un fond neutre. Ce qui dépend du fond, et que rien ne
+  // vérifiait, c'est l'écart entre une teinte et **la surface sur laquelle
+  // elle est posée** : une cellule remplie en rose pâle sur un week-end gris
+  // ne se lit plus comme remplie.
+  for (const [nom, palette] of PALETTES) {
+    it(`${nom} : chaque teinte se distingue aussi des fonds qui la portent`, () => {
+      for (const cat of CATEGORY_BACKGROUNDS) {
+        for (const fond of FONDS_DE_TEXTE) {
+          const distance = colorDistance(palette[cat], palette[fond])
+          expect(distance, `${cat} sur ${fond}`).toBeGreaterThanOrEqual(MIN_CATEGORY_DISTANCE)
+        }
+      }
+    })
+  }
 
   it('refuse une palette où deux teintes catégorielles se confondent', () => {
     // `catB` recopié sur `catA` : même fond, même bordure, même encre. La
@@ -385,6 +448,222 @@ describe('distinction de la palette catégorielle', () => {
     for (const [nom, palette] of PALETTES) {
       expect(distinctions(findContrastIssues(palette)), nom).toEqual([])
     }
+  })
+})
+
+/**
+ * La liste des paires de distinction est **dérivée**, pas écrite. C'est la
+ * leçon de la revue du lot 1e : la table des couples de contraste avait été
+ * énumérée à la main, deux couples y manquaient, et rien ne le signalait. Les
+ * tests ci-dessous vérifient la dérivation elle-même — pas seulement son
+ * résultat sur les palettes du jour.
+ */
+describe('les paires de distinction se dérivent des deux listes', () => {
+  it('couvre les six teintes deux à deux et chacune contre les quatre fonds', () => {
+    const attendu = new Set<string>()
+    for (let i = 0; i < CATEGORY_BACKGROUNDS.length; i++) {
+      for (let j = i + 1; j < CATEGORY_BACKGROUNDS.length; j++) {
+        attendu.add(`${CATEGORY_BACKGROUNDS[i]}/${CATEGORY_BACKGROUNDS[j]}`)
+      }
+    }
+    for (const c of CATEGORY_BACKGROUNDS) for (const f of FONDS_DE_TEXTE) attendu.add(`${c}/${f}`)
+
+    expect(new Set(DISTINCTION_PAIRS.map((p) => `${p.a}/${p.b}`))).toEqual(attendu)
+    // 15 paires entre teintes, 24 teinte-contre-fond. Le cardinal est ici une
+    // *conséquence* vérifiée, pas la promesse : l'assertion qui compte est
+    // celle du contenu au-dessus.
+    expect(DISTINCTION_PAIRS).toHaveLength(39)
+  })
+
+  it('n’exige jamais deux fonds de texte l’un de l’autre', () => {
+    // `page` et `surface` sont voisins par construction dans les trois thèmes.
+    // Les exiger à 15 rendrait toute palette livrable impossible.
+    const fonds = new Set<string>(FONDS_DE_TEXTE)
+    expect(DISTINCTION_PAIRS.filter((p) => fonds.has(p.a) && fonds.has(p.b))).toEqual([])
+  })
+
+  it('la paire qui manquait au lot 1e y figure bien', () => {
+    const cles = new Set(DISTINCTION_PAIRS.map((p) => `${p.a}/${p.b}`))
+    expect(cles.has('catF/off')).toBe(true)
+    expect(cles.has('catC/offStrong')).toBe(true)
+  })
+
+  // La preuve que le défaut existait, et la mesure exacte de ce qu'il valait.
+  // La palette catégorielle chaude du lot 1e, posée sur les fonds de la marque
+  // *et* sur ceux d'un thème neutre : elle échoue des deux côtés. Le soupçon
+  // « c'est peut-être mon thème d'entreprise » était fondé pour moitié — le
+  // thème neutre livré en souffrait autant.
+  const CHAUDES_1E = {
+    catA: '#f29892', catB: '#f2b892', catC: '#f7e5bf',
+    catD: '#f2e892', catE: '#f292b8', catF: '#f9e1e5',
+  } as const
+
+  it('mesure le défaut que la fenêtre chaude produisait, fond par fond', () => {
+    const mesure = (fond: string, cat: keyof typeof CHAUDES_1E): number =>
+      Math.round(colorDistance(CHAUDES_1E[cat], fond) * 10) / 10
+
+    // Fonds de la marque.
+    expect(mesure(THEME_KREATIVPM.off, 'catF')).toBe(10)
+    expect(mesure(THEME_KREATIVPM.offStrong, 'catC')).toBe(12.5)
+    // Fonds neutres : le même défaut, en pire sur les fériés.
+    expect(mesure(THEME_CLAIR.offStrong, 'catF')).toBe(10.5)
+  })
+
+  it('l’écart deux à deux, lui, ne dépendait pas du fond — et tenait', () => {
+    // Ce que le lot 1e vérifiait tenait vraiment ; c'est la question qui était
+    // incomplète, pas la réponse. Une distance entre deux teintes est la même
+    // sur crème et sur gris : le contrôle ne pouvait rien voir.
+    let pire = Infinity
+    const cles = Object.keys(CHAUDES_1E) as (keyof typeof CHAUDES_1E)[]
+    for (let i = 0; i < cles.length; i++) {
+      for (let j = i + 1; j < cles.length; j++) {
+        pire = Math.min(pire, colorDistance(CHAUDES_1E[cles[i]!], CHAUDES_1E[cles[j]!]))
+      }
+    }
+    expect(pire).toBeCloseTo(20.97, 1)
+    expect(pire).toBeGreaterThanOrEqual(MIN_CATEGORY_DISTANCE)
+  })
+
+  it('refuse une teinte qui se confond avec le fond des week-ends', () => {
+    const fautive: ThemeTokens = { ...THEME_CLAIR, catF: THEME_CLAIR.off }
+    const trouve = distinctions(findContrastIssues(fautive)).find(
+      (d) => d.a === 'catF' && d.b === 'off',
+    )
+    expect(trouve, 'un défaut catF/off').toBeDefined()
+    expect(trouve!.distance).toBeCloseTo(0, 6)
+  })
+})
+
+/**
+ * Le changement de grandeur de l'étagement de la grille — luminance relative
+ * (Y) au lot 1e, clarté CIE (L*) au lot 1f — n'est pas un assouplissement.
+ * Ce bloc le démontre au lieu de l'affirmer.
+ */
+describe('l’étagement de la grille se mesure en clarté, pas en luminance', () => {
+  it('est plus exigeant que l’ancien seuil dans le régime clair', () => {
+    // Près du blanc, ΔL* = 4 vaut nettement plus que l'ancien ΔY = 0,05.
+    const clair = '#f2f2f2'
+    const juste = (() => {
+      // le gris exactement 4 unités de L* sous `clair`
+      let lo = 0
+      let hi = 255
+      for (let i = 0; i < 24; i++) {
+        const m = Math.round((lo + hi) / 2)
+        const hex = `#${m.toString(16).padStart(2, '0').repeat(3)}`
+        if (lightness(hex) > lightness(clair) - 4) hi = m
+        else lo = m
+      }
+      return `#${hi.toString(16).padStart(2, '0').repeat(3)}`
+    })()
+    expect(lightness(clair) - lightness(juste)).toBeCloseTo(4, 0)
+    expect(relativeLuminance(clair) - relativeLuminance(juste)).toBeGreaterThan(0.05)
+  })
+
+  it('est atteignable dans le régime sombre, là où l’ancien ne l’était pas', () => {
+    const l = (k: 'surface' | 'off' | 'offStrong'): number => lightness(THEME_SOMBRE[k])
+    expect(l('surface') - l('off')).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP)
+    expect(l('off') - l('offStrong')).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP)
+    // Et l'ancien seuil, lui, était hors d'atteinte : trois fonds sombres ne
+    // peuvent pas s'écarter de 0,05 en luminance relative.
+    const y = (k: 'surface' | 'off' | 'offStrong'): number => relativeLuminance(THEME_SOMBRE[k])
+    expect(y('surface') - y('off')).toBeLessThan(0.05)
+  })
+
+  it('refuse toujours une grille plate et une grille inversée', () => {
+    const plate: ThemeTokens = { ...THEME_SOMBRE, off: THEME_SOMBRE.surface, offStrong: THEME_SOMBRE.surface }
+    expect(separations(findContrastIssues(plate)).map((d) => `${d.lighter}/${d.darker}`)).toEqual([
+      'surface/off',
+      'off/offStrong',
+    ])
+
+    const inversee: ThemeTokens = {
+      ...THEME_SOMBRE,
+      off: THEME_SOMBRE.offStrong,
+      offStrong: THEME_SOMBRE.off,
+    }
+    const defaut = separations(findContrastIssues(inversee)).find((d) => d.lighter === 'off')
+    expect(defaut).toBeDefined()
+    expect(defaut!.gap).toBeLessThan(0)
+  })
+})
+
+/**
+ * « Le sombre est construit, pas dérivé » est une décision de la spec. Une
+ * décision qu'aucun test ne mesure n'est qu'un commentaire.
+ */
+describe('le thème sombre n’est pas une inversion du clair', () => {
+  it('n’inverse pas les clartés jeton par jeton', () => {
+    const inverses = THEME_TOKEN_KEYS.filter(
+      (k) => Math.abs(lightness(THEME_SOMBRE[k]) - (100 - lightness(THEME_CLAIR[k]))) < 2,
+    )
+    // Une inversion pure les mettrait tous à moins de 2 unités. Il en reste
+    // au plus une poignée, par coïncidence et non par construction.
+    expect(inverses.length).toBeLessThan(THEME_TOKEN_KEYS.length / 4)
+  })
+
+  it('baisse la saturation des aplats catégoriels, comme la spec l’exige', () => {
+    const moyenne = (t: ThemeTokens): number =>
+      CATEGORY_BACKGROUNDS.reduce((s, k) => s + chroma(t[k]), 0) / CATEGORY_BACKGROUNDS.length
+    // Une inversion de luminance conserve le chroma ; une construction le baisse.
+    expect(moyenne(THEME_SOMBRE)).toBeLessThan(moyenne(THEME_CLAIR) * 0.75)
+  })
+
+  it('garde une encre en deçà du blanc pur', () => {
+    expect(THEME_SOMBRE.ink).not.toBe('#ffffff')
+    expect(lightness(THEME_SOMBRE.ink)).toBeLessThan(95)
+  })
+})
+
+/**
+ * Le contrôle d'une configuration complète : deux palettes, deux versants.
+ */
+describe('findConfigIssues', () => {
+  it('ne trouve rien sur la configuration livrée', () => {
+    expect(findConfigIssues(DEFAULT_THEME_CONFIG)).toEqual([])
+  })
+
+  it('accepte la marque dans l’emplacement clair', () => {
+    expect(
+      findConfigIssues({ ...DEFAULT_THEME_CONFIG, clair: THEME_KREATIVPM }),
+    ).toEqual([])
+  })
+
+  it('dit dans laquelle des deux palettes le couple fautif se trouve', () => {
+    const trouves = findConfigIssues({
+      ...DEFAULT_THEME_CONFIG,
+      sombre: { ...THEME_SOMBRE, ink: THEME_SOMBRE.page },
+    })
+    expect(trouves.length).toBeGreaterThan(0)
+    expect(trouves.every((t) => t.palette === 'sombre')).toBe(true)
+    expect(contrastes(trouves.map((t) => t.issue)).some((i) => i.text === 'ink')).toBe(true)
+  })
+
+  it('refuse une palette claire rangée dans l’emplacement sombre', () => {
+    // Chaque couple y tient son contraste : sans contrôle de polarité, rien
+    // ne s'y opposerait, et un poste en mode sombre recevrait un aplat blanc.
+    const echangee = { mode: 'systeme', clair: THEME_CLAIR, sombre: THEME_CLAIR } as const
+    const trouves = findConfigIssues(echangee)
+    const polarite = polarites(trouves.map((t) => t.issue))
+    expect(polarite).toHaveLength(1)
+    expect(polarite[0]!.attendu).toBe('sombre')
+    expect(findContrastIssues(THEME_CLAIR)).toEqual([])
+  })
+
+  it('refuse aussi une palette sombre rangée dans l’emplacement clair', () => {
+    const trouves = findConfigIssues({ ...DEFAULT_THEME_CONFIG, clair: THEME_SOMBRE })
+    expect(polarites(trouves.map((t) => t.issue)).map((p) => p.attendu)).toEqual(['clair'])
+  })
+
+  it('écrit le refus de polarité en français, en nommant le versant', () => {
+    const message = describeContrastIssue({
+      kind: 'polarite',
+      attendu: 'sombre',
+      pageLightness: 96.9,
+      inkLightness: 13.2,
+    })
+    expect(message).toContain('sombre')
+    expect(message).toContain('96,9')
+    expect(message).toContain('13,2')
   })
 })
 
