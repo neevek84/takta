@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import { prisma } from '@/db/client'
 import { updateSettings, DEFAULT_SLOTS } from './settings'
 import { createClient } from './clients'
@@ -6,6 +6,30 @@ import { createMission, createLine } from './missions'
 import { applyCellState } from './cells'
 import { getMonthEntries } from './time-entries'
 import { fillMonth, clearMonth } from './month-fill'
+
+// Interrupteur de la file : `seuil` est le nombre de mises en file qui
+// réussissent avant que la suivante échoue. Il rend observable le sens « pas
+// d'écriture sans mise en file » — et, sur un mois entier, il rend observable
+// *l'unité* qui est atomique : la journée pour `fillMonth`, le mois pour
+// `clearMonth`.
+const file = vi.hoisted(() => ({ seuil: null as number | null, appels: 0 }))
+
+function armerEchecApres(reussites: number): void {
+  file.appels = 0
+  file.seuil = reussites
+}
+
+vi.mock('@/services/sync/outbox', async (importOriginal) => {
+  const reel = await importOriginal<typeof import('./sync/outbox')>()
+  return {
+    ...reel,
+    enqueueTimeEntry: async (...args: Parameters<typeof reel.enqueueTimeEntry>) => {
+      file.appels++
+      if (file.seuil !== null && file.appels > file.seuil) throw new Error('file indisponible')
+      await reel.enqueueTimeEntry(...args)
+    },
+  }
+})
 
 let userId = ''
 let missionId = ''
@@ -25,6 +49,11 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
+  file.seuil = null
+  file.appels = 0
+  // La file n'a aucune clé étrangère sur `entityId` : elle survit à la saisie
+  // qu'elle vise, et doit donc être purgée avant elle.
+  await prisma.syncOutbox.deleteMany({})
   await prisma.timeEntry.deleteMany({})
   await prisma.cra.deleteMany({})
   await updateSettings({
@@ -38,6 +67,7 @@ beforeEach(async () => {
 })
 
 afterAll(async () => {
+  await prisma.syncOutbox.deleteMany({})
   await prisma.timeEntry.deleteMany({})
   await prisma.cra.deleteMany({})
   await prisma.user.deleteMany({ where: { email: 'fill@test.local' } })
@@ -254,5 +284,106 @@ describe('clearMonth', () => {
       supprimees: 0,
       verrouille: false,
     })
+  })
+})
+
+// Tâche 13 — remplir ou vider un mois écrit en boucle : sans mise en file,
+// l'agenda ignorerait tout un mois d'un coup.
+describe('remplissage, vidage et file de synchronisation', () => {
+  async function fileDe(operation: 'UPSERT' | 'DELETE') {
+    const lignes = await prisma.syncOutbox.findMany({
+      where: { userId, operation },
+      select: { entityType: true, entityId: true, provider: true },
+    })
+    return lignes
+  }
+
+  it('met en file chaque journée que le remplissage pose', async () => {
+    const r = await fillMonth({ userId, lineId: ligneA, month: '2026-03', today: '2026-03-15' })
+    expect(r.poses).toBe(22)
+
+    const posees = await prisma.timeEntry.findMany({ where: { userId, lineId: ligneA } })
+    const lignes = await fileDe('UPSERT')
+    expect(lignes).toHaveLength(22)
+    expect(lignes.every((l) => l.entityType === 'TimeEntry' && l.provider === 'GOOGLE')).toBe(true)
+    expect(new Set(lignes.map((l) => l.entityId))).toEqual(new Set(posees.map((e) => e.id)))
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(22)
+  })
+
+  it('ne met rien en file quand le remplissage bute sur un mois verrouillé', async () => {
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-03-01T00:00:00.000Z'), status: 'VALIDE' },
+    })
+
+    await fillMonth({ userId, lineId: ligneA, month: '2026-03', today: '2026-03-15' })
+    expect(await prisma.syncOutbox.count()).toBe(0)
+  })
+
+  // L'arbitrage rendu observable : le remplissage n'ouvre pas une transaction
+  // sur trente et un jours, il en ouvre une par journée. Une mise en file en
+  // échec annule donc *sa* journée, et laisse celles déjà posées entières —
+  // saisie **et** ligne en file, jamais l'une sans l'autre. C'est exactement
+  // ce que le compte rendu partiel de `fillMonth` promet déjà.
+  it('une mise en file en échec annule la journée qu elle accompagne, et elle seule', async () => {
+    armerEchecApres(3)
+
+    await expect(
+      fillMonth({ userId, lineId: ligneA, month: '2026-03', today: '2026-03-15' }),
+    ).rejects.toThrow(/file indisponible/)
+
+    const posees = await prisma.timeEntry.findMany({
+      where: { userId, lineId: ligneA },
+      orderBy: { date: 'asc' },
+    })
+    expect(posees.map((e) => e.date.toISOString().slice(0, 10))).toEqual([
+      '2026-03-02',
+      '2026-03-03',
+      '2026-03-04',
+    ])
+
+    const lignes = await fileDe('UPSERT')
+    expect(new Set(lignes.map((l) => l.entityId))).toEqual(new Set(posees.map((e) => e.id)))
+  })
+
+  it('met en file la suppression de chaque saisie que le vidage retire', async () => {
+    await fillMonth({ userId, lineId: ligneA, month: '2026-03', today: '2026-03-15' })
+    const avant = await prisma.timeEntry.findMany({ where: { userId, lineId: ligneA } })
+    await prisma.syncOutbox.deleteMany({})
+
+    const r = await clearMonth({ userId, lineId: ligneA, month: '2026-03' })
+    expect(r).toEqual({ supprimees: 22, verrouille: false })
+
+    const lignes = await fileDe('DELETE')
+    expect(lignes).toHaveLength(22)
+    expect(new Set(lignes.map((l) => l.entityId))).toEqual(new Set(avant.map((e) => e.id)))
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(22)
+  })
+
+  it('ne met rien en file quand le vidage bute sur un mois verrouillé', async () => {
+    await fillMonth({ userId, lineId: ligneA, month: '2026-03', today: '2026-03-15' })
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-03-01T00:00:00.000Z'), status: 'VALIDE' },
+    })
+    await prisma.syncOutbox.deleteMany({})
+
+    await clearMonth({ userId, lineId: ligneA, month: '2026-03' })
+    expect(await prisma.syncOutbox.count()).toBe(0)
+  })
+
+  // L'autre moitié de l'arbitrage : le vidage était déjà un `deleteMany`
+  // unique, donc tout ou rien. Ses mises en file suivent la même transaction —
+  // une seule mise en file en échec annule le vidage entier, plutôt que de
+  // laisser vingt journées effacées dont l'agenda garderait les blocs.
+  it('une mise en file en échec annule le vidage du mois entier', async () => {
+    await fillMonth({ userId, lineId: ligneA, month: '2026-03', today: '2026-03-15' })
+    await prisma.syncOutbox.deleteMany({})
+    armerEchecApres(3)
+
+    await expect(clearMonth({ userId, lineId: ligneA, month: '2026-03' })).rejects.toThrow(
+      /file indisponible/,
+    )
+
+    expect(await prisma.timeEntry.count({ where: { userId, lineId: ligneA } })).toBe(22)
+    expect(await prisma.syncOutbox.count()).toBe(0)
   })
 })

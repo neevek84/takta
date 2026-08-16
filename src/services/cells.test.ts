@@ -1,10 +1,30 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import { prisma } from '@/db/client'
 import { updateSettings, DEFAULT_SLOTS } from './settings'
 import { createClient } from './clients'
 import { createMission, createLine } from './missions'
 import { getMonthEntries } from './time-entries'
 import { applyCellState, isMonthLocked } from './cells'
+
+// Un interrupteur pour rendre la file indisponible à la demande. C'est le seul
+// moyen d'observer le sens « pas d'écriture sans mise en file » : les tests de
+// refus ci-dessous prouvent l'autre sens (« pas de mise en file sans
+// écriture »), et celui-là survit intact à une mise en file simplement
+// déplacée *après* la transaction. Sans cet interrupteur, découpler les deux
+// laisserait la suite entièrement verte — exactement l'angle mort relevé sur
+// la tâche 6.
+const file = vi.hoisted(() => ({ indisponible: false }))
+
+vi.mock('@/services/sync/outbox', async (importOriginal) => {
+  const reel = await importOriginal<typeof import('./sync/outbox')>()
+  return {
+    ...reel,
+    enqueueTimeEntry: async (...args: Parameters<typeof reel.enqueueTimeEntry>) => {
+      if (file.indisponible) throw new Error('file indisponible')
+      await reel.enqueueTimeEntry(...args)
+    },
+  }
+})
 
 let userId = ''
 let autreId = ''
@@ -40,6 +60,10 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
+  file.indisponible = false
+  // La file n'a aucune clé étrangère sur `entityId` : elle survit à la saisie
+  // qu'elle vise, et doit donc être purgée avant elle.
+  await prisma.syncOutbox.deleteMany({})
   await prisma.timeEntry.deleteMany({})
   await prisma.cra.deleteMany({})
   await updateSettings({
@@ -53,6 +77,7 @@ beforeEach(async () => {
 })
 
 afterAll(async () => {
+  await prisma.syncOutbox.deleteMany({})
   await prisma.timeEntry.deleteMany({})
   await prisma.cra.deleteMany({})
   await prisma.user.deleteMany({ where: { email: { in: ['cells@test.local', 'cells-autre@test.local'] } } })
@@ -300,6 +325,189 @@ describe('applyCellState', () => {
     expect(await saisiesDu(ligneJour, '2026-03-21')).toEqual([
       { minutes: 480, slotId: '', kind: 'REALISE', minutesParJour: 480, userId },
     ])
+  })
+})
+
+// Tâche 13 — `applyCellState` est le chemin d'écriture de la vue calendrier :
+// celle qui s'affiche par défaut, et la seule disponible sous la largeur `md`.
+// Une saisie qui n'entre pas en file ne partira jamais vers l'agenda, et rien
+// ne le dira.
+describe('applyCellState et la file de synchronisation', () => {
+  async function file_(pourUserId: string) {
+    const lignes = await prisma.syncOutbox.findMany({
+      where: { userId: pourUserId },
+      orderBy: [{ operation: 'asc' }, { entityId: 'asc' }],
+    })
+    return lignes.map((l) => ({
+      entityType: l.entityType,
+      entityId: l.entityId,
+      provider: l.provider,
+      operation: l.operation,
+      state: l.state,
+    }))
+  }
+
+  function cible(entityId: string, operation: 'UPSERT' | 'DELETE') {
+    return { entityType: 'TimeEntry', entityId, provider: 'GOOGLE', operation, state: 'PENDING' }
+  }
+
+  it('met en file la saisie qu elle écrit', async () => {
+    const r = await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-02', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    expect(r.ok).toBe(true)
+
+    const ecrite = await prisma.timeEntry.findFirstOrThrow({ where: { userId, lineId: ligneJour } })
+    expect(await file_(userId)).toEqual([cible(ecrite.id, 'UPSERT')])
+  })
+
+  // Le remplacement en bloc détruit puis récrit : la saisie emportée porte un
+  // autre identifiant que celle qui la remplace, et son bloc d'agenda ne
+  // disparaîtra que si sa suppression entre elle aussi en file.
+  it('met en file la suppression que le remplacement emporte', async () => {
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-02', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    const avant = await prisma.timeEntry.findFirstOrThrow({ where: { userId, lineId: ligneJour } })
+    await prisma.syncOutbox.deleteMany({})
+
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-02', kind: 'REALISE',
+      state: { kind: 'DEMI', slotId: 'matin' },
+    })
+    const apres = await prisma.timeEntry.findFirstOrThrow({ where: { userId, lineId: ligneJour } })
+    expect(apres.id).not.toBe(avant.id)
+
+    const lignes = await file_(userId)
+    expect(lignes).toHaveLength(2)
+    expect(lignes).toContainEqual(cible(avant.id, 'DELETE'))
+    expect(lignes).toContainEqual(cible(apres.id, 'UPSERT'))
+  })
+
+  // Une journée éclatée en créneaux (saisie au tableau) emporte plusieurs
+  // saisies d'un coup : chacune tient sa propre place dans l'agenda, donc
+  // chacune sa propre ligne en file.
+  it('met en file une suppression par saisie emportée quand la case est vidée', async () => {
+    const matin = await prisma.timeEntry.create({
+      data: {
+        lineId: ligneJour, userId, date: new Date('2026-03-25T00:00:00.000Z'),
+        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'matin',
+      },
+    })
+    const apresMidi = await prisma.timeEntry.create({
+      data: {
+        lineId: ligneJour, userId, date: new Date('2026-03-25T00:00:00.000Z'),
+        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'apres-midi',
+      },
+    })
+
+    const r = await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-25', kind: 'REALISE', state: { kind: 'VIDE' },
+    })
+    expect(r.ok).toBe(true)
+
+    const lignes = await file_(userId)
+    expect(lignes).toHaveLength(2)
+    expect(lignes).toContainEqual(cible(matin.id, 'DELETE'))
+    expect(lignes).toContainEqual(cible(apresMidi.id, 'DELETE'))
+  })
+
+  // Pas de mise en file sans écriture : un mois validé ne pousse rien.
+  it('ne met rien en file quand le mois est verrouillé', async () => {
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-03-01T00:00:00.000Z'), status: 'VALIDE' },
+    })
+
+    const r = await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-05', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    expect(r).toEqual({ ok: false, reason: 'VERROUILLE' })
+    expect(await file_(userId)).toEqual([])
+  })
+
+  it('ne met rien en file quand la capacité refuse', async () => {
+    await updateSettings({ capacityMode: 'BLOCAGE', capacityCentiemes: 100 })
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-09', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    await prisma.syncOutbox.deleteMany({})
+
+    const r = await applyCellState({
+      userId, lineId: ligneNuit, date: '2026-03-09', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    expect(r.ok).toBe(false)
+    expect(await file_(userId)).toEqual([])
+  })
+
+  it('ne met rien en file pour une prestation non affectée ni pour une saisie invalide', async () => {
+    await applyCellState({
+      userId, lineId: ligneAutre, date: '2026-03-18', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-17', kind: 'REALISE',
+      state: { kind: 'LIBRE', minutes: 0, slotId: '', eclatee: false },
+    })
+
+    expect(await prisma.syncOutbox.count()).toBe(0)
+  })
+
+  // Le scope de la file est celui de l'écriture, sinon rien : la saisie d'un
+  // autre utilisateur sur la même prestation et le même jour n'est ni
+  // supprimée (test plus haut) ni, donc, mise en file — la pousser reviendrait
+  // à effacer un bloc de l'agenda de quelqu'un d'autre.
+  it('ne met jamais en file la saisie d un autre utilisateur sur la même case', async () => {
+    const voisine = await prisma.timeEntry.create({
+      data: {
+        lineId: ligneJour, userId: autreId, date: new Date('2026-03-28T00:00:00.000Z'),
+        minutes: 480, kind: 'REALISE', minutesParJour: 480, slotId: '',
+      },
+    })
+
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-28', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+
+    const lignes = await prisma.syncOutbox.findMany({})
+    expect(lignes.map((l) => l.entityId)).not.toContain(voisine.id)
+    expect(lignes.every((l) => l.userId === userId)).toBe(true)
+  })
+
+  // Pas d'écriture sans mise en file — le sens que seule la file indisponible
+  // révèle, et le seul qui tombe quand la mise en file sort de la transaction.
+  it('une mise en file en échec annule l écriture de la case', async () => {
+    file.indisponible = true
+
+    await expect(
+      applyCellState({
+        userId, lineId: ligneJour, date: '2026-03-26', kind: 'REALISE', state: { kind: 'JOURNEE' },
+      }),
+    ).rejects.toThrow(/file indisponible/)
+
+    expect(await saisiesDu(ligneJour, '2026-03-26')).toEqual([])
+    expect(await prisma.syncOutbox.count()).toBe(0)
+  })
+
+  it('une mise en file en échec annule la suppression que le remplacement avait commencée', async () => {
+    const avant = await prisma.timeEntry.create({
+      data: {
+        lineId: ligneJour, userId, date: new Date('2026-03-27T00:00:00.000Z'),
+        minutes: 480, kind: 'REALISE', minutesParJour: 480, slotId: '',
+      },
+    })
+    file.indisponible = true
+
+    await expect(
+      applyCellState({
+        userId, lineId: ligneJour, date: '2026-03-27', kind: 'REALISE',
+        state: { kind: 'DEMI', slotId: 'matin' },
+      }),
+    ).rejects.toThrow(/file indisponible/)
+
+    const restantes = await prisma.timeEntry.findMany({
+      where: { lineId: ligneJour, date: new Date('2026-03-27T00:00:00.000Z') },
+    })
+    expect(restantes.map((e) => e.id)).toEqual([avant.id])
+    expect(await prisma.syncOutbox.count()).toBe(0)
   })
 })
 

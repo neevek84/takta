@@ -6,6 +6,7 @@ import { isSlotAllowed } from '@/core/saisie/cycle'
 import type { CellState } from '@/core/saisie/cycle'
 import type { CraStatus, TimeEntryKind } from '@/core/types'
 import { getSettings } from './settings'
+import { enqueueTimeEntry } from './sync/outbox'
 import { resolveLineMinutesParJour, type CapacityWarning } from './time-entries'
 
 export type CellResult =
@@ -130,12 +131,32 @@ export async function applyCellState(args: {
     }
   }
 
-  // Suppression et écriture dans la même transaction : deux requêtes séparées
-  // laisseraient la case vide si la seconde échouait.
+  // Suppression, écriture **et** mises en file dans la même transaction : deux
+  // requêtes séparées laisseraient la case vide si la seconde échouait, et une
+  // mise en file hors transaction ferait bien pire — une saisie enregistrée
+  // sans sa ligne en file ne partirait jamais vers l'agenda, et personne ne le
+  // saurait. C'est le chemin d'écriture du calendrier, la seule surface de
+  // saisie sous la largeur `md` : le trou y serait quasi total.
   await prisma.$transaction(async (tx) => {
+    // Les identifiants sont relevés avant la suppression : le remplacement en
+    // bloc récrit sous de nouveaux identifiants, et le bloc d'agenda de la
+    // saisie emportée ne disparaîtra que si sa suppression entre en file.
+    const emportees = await tx.timeEntry.findMany({
+      where: { userId: args.userId, lineId: args.lineId, date },
+      select: { id: true },
+    })
+
     await tx.timeEntry.deleteMany({ where: { userId: args.userId, lineId: args.lineId, date } })
+    for (const emportee of emportees) {
+      await enqueueTimeEntry(tx, {
+        userId: args.userId,
+        entryId: emportee.id,
+        operation: 'DELETE',
+      })
+    }
+
     for (const cible of cibles) {
-      await tx.timeEntry.create({
+      const entry = await tx.timeEntry.create({
         data: {
           lineId: args.lineId,
           userId: args.userId,
@@ -146,6 +167,8 @@ export async function applyCellState(args: {
           minutesParJour,
         },
       })
+
+      await enqueueTimeEntry(tx, { userId: args.userId, entryId: entry.id, operation: 'UPSERT' })
     }
   })
 
