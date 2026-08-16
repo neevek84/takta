@@ -27,7 +27,7 @@ const ligneHeure: LineForGrid = { ...ligneJour, id: 'l2', label: 'Astreinte', di
 function entree(over: Partial<MonthEntry>): MonthEntry {
   return {
     id: 'e', lineId: 'l1', date: '2026-03-10', minutes: 480,
-    kind: 'REALISE', slotId: '', minutesParJour: 480, ...over,
+    kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480, ...over,
   }
 }
 
@@ -166,13 +166,19 @@ describe('MonthCalendar', () => {
     it('n applique rien sur une case à valeur libre : elle rouvre son formulaire', async () => {
       const onApply = vi.fn(async () => true)
       const onFormulaire = vi.fn()
-      renderCalendar({ onApply, onFormulaire, entries: [entree({ minutes: 180, slotId: '' })] })
+      renderCalendar({
+        onApply,
+        onFormulaire,
+        // Bornes figées de la saisie : le formulaire les reçoit telles quelles,
+        // il ne les reconstruit pas depuis les réglages.
+        entries: [entree({ minutes: 180, slotId: '', startMinute: 540, endMinute: 720 })],
+      })
 
       fireEvent.click(caseDu('2026-03-10'))
 
       await waitFor(() =>
         expect(onFormulaire).toHaveBeenCalledWith('2026-03-10', {
-          kind: 'LIBRE', minutes: 180, slotId: '', eclatee: false,
+          kind: 'LIBRE', minutes: 180, slotId: '', startMinute: 540, endMinute: 720, eclatee: false,
         }),
       )
       expect(onApply).not.toHaveBeenCalled()
@@ -306,8 +312,8 @@ describe('MonthCalendar', () => {
     it('convertit chaque saisie sous le facteur figé à son écriture', () => {
       renderCalendar({
         entries: [
-          entree({ id: 'a', minutes: 240, slotId: 'matin', minutesParJour: 480 }),
-          entree({ id: 'b', minutes: 240, slotId: 'nuit', minutesParJour: 420 }),
+          entree({ id: 'a', minutes: 240, slotId: 'matin', startMinute: 540, endMinute: 1020, minutesParJour: 480 }),
+          entree({ id: 'b', minutes: 240, slotId: 'nuit', startMinute: 540, endMinute: 1020, minutesParJour: 420 }),
         ],
       })
       expect(valeurDu('2026-03-10').textContent).toBe('1,07')
@@ -428,7 +434,7 @@ describe('MonthCalendar', () => {
   }
 
   const surLigneB: MonthEntry[] = [
-    { id: 'b1', lineId: 'lB', date: '2026-03-10', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
+    { id: 'b1', lineId: 'lB', date: '2026-03-10', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
   ]
 
   describe('Cette prestation ou tout le mois', () => {
@@ -465,6 +471,41 @@ describe('MonthCalendar', () => {
     it('n affiche pas d autre prestation les jours où elle n a rien saisi', () => {
       renderCalendar({ entries: surLigneB, autresLignes: [ligneB], toutLeMois: true })
       expect(screen.queryByTestId('autre-lB-2026-03-11')).toBeNull()
+    })
+
+    /**
+     * Le libellé d'une autre prestation se pose **sous** sa case, dans sa
+     * colonne. Tant que la colonne déclarait la même gouttière que la grille,
+     * il se trouvait à égale distance de sa propre case et de la case de la
+     * semaine suivante : il n'attachait à rien, et se lisait comme une barre
+     * posée entre deux semaines — ce que le porteur a photographié.
+     *
+     * La correction se prend du côté de la colonne, jamais de la grille : la
+     * gouttière de la grille est ce qui laisse aux sept colonnes leurs 44
+     * points sur un écran de 375, et l'élargir les ferait tomber à 43,29.
+     */
+    it('attache le libellé à sa case plutôt qu à la semaine suivante', () => {
+      const { container } = renderCalendar({
+        entries: surLigneB,
+        autresLignes: [ligneB],
+        toutLeMois: true,
+      })
+
+      /** Pas d'espacement déclarés par une classe `gap-N` ; 0 si aucune. */
+      function gouttiere(el: Element): number {
+        const trouve = /(?:^|\s)gap-([\d.]+)(?:\s|$)/.exec(el.className)
+        return trouve === null ? 0 : Number(trouve[1]!)
+      }
+
+      const badge = screen.getByTestId('autre-lB-2026-03-10')
+      const colonne = badge.parentElement!
+      const grille = container.querySelector('[data-testid="grille-calendrier"]')!
+
+      // La colonne contient bien la case et son libellé.
+      expect(colonne.contains(caseDu('2026-03-10'))).toBe(true)
+      // Et la grille garde la sienne : c'est le budget des 44 points.
+      expect(gouttiere(grille)).toBeGreaterThan(0)
+      expect(gouttiere(colonne)).toBeLessThan(gouttiere(grille))
     })
 
     it('donne à une prestation la même couleur entre deux chargements', () => {
@@ -923,8 +964,8 @@ describe('MonthCalendar — le dessin d une case', () => {
   it('calcule la hauteur de l aplat à facteur constant', () => {
     renderCalendar({
       entries: [
-        entree({ id: 'a', minutes: 240, slotId: 'matin', minutesParJour: 480 }),
-        entree({ id: 'b', minutes: 120, slotId: 'nuit', minutesParJour: 420 }),
+        entree({ id: 'a', minutes: 240, slotId: 'matin', startMinute: 540, endMinute: 1020, minutesParJour: 480 }),
+        entree({ id: 'b', minutes: 120, slotId: 'nuit', startMinute: 540, endMinute: 1020, minutesParJour: 420 }),
       ],
     })
     // 0,50 + 0,29 = 0,79 — et non 360/480 = 0,75.
@@ -937,7 +978,7 @@ describe('MonthCalendar — le dessin d une case', () => {
   it('rend une hauteur exacte, sans bruit de virgule flottante', () => {
     // 2 h sur une journée de 7 h : 29 centièmes de journée.
     renderCalendar({
-      entries: [entree({ minutes: 120, slotId: 'nuit', minutesParJour: 420 })],
+      entries: [entree({ minutes: 120, slotId: 'nuit', startMinute: 540, endMinute: 1020, minutesParJour: 420 })],
     })
     expect(remplissageDu('2026-03-10').style.height).toBe('29%')
   })

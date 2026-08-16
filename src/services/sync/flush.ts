@@ -75,18 +75,21 @@ async function traiterUpsert(connector: CalendarConnector, row: Row, now: Date):
   // pousser. La ligne DELETE, elle, aura été mise en file par la suppression.
   if (entry === null) return 'OK'
 
-  const settings = await getSettings()
+  // Aucun réglage n'est relu ici, et c'est tout l'enjeu : les heures d'une
+  // saisie sont figées à son écriture, et ce drainage les reportait autrefois
+  // depuis `settings.slots` et la plage journée **courantes**. Un créneau
+  // redéfini en administration déplaçait alors le bloc d'agenda d'une journée
+  // que personne n'avait retouchée — CRA validé compris. La colonne en base
+  // n'y aurait rien changé : le gel se casse en lecture.
   const draft = buildCalendarEvent({
     entryId: entry.id,
     date: toIsoDate(entry.date),
-    minutes: entry.minutes,
     kind: entry.kind as TimeEntryKind,
     clientName: entry.line.mission.client.name,
     missionLabel: entry.line.mission.label,
     lineLabel: entry.line.label,
-    slot: entry.slotId === '' ? null : (settings.slots.find((s) => s.id === entry.slotId) ?? null),
-    journeeDebutMinute: settings.journeeDebutMinute,
-    journeeFinMinute: settings.journeeFinMinute,
+    startMinute: entry.startMinute,
+    endMinute: entry.endMinute,
     timeZone: TIME_ZONE,
   })
 

@@ -17,8 +17,18 @@ export type CellState =
   | {
       kind: 'LIBRE'
       minutes: number
-      /** '' = journée entière */
+      /** '' = journée entière. Trace du créneau nommé, jamais une identité. */
       slotId: string
+      /**
+       * début du bloc, minutes depuis minuit. Le formulaire demande un début
+       * et une fin ; la durée en découle.
+       */
+      startMinute: number
+      /**
+       * fin du bloc, minutes depuis minuit. Une fin antérieure au début n'est
+       * pas une erreur de saisie : le bloc franchit minuit.
+       */
+      endMinute: number
       /** vrai quand la case agrège plusieurs saisies */
       eclatee: boolean
     }

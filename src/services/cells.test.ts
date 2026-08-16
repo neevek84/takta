@@ -73,6 +73,10 @@ beforeEach(async () => {
     workingDays: [1, 2, 3, 4, 5],
     holidays: [],
     slots: DEFAULT_SLOTS,
+    // Remises d'un test à l'autre comme le reste : plusieurs cas ci-dessous
+    // déplacent la journée de travail pour éprouver le gel des heures.
+    journeeDebutMinute: 540,
+    journeeFinMinute: 1080,
   })
 })
 
@@ -131,6 +135,93 @@ describe('applyCellState', () => {
     expect(await saisiesDu(ligneJour, '2026-03-03')).toEqual([
       { minutes: 420, slotId: '', kind: 'REALISE', minutesParJour: 420, userId },
     ])
+  })
+
+  // Les heures se figent à l'écriture, exactement comme le facteur de
+  // conversion — et le gel se casse **en lecture**, jamais en écriture : une
+  // colonne intacte en base ne protège rien si un lecteur la recalcule. Les
+  // deux chemins sont donc vérifiés : ce que la base porte, et ce que le
+  // service en relit.
+  it('fige les bornes de la journée de travail en vigueur à l écriture', async () => {
+    await updateSettings({ journeeDebutMinute: 480, journeeFinMinute: 1020 })
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-05', kind: 'REALISE', state: { kind: 'JOURNEE' },
+    })
+
+    await updateSettings({ journeeDebutMinute: 600, journeeFinMinute: 1140 })
+
+    const ecrite = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: ligneJour, date: new Date('2026-03-05T00:00:00.000Z') },
+    })
+    expect([ecrite.startMinute, ecrite.endMinute]).toEqual([480, 960])
+
+    const [relue] = (await getMonthEntries(userId, '2026-03')).filter(
+      (e) => e.date === '2026-03-05',
+    )
+    expect([relue!.startMinute, relue!.endMinute]).toEqual([480, 960])
+  })
+
+  it('fige les bornes du créneau en vigueur à l écriture', async () => {
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-06', kind: 'REALISE',
+      state: { kind: 'DEMI', slotId: 'matin' },
+    })
+
+    // « Matin » est redéfini en administration : la saisie ne bouge pas.
+    await updateSettings({
+      slots: [
+        { id: 'matin', label: 'Matin', startMinute: 300, endMinute: 480, centiemes: 50 },
+        { id: 'apres-midi', label: 'Après-midi', startMinute: 840, endMinute: 1080, centiemes: 50 },
+      ],
+    })
+
+    const ecrite = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: ligneJour, date: new Date('2026-03-06T00:00:00.000Z') },
+    })
+    expect([ecrite.startMinute, ecrite.endMinute]).toEqual([540, 780])
+
+    const [relue] = (await getMonthEntries(userId, '2026-03')).filter(
+      (e) => e.date === '2026-03-06',
+    )
+    expect([relue!.startMinute, relue!.endMinute]).toEqual([540, 780])
+  })
+
+  // Le pendant du gel : une case **retouchée** est une écriture, et prend donc
+  // les réglages du moment. Sans quoi le gel deviendrait un enfermement.
+  it('réécrit les bornes quand la case est retouchée', async () => {
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-07', kind: 'REALISE',
+      state: { kind: 'DEMI', slotId: 'matin' },
+    })
+    await updateSettings({
+      slots: [
+        { id: 'matin', label: 'Matin', startMinute: 300, endMinute: 480, centiemes: 50 },
+        { id: 'apres-midi', label: 'Après-midi', startMinute: 840, endMinute: 1080, centiemes: 50 },
+      ],
+    })
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-07', kind: 'REALISE',
+      state: { kind: 'DEMI', slotId: 'matin' },
+    })
+
+    const ecrite = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: ligneJour, date: new Date('2026-03-07T00:00:00.000Z') },
+    })
+    expect([ecrite.startMinute, ecrite.endMinute]).toEqual([300, 480])
+  })
+
+  it('écrit les bornes qu une saisie libre porte, franchissement de minuit compris', async () => {
+    await applyCellState({
+      userId, lineId: ligneJour, date: '2026-03-08', kind: 'REALISE',
+      state: {
+        kind: 'LIBRE', minutes: 180, slotId: '', startMinute: 1320, endMinute: 60, eclatee: false,
+      },
+    })
+
+    const ecrite = await prisma.timeEntry.findFirstOrThrow({
+      where: { userId, lineId: ligneJour, date: new Date('2026-03-08T00:00:00.000Z') },
+    })
+    expect([ecrite.startMinute, ecrite.endMinute, ecrite.minutes]).toEqual([1320, 60, 180])
   })
 
   it('écrit le prévisionnel quand on le lui demande', async () => {
@@ -300,7 +391,7 @@ describe('applyCellState', () => {
   it('signale un créneau non autorisé sans refuser la saisie', async () => {
     const r = await applyCellState({
       userId, lineId: ligneNuit, date: '2026-03-12', kind: 'REALISE',
-      state: { kind: 'LIBRE', minutes: 180, slotId: 'nuit', eclatee: false },
+      state: { kind: 'LIBRE', minutes: 180, slotId: 'nuit', startMinute: 1320, endMinute: 60, eclatee: false },
     })
 
     expect(r.ok).toBe(true)
@@ -313,7 +404,7 @@ describe('applyCellState', () => {
   it('ne signale rien quand la prestation ne restreint aucun créneau', async () => {
     const r = await applyCellState({
       userId, lineId: ligneJour, date: '2026-03-13', kind: 'REALISE',
-      state: { kind: 'LIBRE', minutes: 180, slotId: 'nuit', eclatee: false },
+      state: { kind: 'LIBRE', minutes: 180, slotId: 'nuit', startMinute: 1320, endMinute: 60, eclatee: false },
     })
     expect(r.ok && r.signalement).toBeUndefined()
   })
@@ -330,7 +421,7 @@ describe('applyCellState', () => {
     for (const minutes of [0, -30, 1441, 12.5]) {
       const r = await applyCellState({
         userId, lineId: ligneJour, date: '2026-03-17', kind: 'REALISE',
-        state: { kind: 'LIBRE', minutes, slotId: '', eclatee: false },
+        state: { kind: 'LIBRE', minutes, slotId: '', startMinute: 540, endMinute: 720, eclatee: false },
       })
       expect(r).toEqual({ ok: false, reason: 'SAISIE_INVALIDE' })
     }
@@ -452,13 +543,13 @@ describe('applyCellState et la file de synchronisation', () => {
     const matin = await prisma.timeEntry.create({
       data: {
         lineId: ligneJour, userId, date: new Date('2026-03-25T00:00:00.000Z'),
-        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'matin',
+        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'matin', startMinute: 540, endMinute: 780,
       },
     })
     const apresMidi = await prisma.timeEntry.create({
       data: {
         lineId: ligneJour, userId, date: new Date('2026-03-25T00:00:00.000Z'),
-        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'apres-midi',
+        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'apres-midi', startMinute: 840, endMinute: 1080,
       },
     })
 
@@ -506,7 +597,7 @@ describe('applyCellState et la file de synchronisation', () => {
     })
     await applyCellState({
       userId, lineId: ligneJour, date: '2026-03-17', kind: 'REALISE',
-      state: { kind: 'LIBRE', minutes: 0, slotId: '', eclatee: false },
+      state: { kind: 'LIBRE', minutes: 0, slotId: '', startMinute: 540, endMinute: 540, eclatee: false },
     })
 
     expect(await prisma.syncOutbox.count()).toBe(0)
@@ -543,7 +634,7 @@ describe('applyCellState et la file de synchronisation', () => {
     for (let i = 1; i <= 10; i++) {
       const r = await applyCellState({
         userId, lineId: ligneJour, date: '2026-03-30', kind: 'REALISE',
-        state: { kind: 'LIBRE', minutes: 60 * i, slotId: 'matin', eclatee: false },
+        state: { kind: 'LIBRE', minutes: 60 * i, slotId: 'matin', startMinute: 540, endMinute: 540 + 60 * i, eclatee: false },
       })
       expect(r.ok).toBe(true)
 
@@ -568,13 +659,13 @@ describe('applyCellState et la file de synchronisation', () => {
     const matin = await prisma.timeEntry.create({
       data: {
         lineId: ligneJour, userId, date: new Date('2026-03-31T00:00:00.000Z'),
-        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'matin',
+        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'matin', startMinute: 540, endMinute: 780,
       },
     })
     const apresMidi = await prisma.timeEntry.create({
       data: {
         lineId: ligneJour, userId, date: new Date('2026-03-31T00:00:00.000Z'),
-        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'apres-midi',
+        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'apres-midi', startMinute: 840, endMinute: 1080,
       },
     })
 
@@ -603,13 +694,13 @@ describe('applyCellState et la file de synchronisation', () => {
     const matin = await prisma.timeEntry.create({
       data: {
         lineId: ligneJour, userId, date: new Date('2026-04-01T00:00:00.000Z'),
-        minutes: 120, kind: 'PREVISIONNEL', minutesParJour: 480, slotId: 'matin',
+        minutes: 120, kind: 'PREVISIONNEL', minutesParJour: 480, slotId: 'matin', startMinute: 540, endMinute: 780,
       },
     })
     const apresMidi = await prisma.timeEntry.create({
       data: {
         lineId: ligneJour, userId, date: new Date('2026-04-01T00:00:00.000Z'),
-        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'apres-midi',
+        minutes: 240, kind: 'REALISE', minutesParJour: 480, slotId: 'apres-midi', startMinute: 840, endMinute: 1080,
       },
     })
 
@@ -656,7 +747,7 @@ describe('applyCellState et la file de synchronisation', () => {
     const avant = await prisma.timeEntry.create({
       data: {
         lineId: ligneJour, userId, date: new Date('2026-04-02T00:00:00.000Z'),
-        minutes: 120, kind: 'PREVISIONNEL', minutesParJour: 480, slotId: 'matin',
+        minutes: 120, kind: 'PREVISIONNEL', minutesParJour: 480, slotId: 'matin', startMinute: 540, endMinute: 780,
       },
     })
     file.indisponible = true

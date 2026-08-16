@@ -21,14 +21,12 @@ function draft(entryId = 'entry-1') {
   return buildCalendarEvent({
     entryId,
     date: '2026-03-10',
-    minutes: 480,
     kind: 'REALISE',
     clientName: 'Acme',
     missionLabel: 'Refonte',
     lineLabel: 'Développement',
-    slot: null,
-    journeeDebutMinute: 540,
-    journeeFinMinute: 1080,
+    startMinute: 540,
+    endMinute: 1020,
     timeZone: 'Europe/Paris',
   })
 }

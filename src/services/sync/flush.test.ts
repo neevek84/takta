@@ -162,6 +162,115 @@ describe('poussée', () => {
   })
 })
 
+// Le gel des heures se casse **en lecture**, pas en écriture : une colonne
+// parfaitement intacte en base ne protège rien si le drainage reconstruit les
+// horaires depuis les réglages courants — ce qu'il faisait, en cherchant le
+// créneau dans `settings.slots` et en relisant la plage journée au moment de
+// pousser. Un CRA validé changeait alors d'horaires sans que rien ne bouge en
+// base, et le bloc d'agenda se déplaçait tout seul.
+describe('le gel des heures, chemin par chemin', () => {
+  it('pousse les heures figées après un déplacement de la plage journée', async () => {
+    await saisir('2026-03-12', 480)
+
+    // L'administration déplace la journée de travail. Les journées déjà
+    // saisies ne doivent pas bouger d'une minute.
+    await updateSettings({ journeeDebutMinute: 360, journeeFinMinute: 900 })
+
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const corps = api.dernierAppel().body as {
+      start: { dateTime: string }
+      end: { dateTime: string }
+    }
+    expect([corps.start.dateTime, corps.end.dateTime]).toEqual([
+      '2026-03-12T09:00:00',
+      '2026-03-12T17:00:00',
+    ])
+  })
+
+  it('pousse les heures figées après une redéfinition du créneau', async () => {
+    const r = await saveEntry({
+      userId,
+      lineId: lineA,
+      date: '2026-03-13',
+      minutes: 240,
+      kind: 'REALISE',
+      slotId: 'matin',
+    })
+    expect(r.ok).toBe(true)
+
+    // « Matin » devient 05:00 – 08:00 en administration.
+    await updateSettings({
+      slots: [
+        { id: 'matin', label: 'Matin', startMinute: 300, endMinute: 480, centiemes: 50 },
+        { id: 'apres-midi', label: 'Après-midi', startMinute: 840, endMinute: 1080, centiemes: 50 },
+      ],
+    })
+
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const corps = api.dernierAppel().body as {
+      start: { dateTime: string }
+      end: { dateTime: string }
+    }
+    expect([corps.start.dateTime, corps.end.dateTime]).toEqual([
+      '2026-03-13T09:00:00',
+      '2026-03-13T13:00:00',
+    ])
+  })
+
+  it('pousse les heures figées même quand le créneau a disparu des réglages', async () => {
+    const r = await saveEntry({
+      userId,
+      lineId: lineA,
+      date: '2026-03-14',
+      minutes: 240,
+      kind: 'REALISE',
+      slotId: 'apres-midi',
+    })
+    expect(r.ok).toBe(true)
+
+    await updateSettings({
+      slots: [{ id: 'matin', label: 'Matin', startMinute: 540, endMinute: 780, centiemes: 50 }],
+    })
+
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const corps = api.dernierAppel().body as {
+      start: { dateTime: string }
+      end: { dateTime: string }
+    }
+    // Sans le gel, un créneau introuvable retombait sur la plage journée :
+    // le bloc de l'après-midi remontait au matin.
+    expect([corps.start.dateTime, corps.end.dateTime]).toEqual([
+      '2026-03-14T14:00:00',
+      '2026-03-14T18:00:00',
+    ])
+  })
+
+  it('pousse un bloc de nuit qui franchit minuit sur le lendemain', async () => {
+    await updateSettings({
+      slots: [{ id: 'nuit', label: 'Nuit', startMinute: 1320, endMinute: 360, centiemes: 50 }],
+    })
+    const r = await saveEntry({
+      userId,
+      lineId: lineA,
+      date: '2026-03-15',
+      minutes: 480,
+      kind: 'REALISE',
+      slotId: 'nuit',
+    })
+    expect(r.ok).toBe(true)
+
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const corps = api.dernierAppel().body as {
+      start: { dateTime: string }
+      end: { dateTime: string }
+    }
+    expect([corps.start.dateTime, corps.end.dateTime]).toEqual([
+      '2026-03-15T22:00:00',
+      '2026-03-16T06:00:00',
+    ])
+  })
+})
+
 describe('détection de divergence', () => {
   // Le cœur du dispositif : on lit avant d'écrire, et on n'écrase jamais.
   it('un etag différent crée un conflit et n écrit rien', async () => {

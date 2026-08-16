@@ -1,4 +1,4 @@
-import { slotDurationMinutes, type Slot } from '../time/slots'
+import { minutesBetween } from '../time/slots'
 import type { TimeEntryKind } from '../types'
 
 /** Identifiants de couleur Google : Myrtille pour le réalisé, Banane pour le prévu. */
@@ -24,15 +24,22 @@ export interface BuildEventArgs {
   entryId: string
   /** 'YYYY-MM-DD' */
   date: string
-  minutes: number
   kind: TimeEntryKind
   clientName: string
   missionLabel: string
   lineLabel: string
-  /** créneau porté par la saisie ; `null` pour une saisie à la journée */
-  slot: Slot | null
-  journeeDebutMinute: number
-  journeeFinMinute: number
+  /**
+   * Bornes **figées à l'écriture de la saisie**, en minutes depuis minuit.
+   *
+   * Elles étaient auparavant reconstruites ici, à partir du créneau et de la
+   * plage journée lus dans les réglages **courants** : redéfinir « Matin » en
+   * administration déplaçait alors le bloc d'une journée déjà saisie, CRA
+   * validé compris. Le gel se cassait en lecture, pas en écriture — d'où le
+   * calcul déplacé chez l'écrivain (`entryBounds`), et ce constructeur qui ne
+   * fait plus que reporter ce que la saisie porte.
+   */
+  startMinute: number
+  endMinute: number
   timeZone: string
 }
 
@@ -52,21 +59,12 @@ function localAt(date: string, minutesFromMidnight: number): string {
   return new Date(minuit + minutesFromMidnight * 60_000).toISOString().slice(0, 19)
 }
 
-/**
- * Sans créneau : départ au début de la plage, durée exactement égale au temps
- * saisi, et jamais de débordement au-delà de la fin de plage. Une seule règle,
- * qui couvre journée, demi-journée et heures sans cas particulier.
- */
-function journeeBounds(args: BuildEventArgs): [number, number] {
-  const plage = Math.max(0, args.journeeFinMinute - args.journeeDebutMinute)
-  return [args.journeeDebutMinute, args.journeeDebutMinute + Math.min(args.minutes, plage)]
-}
-
 export function buildCalendarEvent(args: BuildEventArgs): CalendarEventDraft {
-  const [debut, fin] =
-    args.slot === null
-      ? journeeBounds(args)
-      : [args.slot.startMinute, args.slot.startMinute + slotDurationMinutes(args.slot)]
+  // Une fin antérieure ou égale au début n'est pas une erreur de saisie : le
+  // bloc franchit minuit, et `localAt` le porte sur le lendemain sans cas
+  // particulier.
+  const debut = args.startMinute
+  const fin = debut + minutesBetween(args.startMinute, args.endMinute)
 
   const nature = args.kind === 'REALISE' ? 'réalisé' : 'prévisionnel'
 

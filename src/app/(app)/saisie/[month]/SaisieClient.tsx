@@ -84,6 +84,15 @@ export function SaisieClient(props: {
   capacityMode: CapacityMode
   slots: Slot[]
   /**
+   * bornes de la journée de travail, minutes depuis minuit.
+   *
+   * Elles ne servent qu'à **pré-remplir** le formulaire d'une case vide : les
+   * heures d'une saisie sont figées à son écriture, et rien ici ne les
+   * recalcule pour une saisie existante.
+   */
+  journeeDebutMinute: number
+  journeeFinMinute: number
+  /**
    * jours du mois déjà occupés dans l'agenda externe.
    *
    * Vide par défaut, et vide aussi quand la lecture a échoué : une panne de
@@ -343,12 +352,19 @@ export function SaisieClient(props: {
               etat={formulaire.etat}
               line={ligne}
               slots={props.slots}
-              onSubmit={async (minutes, slotId) => {
+              // La plage journée pré-remplit les deux heures d'une case vide,
+              // et les créneaux nommés celles d'un créneau choisi. Aucune
+              // n'est imposée : ce sont des pré-remplissages, pas des règles.
+              journeeDebutMinute={props.journeeDebutMinute}
+              journeeFinMinute={props.journeeFinMinute}
+              onSubmit={async (minutes, slotId, startMinute, endMinute) => {
                 setFormulaire(null)
                 await handleApply(formulaire.date, {
                   kind: 'LIBRE',
                   minutes,
                   slotId,
+                  startMinute,
+                  endMinute,
                   eclatee: false,
                 })
               }}
@@ -398,6 +414,7 @@ function messageDeRefus(
     | { ok: false; reason: 'CAPACITE'; totalCentiemes: number; capacityCentiemes: number }
     | { ok: false; reason: 'VERROUILLE' }
     | { ok: false; reason: 'NON_AFFECTE' }
+    | { ok: false; reason: 'CHEVAUCHEMENT'; startMinute: number }
     | { ok: false; reason: 'SAISIE_INVALIDE' },
   date: string,
   quoi: string,
@@ -409,5 +426,17 @@ function messageDeRefus(
     return `Le CRA de ce mois est validé. Rouvrez-le pour modifier la saisie.`
   }
   if (r.reason === 'NON_AFFECTE') return `Vous n'êtes pas affecté à ${quoi}.`
+  // Depuis le lot 1f, une saisie est identifiée par son heure de début : deux
+  // blocs partis à la même minute se superposeraient dans l'agenda. On dit
+  // laquelle, plutôt que « saisie invalide ».
+  if (r.reason === 'CHEVAUCHEMENT') {
+    return `Une autre saisie de ${quoi} commence déjà à ${heure(r.startMinute)} le ${date}. Modifiez-la, ou décalez celle-ci.`
+  }
   return `Saisie invalide.`
+}
+
+/** Minutes depuis minuit → « 9 h 00 », comme un humain les lit. */
+function heure(minutes: number): string {
+  const borne = ((minutes % 1440) + 1440) % 1440
+  return `${Math.floor(borne / 60)} h ${String(borne % 60).padStart(2, '0')}`
 }

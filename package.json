@@ -17,6 +17,7 @@
     "db:migrate": "prisma migrate dev",
     "setup:local": "node scripts/set-db-provider.mjs sqlite && prisma db push && prisma generate",
     "backfill:rates": "node scripts/backfill-minutes-par-jour.mjs",
+    "backfill:heures": "node scripts/backfill-heures-saisies.mjs",
     "fonts:sync": "node scripts/sync-fonts.mjs"
   },
   "keywords": [],

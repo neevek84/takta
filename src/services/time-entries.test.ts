@@ -343,6 +343,43 @@ describe('saisie par créneau', () => {
     // Un événement Google par ligne de temps, jamais de fusion.
     expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(2)
   })
+
+  // Depuis le lot 1f, ce qui identifie une saisie est son **heure de début**.
+  // Deux blocs partis à la même minute le même jour sur la même prestation
+  // sont un doublon : ils se recouvriraient dans l'agenda, et un seul temps
+  // passé partirait chez Dolibarr pour les deux. Le cas est atteignable au
+  // tableau — la plage journée commence par défaut à 9 h, comme « Matin » —,
+  // il se refuse donc en clair plutôt que de remonter en erreur de base.
+  it('refuse un créneau qui commencerait à la même minute qu une saisie du jour', async () => {
+    await updateSettings({ capacityMode: 'DESACTIVE', journeeDebutMinute: 540, journeeFinMinute: 1080 })
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 480, kind: 'REALISE' })
+    await prisma.syncOutbox.deleteMany({})
+
+    const r = await saveEntry({
+      userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'matin',
+    })
+    expect(r).toEqual({ ok: false, reason: 'CHEVAUCHEMENT', startMinute: 540 })
+
+    // Rien n'a bougé : ni la saisie déjà là, ni la file.
+    const restantes = await prisma.timeEntry.findMany({
+      where: { userId, lineId: lineA, date: new Date('2026-03-12T00:00:00.000Z') },
+    })
+    expect(restantes.map((e) => [e.slotId, e.minutes])).toEqual([['', 480]])
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+  })
+
+  it('laisse corriger la saisie qui occupe déjà cette minute', async () => {
+    await updateSettings({ capacityMode: 'DESACTIVE', journeeDebutMinute: 540, journeeFinMinute: 1080 })
+    await saveEntry({
+      userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'matin',
+    })
+
+    // Même créneau, donc même saisie : c'est une correction, pas un doublon.
+    const r = await saveEntry({
+      userId, lineId: lineA, date: '2026-03-12', minutes: 180, kind: 'REALISE', slotId: 'matin',
+    })
+    expect(r.ok).toBe(true)
+  })
 })
 
 // C3 — l'engagement est un cumul sur toute la durée de la ligne, jamais sur le

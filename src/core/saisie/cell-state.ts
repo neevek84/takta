@@ -1,11 +1,16 @@
 import { centiemesToMinutes } from '../time/units'
+import { entryBounds } from '../time/slots'
 import type { Slot } from '../time/slots'
 import type { CellState } from './cycle'
 
 export interface CellEntry {
   minutes: number
-  /** '' = journée entière */
+  /** '' = journée entière ; trace du créneau nommé, jamais une identité */
   slotId: string
+  /** début du bloc, minutes depuis minuit — figé à l'écriture de la saisie */
+  startMinute: number
+  /** fin du bloc, minutes depuis minuit — figée à l'écriture de la saisie */
+  endMinute: number
 }
 
 export interface DatedCellEntry extends CellEntry {
@@ -14,10 +19,26 @@ export interface DatedCellEntry extends CellEntry {
   lineId: string
 }
 
-export interface CellContext {
+/**
+ * Ce qu'il faut pour **lire** une case : de quoi reconnaître une journée
+ * pleine et la valeur nominale d'un créneau.
+ *
+ * La plage journée n'y figure pas, et c'est délibéré : les heures d'une saisie
+ * sont figées à son écriture, et une lecture qui aurait de quoi les recalculer
+ * finirait par le faire — c'est exactement ainsi que le gel se casse.
+ */
+export interface CellReadContext {
   /** facteur de conversion de la prestation, en minutes */
   minutesParJour: number
   slots: readonly Slot[]
+}
+
+/** Ce qu'il faut en plus pour **écrire** : les bornes de la journée de travail. */
+export interface CellContext extends CellReadContext {
+  /** début de la plage journée, minutes depuis minuit */
+  journeeDebutMinute: number
+  /** fin de la plage journée, minutes depuis minuit */
+  journeeFinMinute: number
 }
 
 /**
@@ -28,7 +49,7 @@ export interface CellContext {
  * éclatée dont le total ferait pourtant illusion. C'est ce classement, et lui
  * seul, qui empêche le clic suivant d'écraser une saisie fine.
  */
-export function readCellState(entries: readonly CellEntry[], ctx: CellContext): CellState {
+export function readCellState(entries: readonly CellEntry[], ctx: CellReadContext): CellState {
   const utiles = entries.filter((e) => e.minutes > 0)
   if (utiles.length === 0) return { kind: 'VIDE' }
 
@@ -41,29 +62,78 @@ export function readCellState(entries: readonly CellEntry[], ctx: CellContext): 
       return { kind: 'DEMI', slotId: slot.id }
     }
 
-    return { kind: 'LIBRE', minutes: seule.minutes, slotId: seule.slotId, eclatee: false }
+    // Les bornes viennent de la saisie, **jamais** des réglages courants :
+    // c'est exactement là que le gel se casserait en lecture, une colonne
+    // intacte en base ne protégeant rien si un lecteur la recalcule.
+    return {
+      kind: 'LIBRE',
+      minutes: seule.minutes,
+      slotId: seule.slotId,
+      startMinute: seule.startMinute,
+      endMinute: seule.endMinute,
+      eclatee: false,
+    }
   }
 
   const minutes = utiles.reduce((somme, e) => somme + e.minutes, 0)
-  return { kind: 'LIBRE', minutes, slotId: '', eclatee: true }
+  // L'enveloppe de la journée éclatée : du premier début à la fin du bloc qui
+  // commence le plus tard. Elle sert de pré-remplissage au formulaire, qui
+  // remplacera l'ensemble par une seule saisie — d'où l'avertissement qu'il
+  // affiche. Triée par début : la base ne promet aucun ordre.
+  const parDebut = [...utiles].sort((a, b) => a.startMinute - b.startMinute)
+  const premier = parDebut[0]!
+  const dernier = parDebut[parDebut.length - 1]!
+  return {
+    kind: 'LIBRE',
+    minutes,
+    slotId: '',
+    startMinute: premier.startMinute,
+    endMinute: dernier.endMinute,
+    eclatee: true,
+  }
 }
 
-/** Les saisies exactes que la case doit porter après application de `state`. */
+/**
+ * Les saisies exactes que la case doit porter après application de `state`.
+ *
+ * Chacune part avec ses **deux bornes**, calculées ici une fois pour toutes :
+ * c'est le geste qui les fige. Les créneaux nommés n'y servent qu'à
+ * pré-remplir — une fois écrites, les heures ne dépendent plus d'eux.
+ */
 export function cellStateToWrite(state: CellState, ctx: CellContext): CellEntry[] {
+  const bornes = (minutes: number, slot: Slot | null) =>
+    entryBounds({
+      minutes,
+      slot,
+      journeeDebutMinute: ctx.journeeDebutMinute,
+      journeeFinMinute: ctx.journeeFinMinute,
+    })
+
   switch (state.kind) {
     case 'VIDE':
       return []
     case 'JOURNEE':
-      return [{ minutes: ctx.minutesParJour, slotId: '' }]
+      return [
+        { minutes: ctx.minutesParJour, slotId: '', ...bornes(ctx.minutesParJour, null) },
+      ]
     case 'DEMI': {
       const slot = ctx.slots.find((s) => s.id === state.slotId)
       if (slot === undefined) {
         throw new Error(`Créneau inconnu : « ${state.slotId} ».`)
       }
-      return [{ minutes: centiemesToMinutes(slot.centiemes, ctx.minutesParJour), slotId: slot.id }]
+      const minutes = centiemesToMinutes(slot.centiemes, ctx.minutesParJour)
+      return [{ minutes, slotId: slot.id, ...bornes(minutes, slot) }]
     }
     case 'LIBRE':
-      return [{ minutes: state.minutes, slotId: state.slotId }]
+      // Le formulaire a dit le début et la fin ; on les écrit tels quels.
+      return [
+        {
+          minutes: state.minutes,
+          slotId: state.slotId,
+          startMinute: state.startMinute,
+          endMinute: state.endMinute,
+        },
+      ]
   }
 }
 
@@ -71,14 +141,20 @@ export function cellStateToWrite(state: CellState, ctx: CellContext): CellEntry[
 export function buildCellStates(
   entries: readonly DatedCellEntry[],
   lineId: string,
-  ctx: CellContext,
+  ctx: CellReadContext,
 ): Map<string, CellState> {
   const parDate = new Map<string, CellEntry[]>()
   for (const e of entries) {
     if (e.lineId !== lineId) continue
+    const entree: CellEntry = {
+      minutes: e.minutes,
+      slotId: e.slotId,
+      startMinute: e.startMinute,
+      endMinute: e.endMinute,
+    }
     const bucket = parDate.get(e.date)
-    if (bucket === undefined) parDate.set(e.date, [{ minutes: e.minutes, slotId: e.slotId }])
-    else bucket.push({ minutes: e.minutes, slotId: e.slotId })
+    if (bucket === undefined) parDate.set(e.date, [entree])
+    else bucket.push(entree)
   }
 
   const etats = new Map<string, CellState>()

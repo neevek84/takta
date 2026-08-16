@@ -5,22 +5,61 @@ import { isSlotAllowed } from '@/core/saisie/cycle'
 import type { CellState } from '@/core/saisie/cycle'
 import { cellStateToWrite } from '@/core/saisie/cell-state'
 import { libelleCreneauAvecMoment } from '@/core/saisie/slot-labels'
-import { parseQuantity } from '@/core/time/units'
+import { entryBounds, minutesBetween } from '@/core/time/slots'
 import type { Slot } from '@/core/time/slots'
+import { formatQuantity } from '@/core/time/units'
 import type { LineForGrid } from '@/services/missions'
 import { Field } from '@/components/ui/Field'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 
-/** Durée initiale, en heures, telle que le champ l'affiche. */
-function dureeInitiale(etat: CellState, minutesParJour: number, slots: Slot[]): string {
-  if (etat.kind === 'VIDE') return ''
-  const minutes = cellStateToWrite(etat, { minutesParJour, slots }).reduce(
-    (somme, e) => somme + e.minutes,
-    0,
-  )
-  if (minutes === 0) return ''
-  return String(Math.round((minutes / 60) * 100) / 100).replace('.', ',')
+/** Minutes depuis minuit → 'HH:MM', la valeur d'un `<input type="time">`. */
+function minutesToTimeInput(minutes: number): string {
+  const borne = ((minutes % 1440) + 1440) % 1440
+  const h = Math.floor(borne / 60)
+  const m = borne % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+/** 'HH:MM' → minutes depuis minuit ; `null` sur une saisie inexploitable. */
+function timeInputToMinutes(value: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim())
+  if (match === null) return null
+  const h = Number(match[1])
+  const m = Number(match[2])
+  if (h > 23 || m > 59) return null
+  return h * 60 + m
+}
+
+/**
+ * Les deux bornes que le formulaire affiche à l'ouverture.
+ *
+ * Elles viennent de ce que la case porte déjà — `cellStateToWrite` calcule
+ * exactement ce qui partirait en base —, et de la plage journée pour une case
+ * vide. Jamais d'heure inventée : le défaut que ce lot corrige était
+ * précisément que l'application décidait seule d'un début que rien n'affichait.
+ */
+function bornesInitiales(
+  etat: CellState,
+  line: LineForGrid,
+  slots: Slot[],
+  journeeDebutMinute: number,
+  journeeFinMinute: number,
+): { startMinute: number; endMinute: number } {
+  if (etat.kind === 'VIDE') {
+    return { startMinute: journeeDebutMinute, endMinute: journeeFinMinute % 1440 }
+  }
+
+  const cible = cellStateToWrite(etat, {
+    minutesParJour: line.minutesParJour,
+    slots,
+    journeeDebutMinute,
+    journeeFinMinute,
+  })[0]
+
+  return cible === undefined
+    ? { startMinute: journeeDebutMinute, endMinute: journeeFinMinute % 1440 }
+    : { startMinute: cible.startMinute, endMinute: cible.endMinute }
 }
 
 function creneauInitial(etat: CellState): string {
@@ -37,30 +76,45 @@ function focalisables(panneau: HTMLElement | null): HTMLElement[] {
 }
 
 /**
- * Saisie d'une durée libre et d'un créneau, ouverte par appui long, clic
- * droit, ou — au clavier — Maj+Entrée ou la touche Menu sur une case (voir
+ * Saisie d'un **début** et d'une **fin**, ouverte par appui long, clic droit,
+ * ou — au clavier — Maj+Entrée ou la touche Menu sur une case (voir
  * `MonthCalendar`).
  *
- * Un créneau non autorisé par la prestation reste choisissable : la spec
- * parle de signalement, pas de refus. Le désactiver reviendrait à interdire
- * à l'utilisateur de décrire ce qu'il a réellement fait.
+ * Le formulaire demandait auparavant une durée et un créneau : saisir « 1
+ * heure » sur « Matin » laissait l'application décider seule que le bloc
+ * commençait à 8 h, et rien ne le disait — ni ici, ni dans l'agenda où le bloc
+ * atterrissait. Le bloc a une place dans la journée, et la saisie doit la dire.
+ * **La durée en découle** : elle s'affiche, elle ne se saisit plus.
+ *
+ * Les créneaux nommés restent, en **pré-remplissage** : choisir « Matin »
+ * remplit ses deux bornes, ajustables ensuite. On garde le chemin rapide, et on
+ * voit ce qui partira. Le créneau retenu reste transmis comme trace de
+ * l'origine — il n'identifie plus la saisie, mais il dit d'où elle vient.
+ *
+ * Une fin antérieure au début n'est pas une erreur de saisie : le bloc franchit
+ * minuit, ce que le porteur fait réellement certaines nuits.
+ *
+ * Un créneau non autorisé par la prestation reste choisissable : la spec parle
+ * de signalement, pas de refus. Le désactiver reviendrait à interdire à
+ * l'utilisateur de décrire ce qu'il a réellement fait.
  *
  * La boîte est rendue **après** la grille dans l'ordre du DOM : sans focus
- * déplacé, atteindre le champ « Durée (heures) » demandait de tabuler à
- * travers toutes les cases restantes du mois — vingt et une tabulations
- * depuis le 11 mars, mesurées en revue. Le raccourci clavier qui l'ouvre et la
- * boîte qu'il ouvre sont une seule fonctionnalité : `aria-modal` la promet
- * hors du reste du document, et trois choses la rendent vraie, comme dans
- * `ConfirmDialog` — le focus entre dans le panneau, il y est retenu, il
- * revient à la case à la fermeture, et Échap referme. Échap est écouté sur le
- * document et non sur le `<div>`, qui cesserait de recevoir la touche dès que
- * le focus le quitte.
+ * déplacé, atteindre le premier champ demandait de tabuler à travers toutes les
+ * cases restantes du mois — vingt et une tabulations depuis le 11 mars,
+ * mesurées en revue. Le raccourci clavier qui l'ouvre et la boîte qu'il ouvre
+ * sont une seule fonctionnalité : `aria-modal` la promet hors du reste du
+ * document, et trois choses la rendent vraie, comme dans `ConfirmDialog` — le
+ * focus entre dans le panneau, il y est retenu, il revient à la case à la
+ * fermeture, et Échap referme. Échap est écouté sur le document et non sur le
+ * `<div>`, qui cesserait de recevoir la touche dès que le focus le quitte.
  */
 export function CellForm({
   date,
   etat,
   line,
   slots,
+  journeeDebutMinute,
+  journeeFinMinute,
   onSubmit,
   onDelete,
   onCancel,
@@ -70,11 +124,19 @@ export function CellForm({
   etat: CellState
   line: LineForGrid
   slots: Slot[]
-  onSubmit: (minutes: number, slotId: string) => void
+  /** début de la plage journée, minutes depuis minuit */
+  journeeDebutMinute: number
+  /** fin de la plage journée, minutes depuis minuit */
+  journeeFinMinute: number
+  onSubmit: (minutes: number, slotId: string, startMinute: number, endMinute: number) => void
   onDelete: () => void
   onCancel: () => void
 }) {
-  const [heures, setHeures] = useState(() => dureeInitiale(etat, line.minutesParJour, slots))
+  const initiales = () =>
+    bornesInitiales(etat, line, slots, journeeDebutMinute, journeeFinMinute)
+
+  const [debut, setDebut] = useState(() => minutesToTimeInput(initiales().startMinute))
+  const [fin, setFin] = useState(() => minutesToTimeInput(initiales().endMinute))
   const [slotId, setSlotId] = useState(() => creneauInitial(etat))
   const [erreur, setErreur] = useState<string | null>(null)
 
@@ -131,14 +193,39 @@ export function CellForm({
   const creneauSignale = !isSlotAllowed(slotId, line.allowedSlotIds)
   const eclatee = etat.kind === 'LIBRE' && etat.eclatee
 
+  const debutMinute = timeInputToMinutes(debut)
+  const finMinute = timeInputToMinutes(fin)
+  const minutes =
+    debutMinute === null || finMinute === null ? null : minutesBetween(debutMinute, finMinute)
+
+  /**
+   * Le créneau **pré-remplit** les deux heures, il ne les verrouille pas.
+   *
+   * Les bornes viennent du créneau lui-même (`entryBounds` les lit, il ne les
+   * invente pas), et la journée entière retombe sur la plage journée.
+   */
+  function choisirCreneau(id: string): void {
+    setSlotId(id)
+    const slot = id === '' ? null : (slots.find((s) => s.id === id) ?? null)
+    const bornes = entryBounds({
+      // Sans créneau, la plage entière : c'est un pré-remplissage, que la
+      // personne rectifie. La durée réellement retenue en découlera.
+      minutes: Math.max(0, journeeFinMinute - journeeDebutMinute),
+      slot,
+      journeeDebutMinute,
+      journeeFinMinute,
+    })
+    setDebut(minutesToTimeInput(bornes.startMinute))
+    setFin(minutesToTimeInput(bornes.endMinute))
+  }
+
   function valider(): void {
-    const minutes = parseQuantity(heures, 'HEURE', line.minutesParJour)
-    if (minutes === null || minutes <= 0 || minutes > 1440) {
-      setErreur('Indiquez une durée comprise entre 1 minute et 24 heures.')
+    if (debutMinute === null || finMinute === null || minutes === null) {
+      setErreur('Indiquez une heure de début et une heure de fin.')
       return
     }
     setErreur(null)
-    onSubmit(minutes, slotId)
+    onSubmit(minutes, slotId, debutMinute, finMinute)
   }
 
   return (
@@ -146,7 +233,7 @@ export function CellForm({
       ref={panneau}
       role="dialog"
       aria-modal="true"
-      aria-label={`Saisie libre du ${date}`}
+      aria-label={`Saisie du ${date}`}
       className="mt-3 rounded-md border border-rule bg-surface p-3 text-sm shadow-card"
     >
       <p className="mb-2 font-medium text-ink">Saisie du {date}</p>
@@ -164,23 +251,34 @@ export function CellForm({
 
       <div className="flex flex-wrap gap-3">
         <Field
-          label="Durée (heures)"
-          value={heures}
-          onChange={(ev) => setHeures(ev.target.value)}
-          placeholder="3,5 ou 3h30"
+          label="Heure de début"
+          type="time"
+          value={debut}
+          onChange={(ev) => setDebut(ev.target.value)}
+          className="w-32"
+        />
+
+        <Field
+          label="Heure de fin"
+          type="time"
+          value={fin}
+          onChange={(ev) => setFin(ev.target.value)}
+          // Le franchissement de minuit se dit, il ne se devine pas : sans
+          // cette phrase, une fin avant le début se lirait comme une erreur.
+          hint="Avant le début : la nuit, jusqu’au lendemain."
           className="w-32"
         />
 
         <Select
           label="Créneau"
           value={slotId}
-          onChange={(ev) => setSlotId(ev.target.value)}
+          onChange={(ev) => choisirCreneau(ev.target.value)}
           className="w-52"
         >
           <option value="">Journée entière</option>
           {slots.map((s) => {
             // « AM » et « PM » ici aussi : le porteur les veut partout. Pas
-            // « ½ AM » — ce formulaire écrit une durée libre, qui n'est pas
+            // « ½ AM » — ce formulaire écrit un bloc horaire, qui n'est pas
             // forcément une demi-journée.
             const libelle = libelleCreneauAvecMoment(s.id, slots)
             return (
@@ -193,6 +291,15 @@ export function CellForm({
           })}
         </Select>
       </div>
+
+      {/* La durée n'est plus une saisie : elle découle des deux heures, et
+          s'affiche pour que rien ne parte sans avoir été vu. `role="status"`
+          l'annonce au lecteur d'écran au fil de la frappe. */}
+      <p data-testid="duree-calculee" role="status" className="mt-2 text-xs text-muted">
+        {minutes === null
+          ? 'Durée : indiquez deux heures.'
+          : `Durée : ${formatQuantity(minutes, 'HEURE', line.minutesParJour)}`}
+      </p>
 
       {creneauSignale && (
         <p

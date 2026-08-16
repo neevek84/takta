@@ -35,6 +35,8 @@ function renderForm(
       etat={{ kind: 'VIDE' }}
       line={ligne}
       slots={DEFAULT_SLOTS}
+      journeeDebutMinute={540}
+      journeeFinMinute={1080}
       onSubmit={onSubmit}
       onDelete={onDelete}
       onCancel={onCancel}
@@ -44,12 +46,20 @@ function renderForm(
   return { onSubmit, onDelete, onCancel, unmount }
 }
 
-function duree(): HTMLInputElement {
-  return screen.getByLabelText('Durée (heures)') as HTMLInputElement
+function debut(): HTMLInputElement {
+  return screen.getByLabelText('Heure de début') as HTMLInputElement
+}
+
+function fin(): HTMLInputElement {
+  return screen.getByLabelText('Heure de fin') as HTMLInputElement
 }
 
 function creneau(): HTMLSelectElement {
   return screen.getByLabelText('Créneau') as HTMLSelectElement
+}
+
+function dureeCalculee(): string {
+  return screen.getByTestId('duree-calculee').textContent ?? ''
 }
 
 function enregistrer(): void {
@@ -64,54 +74,115 @@ describe('CellForm', () => {
     expect(screen.getByText(/2026-03-10/)).toBeDefined()
   })
 
-  it('part d une durée vide et de la journée entière sur une case vide', () => {
+  // Le défaut que ce lot corrige : le formulaire demandait une durée et un
+  // créneau, et l'application décidait seule que le bloc commençait à 8 h. Le
+  // choix était fait, et rien ne le disait — ni à l'écran, ni dans l'agenda.
+  it('demande un début et une fin, jamais une durée', () => {
     renderForm()
-    expect(duree().value).toBe('')
+    expect(debut()).toBeDefined()
+    expect(fin()).toBeDefined()
+    expect(screen.queryByLabelText('Durée (heures)')).toBeNull()
+  })
+
+  it('part de la plage journée sur une case vide', () => {
+    renderForm()
+    expect([debut().value, fin().value]).toEqual(['09:00', '18:00'])
     expect(creneau().value).toBe('')
   })
 
-  it('pré-remplit la durée et le créneau d une valeur libre', () => {
-    renderForm({ etat: { kind: 'LIBRE', minutes: 210, slotId: 'nuit', eclatee: false } })
-    expect(duree().value).toBe('3,5')
+  it('pré-remplit les bornes d une journée entière', () => {
+    renderForm({ etat: { kind: 'JOURNEE' } })
+    // 8 h saisies dans une plage de 9 h : le bloc s'arrête à 17 h.
+    expect([debut().value, fin().value]).toEqual(['09:00', '17:00'])
+  })
+
+  it('pré-remplit les bornes figées d une valeur libre', () => {
+    renderForm({
+      etat: {
+        kind: 'LIBRE',
+        minutes: 210,
+        slotId: 'nuit',
+        startMinute: 1320,
+        endMinute: 90,
+        eclatee: false,
+      },
+    })
+    expect([debut().value, fin().value]).toEqual(['22:00', '01:30'])
     expect(creneau().value).toBe('nuit')
   })
 
-  it('pré-remplit une demi-journée avec ses minutes réelles', () => {
+  it('pré-remplit une demi-journée avec les bornes de son créneau', () => {
     renderForm({ etat: { kind: 'DEMI', slotId: 'matin' } })
-    expect(duree().value).toBe('4')
+    expect([debut().value, fin().value]).toEqual(['09:00', '13:00'])
     expect(creneau().value).toBe('matin')
   })
 
-  it('convertit la durée saisie en minutes', () => {
-    const { onSubmit } = renderForm()
-    fireEvent.change(duree(), { target: { value: '3,5' } })
-    enregistrer()
-    expect(onSubmit).toHaveBeenCalledWith(210, '')
+  // « La durée en découle » : elle s'affiche, elle ne se saisit plus.
+  it('affiche la durée déduite des deux heures', () => {
+    renderForm()
+    fireEvent.change(debut(), { target: { value: '09:00' } })
+    fireEvent.change(fin(), { target: { value: '12:30' } })
+    expect(dureeCalculee()).toContain('3h30')
   })
 
-  it('accepte la notation en heures et minutes', () => {
+  it('transmet les minutes déduites et les deux bornes', () => {
     const { onSubmit } = renderForm()
-    fireEvent.change(duree(), { target: { value: '3h30' } })
+    fireEvent.change(debut(), { target: { value: '09:00' } })
+    fireEvent.change(fin(), { target: { value: '12:30' } })
     enregistrer()
-    expect(onSubmit).toHaveBeenCalledWith(210, '')
+    expect(onSubmit).toHaveBeenCalledWith(210, '', 540, 750)
   })
 
-  it('transmet le créneau choisi', () => {
+  // Le porteur travaille parfois la nuit : une fin antérieure au début n'est
+  // pas une erreur de saisie, c'est un bloc qui franchit minuit.
+  it('accepte une fin antérieure au début et compte les minutes par-dessus minuit', () => {
     const { onSubmit } = renderForm()
-    fireEvent.change(duree(), { target: { value: '8' } })
-    fireEvent.change(creneau(), { target: { value: 'nuit' } })
+    fireEvent.change(debut(), { target: { value: '22:00' } })
+    fireEvent.change(fin(), { target: { value: '02:00' } })
+    expect(dureeCalculee()).toContain('4h')
     enregistrer()
-    expect(onSubmit).toHaveBeenCalledWith(480, 'nuit')
+    expect(onSubmit).toHaveBeenCalledWith(240, '', 1320, 120)
   })
 
-  it('refuse une durée inexploitable sans rien transmettre', () => {
+  it('compte une journée pleine quand les deux heures coïncident', () => {
     const { onSubmit } = renderForm()
-    for (const valeur of ['', '0', '-2', 'abc', '25']) {
-      fireEvent.change(duree(), { target: { value: valeur } })
-      enregistrer()
-    }
+    fireEvent.change(debut(), { target: { value: '09:00' } })
+    fireEvent.change(fin(), { target: { value: '09:00' } })
+    enregistrer()
+    expect(onSubmit).toHaveBeenCalledWith(1440, '', 540, 540)
+  })
+
+  // Le chemin rapide reste : le créneau nommé **pré-remplit**, il ne verrouille
+  // rien. On garde la vitesse, et on voit ce qui partira.
+  it('pré-remplit les deux heures quand on choisit un créneau', () => {
+    renderForm()
+    fireEvent.change(creneau(), { target: { value: 'apres-midi' } })
+    expect([debut().value, fin().value]).toEqual(['14:00', '18:00'])
+  })
+
+  it('laisse ajuster les heures après un créneau, sans perdre sa trace', () => {
+    const { onSubmit } = renderForm()
+    fireEvent.change(creneau(), { target: { value: 'matin' } })
+    fireEvent.change(fin(), { target: { value: '12:00' } })
+    enregistrer()
+    // Le créneau reste comme trace de l'origine, les heures sont celles qu'on
+    // a réellement saisies.
+    expect(onSubmit).toHaveBeenCalledWith(180, 'matin', 540, 720)
+  })
+
+  it('revient à la plage journée quand on repasse à la journée entière', () => {
+    renderForm()
+    fireEvent.change(creneau(), { target: { value: 'apres-midi' } })
+    fireEvent.change(creneau(), { target: { value: '' } })
+    expect([debut().value, fin().value]).toEqual(['09:00', '18:00'])
+  })
+
+  it('refuse une heure vide sans rien transmettre', () => {
+    const { onSubmit } = renderForm()
+    fireEvent.change(debut(), { target: { value: '' } })
+    enregistrer()
     expect(onSubmit).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert').textContent).toContain('durée')
+    expect(screen.getByRole('alert').textContent).toContain('heure')
   })
 
   it('propose les créneaux hors des trois prédéfinis, la nuit comprise', () => {
@@ -122,7 +193,7 @@ describe('CellForm', () => {
 
   // « AM » et « PM » partout : le porteur les veut aussi dans le formulaire,
   // pour lever l'ambiguïté du matin et de l'après-midi. Pas « ½ AM » ici : on
-  // y saisit une durée libre, qui n'est pas forcément une demi-journée.
+  // y saisit un bloc horaire, qui n'est pas forcément une demi-journée.
   it('précise la moitié de journée de chaque créneau', () => {
     renderForm()
     const libelles = Array.from(creneau().options).map((o) => o.textContent)
@@ -136,12 +207,11 @@ describe('CellForm', () => {
     expect(option.disabled).toBe(false)
     expect(option.textContent).toContain('hors créneaux autorisés')
 
-    fireEvent.change(duree(), { target: { value: '3' } })
     fireEvent.change(creneau(), { target: { value: 'nuit' } })
     expect(screen.getByTestId('signalement-creneau').textContent).toContain('autorisé')
 
     enregistrer()
-    expect(onSubmit).toHaveBeenCalledWith(180, 'nuit')
+    expect(onSubmit).toHaveBeenCalledWith(480, 'nuit', 1320, 360)
   })
 
   it('ne signale rien sur un créneau autorisé', () => {
@@ -151,12 +221,30 @@ describe('CellForm', () => {
   })
 
   it('avertit avant de remplacer une journée éclatée en plusieurs créneaux', () => {
-    renderForm({ etat: { kind: 'LIBRE', minutes: 480, slotId: '', eclatee: true } })
+    renderForm({
+      etat: {
+        kind: 'LIBRE',
+        minutes: 480,
+        slotId: '',
+        startMinute: 540,
+        endMinute: 1080,
+        eclatee: true,
+      },
+    })
     expect(screen.getByTestId('avertissement-eclatee').textContent).toContain('plusieurs créneaux')
   })
 
   it('n avertit pas sur une case ordinaire', () => {
-    renderForm({ etat: { kind: 'LIBRE', minutes: 180, slotId: '', eclatee: false } })
+    renderForm({
+      etat: {
+        kind: 'LIBRE',
+        minutes: 180,
+        slotId: '',
+        startMinute: 540,
+        endMinute: 720,
+        eclatee: false,
+      },
+    })
     expect(screen.queryByTestId('avertissement-eclatee')).toBeNull()
   })
 
@@ -195,12 +283,12 @@ describe('CellForm — boîte de dialogue au clavier', () => {
     renderForm()
     const boite = screen.getByRole('dialog')
     expect(boite.getAttribute('aria-modal')).toBe('true')
-    expect(boite.getAttribute('aria-label')).toBe('Saisie libre du 2026-03-10')
+    expect(boite.getAttribute('aria-label')).toBe('Saisie du 2026-03-10')
   })
 
-  it('porte le focus sur le champ de durée à l ouverture', () => {
+  it('porte le focus sur la première heure à l ouverture', () => {
     renderForm()
-    expect(document.activeElement).toBe(duree())
+    expect(document.activeElement).toBe(debut())
   })
 
   it('ferme sur Échap sans rien enregistrer', () => {
@@ -229,7 +317,7 @@ describe('CellForm — boîte de dialogue au clavier', () => {
     // boîte, c'est-à-dire dans la grille du calendrier restée derrière.
     annuler.focus()
     fireEvent.keyDown(document, { key: 'Tab' })
-    expect(document.activeElement).toBe(duree())
+    expect(document.activeElement).toBe(debut())
 
     fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
     expect(document.activeElement).toBe(annuler)
@@ -243,7 +331,7 @@ describe('CellForm — boîte de dialogue au clavier', () => {
     declencheur.focus()
 
     const { unmount } = renderForm()
-    expect(document.activeElement).toBe(duree())
+    expect(document.activeElement).toBe(debut())
 
     unmount()
     expect(document.activeElement).toBe(declencheur)

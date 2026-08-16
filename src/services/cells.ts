@@ -56,10 +56,13 @@ function dureeExploitable(minutes: number): boolean {
 /**
  * Aligne les saisies d'une case (prestation, jour) sur ce que `state` décrit.
  *
- * Le rapprochement se fait **par cible**, jamais par table rase : la clé
- * `(lineId, userId, date, slotId)` désigne une saisie, et une saisie dont la
- * cible survit est *mise à jour*, pas détruite puis récrite sous un identifiant
- * neuf. C'est ce que `saveEntry` fait déjà, et ce que le porteur a tranché :
+ * Le rapprochement se fait **par cible**, jamais par table rase : la cible
+ * d'une case est son créneau — `''` pour une journée entière —, et une saisie
+ * dont la cible survit est *mise à jour*, pas détruite puis récrite sous un
+ * identifiant neuf. Le créneau n'est plus ce qui identifie la saisie en base
+ * (la clé d'unicité porte l'heure de début depuis le lot 1f), il reste ce que
+ * la cinématique vise. C'est ce que `saveEntry` fait déjà, et ce que le
+ * porteur a tranché :
  * l'identifiant porte le bloc de l'agenda, le faire tourner à chaque correction
  * fait disparaître puis réapparaître l'événement — et laisse dix lignes en file
  * pour dix retouches, là où la file dédoublonne par identifiant.
@@ -104,7 +107,14 @@ export async function applyCellState(args: {
 
   let cibles
   try {
-    cibles = cellStateToWrite(args.state, { minutesParJour, slots: settings.slots })
+    cibles = cellStateToWrite(args.state, {
+      minutesParJour,
+      slots: settings.slots,
+      // Les bornes de la journée de travail entrent dans le contexte : c'est
+      // ici, à l'écriture, que les heures d'une saisie se figent.
+      journeeDebutMinute: settings.journeeDebutMinute,
+      journeeFinMinute: settings.journeeFinMinute,
+    })
   } catch {
     return { ok: false, reason: 'SAISIE_INVALIDE' }
   }
@@ -180,33 +190,44 @@ export async function applyCellState(args: {
     }
 
     for (const cible of cibles) {
-      // `upsert` sur la clé unique, exactement comme `saveEntry` : l'identifiant
-      // survit à la correction, donc l'événement d'agenda aussi, et la file
-      // dédoublonne les retouches successives en une seule ligne.
-      const entry = await tx.timeEntry.upsert({
-        where: {
-          lineId_userId_date_slotId: {
-            lineId: args.lineId,
-            userId: args.userId,
-            date,
-            slotId: cible.slotId,
-          },
-        },
-        create: {
-          lineId: args.lineId,
-          userId: args.userId,
-          date,
-          slotId: cible.slotId,
-          minutes: cible.minutes,
-          kind: args.kind,
-          minutesParJour,
-        },
-        // `minutesParJour` est réécrit avec la saisie : le gel porte sur
-        // l'écriture, et une case retouchée *est* une écriture — c'est déjà la
-        // règle de `saveEntry`. Ce qu'il interdit, c'est qu'un réglage global
-        // modifié rejaillisse sur une saisie que personne n'a retouchée.
-        update: { minutes: cible.minutes, kind: args.kind, minutesParJour },
-      })
+      // Relevée par sa **cible**, le créneau, et non par la clé d'unicité,
+      // qui porte désormais l'heure de début : deux corrections successives
+      // séparées par une redéfinition du créneau viseraient sinon deux lignes
+      // différentes, et l'événement d'agenda serait détruit puis recréé.
+      // L'identifiant survit à la correction, donc l'événement aussi, et la
+      // file dédoublonne les retouches en une seule ligne.
+      const existante = presentes.find((e) => e.slotId === cible.slotId)
+
+      const entry =
+        existante === undefined
+          ? await tx.timeEntry.create({
+              data: {
+                lineId: args.lineId,
+                userId: args.userId,
+                date,
+                slotId: cible.slotId,
+                minutes: cible.minutes,
+                kind: args.kind,
+                minutesParJour,
+                startMinute: cible.startMinute,
+                endMinute: cible.endMinute,
+              },
+            })
+          : await tx.timeEntry.update({
+              where: { id: existante.id },
+              // `minutesParJour` et les deux bornes sont réécrits avec la
+              // saisie : le gel porte sur l'écriture, et une case retouchée
+              // *est* une écriture — c'est déjà la règle de `saveEntry`. Ce
+              // qu'il interdit, c'est qu'un réglage modifié rejaillisse sur
+              // une saisie que personne n'a retouchée.
+              data: {
+                minutes: cible.minutes,
+                kind: args.kind,
+                minutesParJour,
+                startMinute: cible.startMinute,
+                endMinute: cible.endMinute,
+              },
+            })
 
       await enqueueTimeEntry(tx, { userId: args.userId, entryId: entry.id, operation: 'UPSERT' })
     }

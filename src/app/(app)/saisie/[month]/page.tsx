@@ -60,6 +60,10 @@ export default async function SaisiePage({ params }: { params: Promise<{ month: 
         // marquerait un dépassement que le service ignore en `DESACTIVE`.
         capacityMode={settings.capacityMode}
         slots={settings.slots}
+        // Le pré-remplissage du formulaire d'heures, et rien d'autre : une
+        // saisie déjà écrite porte ses propres bornes, figées à l'écriture.
+        journeeDebutMinute={settings.journeeDebutMinute}
+        journeeFinMinute={settings.journeeFinMinute}
         // Un repère, jamais un verrou : la liste est vide quand l'agenda n'est
         // pas connecté ou pas joignable, et la saisie fonctionne à l'identique.
         busyDates={busyDates}

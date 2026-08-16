@@ -102,9 +102,22 @@ model TimeEntry {
   /// 'REALISE' | 'PREVISIONNEL'
   kind      String
   /// id du créneau ; chaîne vide = journée entière.
-  /// NON nullable : un NULL n'est jamais égal à lui-même dans un index
-  /// unique, la contrainte ci-dessous ne protégerait donc rien.
+  /// **Trace** du créneau nommé d'origine, plus une identité : depuis le lot
+  /// 1f, deux saisies du même jour sur la même ligne se distinguent par leur
+  /// heure de début. NON nullable malgré tout — il continue d'être ce que la
+  /// cinématique vise, et un NULL n'est jamais égal à lui-même.
   slotId    String   @default("")
+  /// début du bloc, minutes depuis minuit (0-1439), **figé à l'écriture**.
+  /// ENTRE dans la clé d'unicité ci-dessous, donc jamais nullable : un NULL
+  /// n'étant jamais égal à un autre NULL, la contrainte cesserait de
+  /// contraindre en silence — la panne du lot 0 sur `slotId`.
+  /// Le défaut n'existe que pour reprendre une table peuplée ; le chemin
+  /// d'écriture renseigne TOUJOURS les deux bornes explicitement.
+  startMinute Int    @default(540)
+  /// fin du bloc, minutes depuis minuit (0-1439), figée à l'écriture.
+  /// Une fin inférieure ou égale au début n'est pas une erreur : le bloc
+  /// franchit minuit (voir `minutesBetween` dans core/time/slots.ts).
+  endMinute   Int    @default(1020)
   comment   String   @default("")
   /// durée d'une journée au moment de l'écriture, en minutes.
   /// Le défaut n'existe que pour permettre la migration d'une table peuplée :
@@ -115,7 +128,7 @@ model TimeEntry {
   line MissionLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
   user User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([lineId, userId, date, slotId])
+  @@unique([lineId, userId, date, startMinute])
   @@index([userId, date])
   @@index([lineId])
 }

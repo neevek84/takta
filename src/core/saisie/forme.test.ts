@@ -47,7 +47,7 @@ describe('formeDeLaCase', () => {
   })
 
   it('dessine une durée libre à sa proportion', () => {
-    const etat: CellState = { kind: 'LIBRE', minutes: 120, slotId: '', eclatee: false }
+    const etat: CellState = { kind: 'LIBRE', minutes: 120, slotId: '', startMinute: 540, endMinute: 720, eclatee: false }
     expect(formeDeLaCase(etat, [{ minutes: 120, minutesParJour: 480 }], SLOTS)).toEqual({
       kind: 'PARTIELLE',
       fraction: 0.25,
@@ -59,7 +59,7 @@ describe('formeDeLaCase', () => {
   // valent 0,57 — soit 1,07 j au total, jamais 480/480 = 1 j. La forme se
   // sature à la case pleine plutôt que de déborder.
   it('convertit chaque saisie sous le facteur figé à son écriture', () => {
-    const etat: CellState = { kind: 'LIBRE', minutes: 480, slotId: '', eclatee: true }
+    const etat: CellState = { kind: 'LIBRE', minutes: 480, slotId: '', startMinute: 540, endMinute: 720, eclatee: true }
     const forme = formeDeLaCase(
       etat,
       [
@@ -73,7 +73,7 @@ describe('formeDeLaCase', () => {
   })
 
   it('ne déborde jamais de la case', () => {
-    const etat: CellState = { kind: 'LIBRE', minutes: 960, slotId: '', eclatee: false }
+    const etat: CellState = { kind: 'LIBRE', minutes: 960, slotId: '', startMinute: 540, endMinute: 720, eclatee: false }
     expect(formeDeLaCase(etat, [{ minutes: 960, minutesParJour: 480 }], SLOTS)).toEqual({
       kind: 'PARTIELLE',
       fraction: 1,
@@ -81,7 +81,7 @@ describe('formeDeLaCase', () => {
   })
 
   it('ne dessine rien pour une durée libre nulle', () => {
-    const etat: CellState = { kind: 'LIBRE', minutes: 0, slotId: '', eclatee: false }
+    const etat: CellState = { kind: 'LIBRE', minutes: 0, slotId: '', startMinute: 540, endMinute: 720, eclatee: false }
     expect(formeDeLaCase(etat, [{ minutes: 0, minutesParJour: 480 }], SLOTS)).toEqual({
       kind: 'AUCUNE',
     })
@@ -108,7 +108,7 @@ describe('signatureDeForme', () => {
       formeDeLaCase({ kind: 'DEMI', slotId: 'matin' }, RIEN, SLOTS),
       formeDeLaCase({ kind: 'DEMI', slotId: 'apres-midi' }, RIEN, SLOTS),
       formeDeLaCase(
-        { kind: 'LIBRE', minutes: 180, slotId: '', eclatee: false },
+        { kind: 'LIBRE', minutes: 180, slotId: '', startMinute: 540, endMinute: 720, eclatee: false },
         [{ minutes: 180, minutesParJour: 480 }],
         SLOTS,
       ),

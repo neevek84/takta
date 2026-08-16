@@ -28,6 +28,9 @@ function saisie(minutes: number, minutesParJour: number): MonthEntry {
     date: JOUR,
     minutes,
     kind: 'REALISE',
+    // Bornes figées : la ligne de totaux ne les lit pas, le type les exige.
+    startMinute: 540,
+    endMinute: 1020,
     slotId: '',
     minutesParJour,
   }

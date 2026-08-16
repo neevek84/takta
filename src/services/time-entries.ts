@@ -3,6 +3,7 @@ import type { CraStatus, TimeEntryKind } from '@/core/types'
 import { checkCapacity } from '@/core/capacity/check'
 import { isLocked } from '@/core/cra/state-machine'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
+import { entryBounds } from '@/core/time/slots'
 import { getSettings } from './settings'
 import { enqueueTimeEntry } from './sync/outbox'
 
@@ -13,8 +14,12 @@ export interface MonthEntry {
   date: string
   minutes: number
   kind: TimeEntryKind
-  /** chaîne vide = journée entière */
+  /** chaîne vide = journée entière ; trace du créneau, jamais une identité */
   slotId: string
+  /** début du bloc, minutes depuis minuit — figé à l'écriture */
+  startMinute: number
+  /** fin du bloc, minutes depuis minuit — figée à l'écriture */
+  endMinute: number
   /** durée d'une journée figée à l'écriture, en minutes */
   minutesParJour: number
 }
@@ -46,6 +51,10 @@ export async function getMonthEntries(userId: string, month: string): Promise<Mo
     minutes: r.minutes,
     kind: r.kind as TimeEntryKind,
     slotId: r.slotId,
+    // Relues telles qu'elles ont été écrites : aucun réglage courant ne
+    // rejoue ici, sans quoi le gel des heures n'aurait tenu qu'en base.
+    startMinute: r.startMinute,
+    endMinute: r.endMinute,
     minutesParJour: r.minutesParJour,
   }))
 }
@@ -137,6 +146,17 @@ export type SaveResult =
   | { ok: false; reason: 'CAPACITE'; totalCentiemes: number; capacityCentiemes: number }
   | { ok: false; reason: 'VERROUILLE' }
   | { ok: false; reason: 'NON_AFFECTE' }
+  /**
+   * Une autre saisie du même jour, sur la même prestation, commence déjà à
+   * cette minute — ce qui identifie une saisie depuis le lot 1f.
+   *
+   * Le cas est atteignable : la plage journée commence par défaut à 9 h, tout
+   * comme « Matin ». Poser les deux reviendrait à superposer deux blocs dans
+   * l'agenda et à n'envoyer qu'un seul temps passé chez Dolibarr, dont la clé
+   * de cellule ne distingue pas non plus deux saisies au même créneau. On le
+   * dit, plutôt que de laisser remonter une violation de contrainte.
+   */
+  | { ok: false; reason: 'CHEVAUCHEMENT'; startMinute: number }
 
 function monthStartOf(isoDate: string): Date {
   return new Date(`${isoDate.slice(0, 7)}-01T00:00:00.000Z`)
@@ -222,21 +242,25 @@ export async function saveEntry(args: {
     // La suppression et sa mise en file tiennent dans la même transaction :
     // une suppression qui échapperait à la file laisserait un bloc fantôme
     // occuper une journée qu'on pourrait revendre.
+    //
+    // La cible reste **le créneau** : c'est lui que la cellule du tableau
+    // désigne, et le relever par l'heure de début — désormais la clé
+    // d'unicité — raterait la saisie dès que le créneau aurait été redéfini
+    // depuis, ses heures étant figées.
     await prisma.$transaction(async (tx) => {
-      const existing = await tx.timeEntry.findUnique({
-        where: {
-          lineId_userId_date_slotId: { lineId: args.lineId, userId: args.userId, date, slotId },
-        },
+      const existantes = await tx.timeEntry.findMany({
+        where: { lineId: args.lineId, userId: args.userId, date, slotId },
         select: { id: true },
       })
-      if (existing === null) return
 
-      await tx.timeEntry.delete({ where: { id: existing.id } })
-      await enqueueTimeEntry(tx, {
-        userId: args.userId,
-        entryId: existing.id,
-        operation: 'DELETE',
-      })
+      for (const existante of existantes) {
+        await tx.timeEntry.delete({ where: { id: existante.id } })
+        await enqueueTimeEntry(tx, {
+          userId: args.userId,
+          entryId: existante.id,
+          operation: 'DELETE',
+        })
+      }
     })
 
     return { ok: true, minutes: 0 }
@@ -251,10 +275,37 @@ export async function saveEntry(args: {
   // Total du jour hors la clé qu'on écrit : corriger une valeur ne doit pas
   // la compter deux fois. Chaque saisie est reprise avec **son** facteur figé,
   // jamais avec le réglage du moment — un CRA validé ne change pas de calcul.
+  // Les deux bornes du bloc, figées ici et une seule fois : les recalculer au
+  // moment de pousser vers l'agenda ferait déplacer une saisie que personne
+  // n'a retouchée dès qu'un créneau change en administration.
+  const bornes = entryBounds({
+    minutes: args.minutes,
+    slot: slotId === '' ? null : (settings.slots.find((s) => s.id === slotId) ?? null),
+    journeeDebutMinute: settings.journeeDebutMinute,
+    journeeFinMinute: settings.journeeFinMinute,
+  })
+
   const sameDay = await prisma.timeEntry.findMany({
     where: { userId: args.userId, date },
-    select: { minutes: true, lineId: true, slotId: true, minutesParJour: true },
+    select: {
+      minutes: true,
+      lineId: true,
+      slotId: true,
+      startMinute: true,
+      minutesParJour: true,
+    },
   })
+
+  // Le refus se prononce **avant** toute écriture, et il est scopé comme le
+  // reste : même prestation, même jour, même utilisateur. Un autre créneau qui
+  // occupe déjà cette minute de départ n'est pas la saisie qu'on corrige.
+  const occupee = sameDay.some(
+    (e) =>
+      e.lineId === args.lineId && e.slotId !== slotId && e.startMinute === bornes.startMinute,
+  )
+  if (occupee) {
+    return { ok: false, reason: 'CHEVAUCHEMENT', startMinute: bornes.startMinute }
+  }
   const existing = sameDay
     .filter((e) => !(e.lineId === args.lineId && e.slotId === slotId))
     .map((e) => ({ minutes: e.minutes, minutesParJour: e.minutesParJour }))
@@ -284,21 +335,36 @@ export async function saveEntry(args: {
       : null
 
   await prisma.$transaction(async (tx) => {
-    const entry = await tx.timeEntry.upsert({
-      where: {
-        lineId_userId_date_slotId: { lineId: args.lineId, userId: args.userId, date, slotId },
-      },
-      create: {
-        lineId: args.lineId,
-        userId: args.userId,
-        date,
-        slotId,
-        minutes: args.minutes,
-        kind: args.kind,
-        minutesParJour,
-      },
-      update: { minutes: args.minutes, kind: args.kind, minutesParJour },
+    // La cellule du tableau vise **un créneau**, pas une heure de début : le
+    // `slotId` reste ce qui la désigne, même s'il n'identifie plus la saisie
+    // en base. La retrouver par sa cible plutôt que par la clé d'unicité est
+    // aussi ce qui garde son identifiant — donc son événement d'agenda —
+    // quand le créneau a été redéfini entre deux corrections.
+    const existante = await tx.timeEntry.findFirst({
+      where: { lineId: args.lineId, userId: args.userId, date, slotId },
+      select: { id: true },
     })
+
+    const entry =
+      existante === null
+        ? await tx.timeEntry.create({
+            data: {
+              lineId: args.lineId,
+              userId: args.userId,
+              date,
+              slotId,
+              minutes: args.minutes,
+              kind: args.kind,
+              minutesParJour,
+              ...bornes,
+            },
+          })
+        : await tx.timeEntry.update({
+            where: { id: existante.id },
+            // Les bornes sont réécrites avec la saisie, comme `minutesParJour` :
+            // le gel porte sur l'écriture, et une correction *est* une écriture.
+            data: { minutes: args.minutes, kind: args.kind, minutesParJour, ...bornes },
+          })
 
     await enqueueTimeEntry(tx, { userId: args.userId, entryId: entry.id, operation: 'UPSERT' })
   })

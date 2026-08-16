@@ -43,12 +43,12 @@ describe('nextCellState', () => {
   // distrait ramènerait trois heures à zéro, et le clic suivant les
   // remplacerait par une journée entière.
   it('ne cycle pas sur une case à valeur libre : elle rouvre son formulaire', () => {
-    const libre: CellState = { kind: 'LIBRE', minutes: 180, slotId: '', eclatee: false }
+    const libre: CellState = { kind: 'LIBRE', minutes: 180, slotId: '', startMinute: 540, endMinute: 720, eclatee: false }
     expect(nextCellState(libre, JOUR)).toEqual({ action: 'FORMULAIRE' })
   })
 
   it('rouvre le formulaire d une journée éclatée en plusieurs créneaux', () => {
-    const eclatee: CellState = { kind: 'LIBRE', minutes: 480, slotId: '', eclatee: true }
+    const eclatee: CellState = { kind: 'LIBRE', minutes: 480, slotId: '', startMinute: 540, endMinute: 720, eclatee: true }
     expect(nextCellState(eclatee, JOUR)).toEqual({ action: 'FORMULAIRE' })
   })
 

@@ -54,6 +54,8 @@ function renderClient(
       capacityCentiemes={100}
       capacityMode="AVERTISSEMENT"
       slots={DEFAULT_SLOTS}
+      journeeDebutMinute={540}
+      journeeFinMinute={1080}
       {...overrides}
     />,
   )
@@ -61,8 +63,8 @@ function renderClient(
 
 /** Deux journées pleines le 12 : de quoi dépasser une capacité d'une journée. */
 const deuxJournees: MonthEntry[] = [
-  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
-  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
+  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
+  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
 ]
 
 /** La vue tableau n'est plus la vue par défaut : ces tests l'ouvrent d'abord. */
@@ -140,6 +142,19 @@ describe('SaisieClient', () => {
     const input = saisir('0,5')
 
     await waitFor(() => expect(screen.getByText(/CRA de ce mois est validé/)).toBeDefined())
+    await waitFor(() => expect(input.value).toBe(''))
+  })
+
+  // Une saisie est identifiée par son heure de début : deux blocs partis à la
+  // même minute se superposeraient dans l'agenda. Le refus dit laquelle, et à
+  // quelle heure — « saisie invalide » n'apprendrait rien.
+  it('dit à quelle heure une autre saisie occupe déjà la place', async () => {
+    saveCell.mockResolvedValue({ ok: false, reason: 'CHEVAUCHEMENT', startMinute: 540 })
+    renderClient()
+    ouvrirTableau()
+    const input = saisir('0,5')
+
+    await waitFor(() => expect(screen.getByText(/commence déjà à 9 h 00/)).toBeDefined())
     await waitFor(() => expect(input.value).toBe(''))
   })
 
@@ -612,8 +627,8 @@ describe('SaisieClient — calendrier', () => {
 
   /**
    * C2 — le raccourci et la boîte qu'il ouvre sont une seule fonctionnalité.
-   * Maj+Entrée sur une case ouvre le formulaire de durée libre, le seul moyen
-   * de saisir une durée arbitraire : le focus doit y entrer, et en revenir.
+   * Maj+Entrée sur une case ouvre le formulaire d'heures, le seul moyen de
+   * placer un bloc dans la journée : le focus doit y entrer, et en revenir.
    */
   it('ouvre le formulaire au clavier, y porte le focus, et le rend à la case sur Échap', () => {
     renderClient()
@@ -624,32 +639,33 @@ describe('SaisieClient — calendrier', () => {
     fireEvent.keyDown(caseDu12, { key: 'Enter', shiftKey: true })
 
     // Zéro tabulation : le champ est atteint par le raccourci lui-même.
-    const duree = screen.getByLabelText('Durée (heures)')
-    expect(document.activeElement).toBe(duree)
+    const debut = screen.getByLabelText('Heure de début')
+    expect(document.activeElement).toBe(debut)
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByLabelText('Durée (heures)')).toBeNull()
+    expect(screen.queryByLabelText('Heure de début')).toBeNull()
     expect(document.activeElement).toBe(caseDu12)
   })
 
   it('ouvre le formulaire au clic droit et l applique', async () => {
     appliquerCase.mockResolvedValue({
       ok: true,
-      state: { kind: 'LIBRE', minutes: 180, slotId: '', eclatee: false },
+      state: { kind: 'LIBRE', minutes: 180, slotId: '', startMinute: 540, endMinute: 720, eclatee: false },
     })
     renderClient()
 
     fireEvent.contextMenu(screen.getByTestId('case-2026-03-12'))
     // Le formulaire reçoit les créneaux réglés, pas une liste vide.
     expect(screen.getByRole('option', { name: 'Matin (AM)' })).toBeDefined()
-    fireEvent.change(screen.getByLabelText('Durée (heures)'), { target: { value: '3' } })
+    fireEvent.change(screen.getByLabelText('Heure de début'), { target: { value: '09:00' } })
+    fireEvent.change(screen.getByLabelText('Heure de fin'), { target: { value: '12:00' } })
     fireEvent.click(screen.getByRole('button', { name: 'Enregistrer' }))
 
     await waitFor(() =>
       expect(appliquerCase).toHaveBeenCalledWith({
         lineId: 'l1',
         date: '2026-03-12',
-        state: { kind: 'LIBRE', minutes: 180, slotId: '', eclatee: false },
+        state: { kind: 'LIBRE', minutes: 180, slotId: '', startMinute: 540, endMinute: 720, eclatee: false },
         month: '2026-03',
       }),
     )

@@ -28,6 +28,7 @@ export type ResolveResult =
         | 'SAISIE_ABSENTE'
         | 'INSTANTANE_ILLISIBLE'
         | 'JOUR_OCCUPE'
+        | 'CHEVAUCHEMENT'
       message: string
     }
 
@@ -49,13 +50,19 @@ function lireSnapshot(json: string): Snapshot | null {
 }
 
 /** Un refus de `saveEntry` traduit en motif affichable, tel quel. */
-function refus(reason: 'CAPACITE' | 'VERROUILLE' | 'NON_AFFECTE'): ResolveResult {
+function refus(
+  reason: 'CAPACITE' | 'VERROUILLE' | 'NON_AFFECTE' | 'CHEVAUCHEMENT',
+): ResolveResult {
   const messages: Record<typeof reason, string> = {
     VERROUILLE:
       "Le CRA de ce mois est validé : la version de l'agenda ne peut pas être acceptée. Rouvrez le CRA, ou rétablissez l'événement.",
     CAPACITE:
       'Accepter cette version dépasserait la capacité de la journée. Le conflit reste ouvert.',
     NON_AFFECTE: "Vous n'êtes plus affecté à cette ligne de prestation.",
+    // Une autre saisie de cette prestation commence déjà à cette heure-là :
+    // accepter la version de l'agenda superposerait deux blocs.
+    CHEVAUCHEMENT:
+      'Une autre saisie de cette prestation commence déjà à cette heure-là. Le conflit reste ouvert.',
   }
   return { ok: false, reason, message: messages[reason] }
 }

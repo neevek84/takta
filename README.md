@@ -152,6 +152,16 @@ retenir : `npx vitest run` (donc la CI et tout `npm test`) fait déjà
 échouer `src/db/schema-migration-sync.test.ts`, en nommant la colonne
 manquante, si une évolution de schéma part sans sa migration.
 
+**Reprise d'une base SQLite déjà peuplée.** `npm run db:sqlite` passe par
+`prisma db push`, qui n'exécute aucune migration : une colonne ajoutée y
+arrive avec sa seule valeur par défaut. Deux scripts rejouent, côté SQLite,
+ce que les migrations Postgres font en SQL — `npm run backfill:rates` pour
+le facteur de conversion des saisies (lot 1d) et `npm run backfill:heures`
+pour leurs heures de début et de fin (lot 1f). Ce sont des scripts de
+reprise, pas d'entretien : relancer `backfill:heures` après qu'un créneau a
+été redéfini en administration déplacerait les saisies que le gel des
+heures protège.
+
 ## Poste local (sans Docker, SQLite)
 
 Prérequis : Node.js 20 ou plus.
