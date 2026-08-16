@@ -65,6 +65,11 @@ async function request(
   if (res.status === 401 || res.status === 403) {
     throw new CalendarApiError('UNAUTHORIZED', "L'autorisation Google est expirée ou révoquée.")
   }
+  // Requête refusée pour son contenu : la rejouer donnerait le même refus.
+  // 429 (quota) et 5xx restent transitoires et retombent dans `UNAVAILABLE`.
+  if (res.status === 400 || res.status === 422) {
+    throw new CalendarApiError('INVALID', `Requête refusée par l'agenda (HTTP ${res.status}).`)
+  }
   if (res.status >= 400) {
     throw new CalendarApiError('UNAVAILABLE', `Agenda en erreur (HTTP ${res.status}).`)
   }

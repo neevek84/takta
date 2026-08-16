@@ -4,7 +4,7 @@ import { updateSettings } from '@/services/settings'
 import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
 import { saveEntry, convertPastForecast } from '@/services/time-entries'
-import { enqueueTimeEntry } from './outbox'
+import { enqueueTimeEntry, RETENTION_JOURS } from './outbox'
 
 // Un interrupteur pour faire échouer la mise en file à la demande. C'est le
 // seul moyen d'observer le sens « pas d'écriture sans mise en file » : la
@@ -159,6 +159,59 @@ describe('mise en file', () => {
     const r = await convertPastForecast(userId, '2026-03', '2026-03-20')
     expect(r.converted).toBe(2)
     expect(await prisma.syncOutbox.count({ where: { userId, operation: 'UPSERT' } })).toBe(2)
+  })
+})
+
+describe('la file reste bornée', () => {
+  // Sans borne, un utilisateur qui n'active jamais l'agenda accumule une ligne
+  // par cellule saisie, indéfiniment : personne ne les draine, rien ne les
+  // retire. Une ligne due depuis des mois ne décrit plus rien d'exploitable.
+  function vieilleLigne(pourUserId: string, entityId: string) {
+    return prisma.syncOutbox.create({
+      data: {
+        userId: pourUserId,
+        entityType: 'TimeEntry',
+        entityId,
+        provider: 'GOOGLE',
+        operation: 'UPSERT',
+        nextAttemptAt: new Date(Date.now() - (RETENTION_JOURS + 1) * 86_400_000),
+      },
+    })
+  }
+
+  it('la saisie suivante retire les lignes que plus rien ne drainera', async () => {
+    const perimee = await vieilleLigne(userId, 'saisie-perimee')
+
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
+
+    expect(await prisma.syncOutbox.findUnique({ where: { id: perimee.id } })).toBeNull()
+  })
+
+  it('ne touche pas à la file d un autre utilisateur', async () => {
+    const autre = await vieilleLigne(autreId, 'saisie-perimee-autre')
+
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
+
+    expect(await prisma.syncOutbox.findUnique({ where: { id: autre.id } })).not.toBeNull()
+  })
+
+  it('garde une ligne encore fraîche, même en échec', async () => {
+    const recente = await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'TimeEntry',
+        entityId: 'saisie-recente',
+        provider: 'GOOGLE',
+        operation: 'UPSERT',
+        state: 'FAILED',
+        attempts: 5,
+        nextAttemptAt: new Date(Date.now() - 86_400_000),
+      },
+    })
+
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
+
+    expect(await prisma.syncOutbox.findUnique({ where: { id: recente.id } })).not.toBeNull()
   })
 })
 

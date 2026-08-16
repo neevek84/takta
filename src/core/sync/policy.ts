@@ -32,6 +32,21 @@ export interface NextAttempt {
  * Une file qui perdrait ses échecs produirait un agenda silencieusement faux,
  * exactement la dérive qu'on ne détecte que trois mois plus tard.
  */
+/**
+ * Renonce sans consommer le quota restant, pour un échec que rejouer ne
+ * réparera pas (requête refusée pour son contenu, `CalendarErrorKind` =
+ * `INVALID`).
+ *
+ * Le recul progressif suppose une panne qui passe ; une erreur permanente
+ * rejouée cinq fois produit cinq lignes de bruit et noie les pannes réelles
+ * dans l'écran de synchronisation. La ligne **reste en base** en `FAILED`,
+ * comme après un quota épuisé : le seul écart est le nombre de tentatives
+ * gâchées pour y arriver.
+ */
+export function abandon(attemptsSoFar: number, now: Date): NextAttempt {
+  return { state: 'FAILED', attempts: attemptsSoFar + 1, nextAttemptAt: now }
+}
+
 export function nextAttempt(attemptsSoFar: number, now: Date): NextAttempt {
   const attempts = attemptsSoFar + 1
   const index = Math.min(attempts - 1, RETRY_DELAYS_MINUTES.length - 1)

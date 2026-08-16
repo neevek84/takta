@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MAX_ATTEMPTS, RETRY_DELAYS_MINUTES, nextAttempt } from './policy'
+import { MAX_ATTEMPTS, RETRY_DELAYS_MINUTES, abandon, nextAttempt } from './policy'
 
 const NOW = new Date('2026-03-10T10:00:00.000Z')
 
@@ -49,5 +49,17 @@ describe('nextAttempt', () => {
   it('expose une séquence de longueur cohérente avec le quota', () => {
     expect(RETRY_DELAYS_MINUTES).toEqual([1, 5, 15, 60, 360])
     expect(MAX_ATTEMPTS).toBe(5)
+  })
+})
+
+describe('abandon', () => {
+  // Un échec permanent ne mérite pas le quota d'un échec transitoire : il tombe
+  // en FAILED du premier coup, sans planifier de rejeu.
+  it('passe à FAILED dès la première tentative', () => {
+    expect(abandon(0, NOW)).toEqual({ state: 'FAILED', attempts: 1, nextAttemptAt: NOW })
+  })
+
+  it('compte la tentative consommée sans en planifier une autre', () => {
+    expect(abandon(2, NOW)).toEqual({ state: 'FAILED', attempts: 3, nextAttemptAt: NOW })
   })
 })

@@ -4,7 +4,10 @@
  * **Aucun test n'appelle Google.** Ce fichier est le seul « Google » que la
  * suite connaisse ; il n'est jamais importé par le code applicatif. Il rejoue
  * les codes de retour qui comptent — 200, 400, 401, 404, 410, 503 — et les
- * pannes de transport, pour que le connecteur réel soit exercé tel quel.
+ * pannes de transport, pour que le connecteur réel soit exercé tel quel. Le
+ * 400 se déclenche aussi à la demande (`failNext('REQUETE')`) : c'est le seul
+ * moyen d'exercer la frontière entre échec définitif et échec transitoire sur
+ * une requête que le double jugerait par ailleurs valide.
  *
  * Il refuse ce que la vraie API refuserait : jeton absent, borne manquante,
  * heure mal formée, couleur hors palette, route inconnue. Un double complaisant
@@ -37,7 +40,7 @@ export interface FakeGoogleApi {
   /** jetons acceptés par l'échange OAuth, pour les tâches 7 et 10 */
   oauth: { accessToken: string; refreshToken: string; expiresIn: number; refusRefresh: boolean }
 
-  failNext(mode: 'RESEAU' | 'EXPIRE' | 'SERVEUR'): void
+  failNext(mode: 'RESEAU' | 'EXPIRE' | 'SERVEUR' | 'REQUETE'): void
   expirerJeton(): void
   retablirJeton(): void
   toucherEvenement(
@@ -148,7 +151,7 @@ export function createFakeGoogleApi(): FakeGoogleApi {
     refusRefresh: false,
   }
 
-  let prochainEchec: 'RESEAU' | 'EXPIRE' | 'SERVEUR' | null = null
+  let prochainEchec: 'RESEAU' | 'EXPIRE' | 'SERVEUR' | 'REQUETE' | null = null
   let jetonExpire = false
   let seq = 0
 
@@ -185,6 +188,8 @@ export function createFakeGoogleApi(): FakeGoogleApi {
         err.name = 'TimeoutError'
         throw err
       }
+      // Refus définitif, à distinguer du 503 : rejouer donnerait le même refus.
+      if (mode === 'REQUETE') return erreur(400, 'Invalid value')
       return json({ error: { message: 'Backend error' } }, 503)
     }
 

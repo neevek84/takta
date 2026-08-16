@@ -1,14 +1,19 @@
 import type { CalendarEventDraft } from './event'
 
-export type CalendarErrorKind = 'NOT_FOUND' | 'UNAUTHORIZED' | 'UNAVAILABLE'
+export type CalendarErrorKind = 'NOT_FOUND' | 'UNAUTHORIZED' | 'UNAVAILABLE' | 'INVALID'
 
 /**
  * La seule erreur qu'un connecteur a le droit d'émettre.
  *
- * Trois cas suffisent à décider quoi faire : `NOT_FOUND` ouvre un conflit,
- * `UNAUTHORIZED` se lit comme « non connecté », `UNAVAILABLE` se rejoue. Toute
- * exception brute qui remonterait jusqu'à la saisie serait un défaut : une
- * panne Google ne bloque jamais la saisie.
+ * Quatre cas suffisent à décider quoi faire : `NOT_FOUND` ouvre un conflit,
+ * `UNAUTHORIZED` se lit comme « non connecté », `UNAVAILABLE` se rejoue, et
+ * `INVALID` s'abandonne. Toute exception brute qui remonterait jusqu'à la
+ * saisie serait un défaut : une panne Google ne bloque jamais la saisie.
+ *
+ * `INVALID` est la seule famille définitive : une requête que l'agenda refuse
+ * pour ce qu'elle contient ne guérira pas en attendant. La rejouer jusqu'au
+ * quota noierait les vraies pannes dans du bruit — c'est cette distinction,
+ * et pas le code HTTP, que le drainage lit.
  */
 export class CalendarApiError extends Error {
   readonly kind: CalendarErrorKind

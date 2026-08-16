@@ -190,6 +190,13 @@ describe('pannes', () => {
     await expect(connector().createEvent(draft())).rejects.toMatchObject({ kind: 'UNAVAILABLE' })
   })
 
+  // Un 400 ne guérit pas en attendant : le distinguer d'un 503 est ce qui
+  // évite de rejouer cinq fois une requête définitivement mal formée.
+  it('traduit un 400 en INVALID, jamais en UNAVAILABLE', async () => {
+    api.failNext('REQUETE')
+    await expect(connector().createEvent(draft())).rejects.toMatchObject({ kind: 'INVALID' })
+  })
+
   it('traduit un jeton expiré en UNAUTHORIZED', async () => {
     api.expirerJeton()
     await expect(connector().createEvent(draft())).rejects.toMatchObject({ kind: 'UNAUTHORIZED' })
