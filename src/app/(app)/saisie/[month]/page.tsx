@@ -63,6 +63,11 @@ export default async function SaisiePage({ params }: { params: Promise<{ month: 
         // Un repère, jamais un verrou : la liste est vide quand l'agenda n'est
         // pas connecté ou pas joignable, et la saisie fonctionne à l'identique.
         busyDates={busyDates}
+        // Le même jour que celui du rappel de prévisionnel échu, et calculé
+        // une seule fois : la case du jour marque la frontière entre le
+        // réalisé et le prévisionnel, et les deux ne peuvent pas la placer
+        // ailleurs l'un que l'autre.
+        aujourdhui={today}
       />
     </main>
   )

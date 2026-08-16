@@ -4,8 +4,12 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { buildWeeks } from '@/core/month/weeks'
 import { buildCellStates } from '@/core/saisie/cell-state'
 import { colorForLine } from '@/core/saisie/colors'
+import type { LineColor } from '@/core/saisie/colors'
+import { formeDeLaCase, signatureDeForme } from '@/core/saisie/forme'
+import type { Forme } from '@/core/saisie/forme'
 import { kindDeLaJournee } from '@/core/saisie/kind'
 import { OCCUPATION_TITRE } from '@/core/saisie/occupation'
+import { libelleDemiJournee, libelleDemiJourneeDetaille } from '@/core/saisie/slot-labels'
 import { cycleSlotIds, nextCellState } from '@/core/saisie/cycle'
 import type { CellState } from '@/core/saisie/cycle'
 import { centiemesParFacteur, formatJours, formatQuantity } from '@/core/time/units'
@@ -88,6 +92,80 @@ function libelleSlot(slotId: string, slots: readonly Slot[]): string {
 }
 
 /**
+ * La découpe qui donne sa moitié à l'aplat. Déclarée en utilitaires dans
+ * `globals.css` : une découpe, jamais une opacité — le contrôle de contraste
+ * porte sur des couleurs opaques, et un aplat à 45 % lui échapperait.
+ */
+const DECOUPE: Record<string, string> = {
+  'MOITIE-AM': 'clip-half-am',
+  'MOITIE-PM': 'clip-half-pm',
+}
+
+/**
+ * Hauteur de l'aplat, en pourcentage de la case.
+ *
+ * L'arrondi n'est pas une coquetterie : `0,29 * 100` vaut
+ * `28.999999999999996` en virgule flottante, et cette suite partait telle
+ * quelle dans le style de la case. La fraction est déjà au centième près —
+ * l'unité de la journée dans tout le domaine —, l'arrondi ne perd donc rien.
+ */
+function hauteur(forme: Forme): string {
+  return forme.kind === 'PARTIELLE' ? `${Math.round(forme.fraction * 100)}%` : '100%'
+}
+
+/**
+ * L'aplat d'une case — le cœur du lot 1f.
+ *
+ * Un nœud à part, sous le contenu et hors du flux : le chiffre reste par-dessus
+ * la forme, jamais à sa place. `pointer-events-none` le retire du chemin du
+ * pointeur, sans quoi il s'interposerait entre le doigt et la case pour tous
+ * les gestes que `MonthCalendar` écoute.
+ */
+function Aplat({ date, forme, couleur }: { date: string; forme: Forme; couleur: LineColor }) {
+  if (forme.kind === 'AUCUNE') return null
+  const signature = signatureDeForme(forme)
+  return (
+    <span
+      aria-hidden="true"
+      data-testid={`remplissage-${date}`}
+      data-forme={signature}
+      className={`pointer-events-none absolute inset-x-0 bottom-0 ${couleur.bg} ${
+        DECOUPE[signature] ?? ''
+      }`}
+      style={{ height: hauteur(forme) }}
+    />
+  )
+}
+
+/**
+ * L'horloge du prévisionnel.
+ *
+ * Les hachures qu'elle remplace étaient illisibles — constaté à l'usage. Le
+ * prévisionnel garde donc **exactement le même remplissage que le réalisé**, et
+ * c'est ce tracé qui les sépare : il se voit en monochrome, ce que la règle du
+ * projet exige, là où une teinte seule ne suffirait pas.
+ */
+function Horloge({ date }: { date?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      data-testid={date === undefined ? undefined : `previsionnel-${date}`}
+      width="10"
+      height="10"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      className="shrink-0"
+    >
+      <circle cx="6" cy="6" r="4.6" />
+      <path d="M6 3.2V6.2L8 7.6" />
+    </svg>
+  )
+}
+
+/**
  * Ce que la case affiche.
  *
  * L'unité est celle sous laquelle la prestation est vendue, jamais l'heure
@@ -111,7 +189,9 @@ function contenu(
     case 'JOURNEE':
       return '1'
     case 'DEMI':
-      return `½ ${libelleSlot(etat.slotId, slots).slice(0, 1).toUpperCase()}`
+      // « ½ M » et « ½ A » se confondaient dans une case de 44 points, et
+      // « M » pouvait dire « Matin » comme « Midi ». AM et PM sont universels.
+      return libelleDemiJournee(etat.slotId, slots)
     case 'LIBRE':
       return line.displayUnit === 'HEURE'
         ? formatQuantity(etat.minutes, 'HEURE', line.minutesParJour)
@@ -126,7 +206,9 @@ function description(etat: CellState, slots: readonly Slot[]): string {
     case 'JOURNEE':
       return 'Journée entière'
     case 'DEMI':
-      return `Demi-journée — ${libelleSlot(etat.slotId, slots)}`
+      // L'infobulle a la place de dire les deux : l'abréviation universelle
+      // que le porteur veut voir partout, et le libellé réglé en administration.
+      return `Demi-journée ${libelleDemiJourneeDetaille(etat.slotId, slots)}`
     case 'LIBRE':
       return etat.eclatee
         ? 'Journée saisie en plusieurs créneaux'
@@ -160,6 +242,7 @@ export function MonthCalendar({
   autresLignes,
   toutLeMois,
   busyDates = AUCUNE_OCCUPATION,
+  aujourdhui,
   onApply,
   onRange,
   onFormulaire,
@@ -180,6 +263,14 @@ export function MonthCalendar({
    * il n'interdit rien.
    */
   busyDates?: string[]
+  /**
+   * le jour courant, 'YYYY-MM-DD'.
+   *
+   * Transmis par la page plutôt que lu à l'horloge du navigateur : le rendu
+   * serveur et le rendu client doivent tomber d'accord, et un mois qui ne
+   * contient pas ce jour n'en marque simplement aucun.
+   */
+  aujourdhui?: string
   /** renvoie `true` quand l'état a bien été enregistré */
   onApply: (date: string, state: CellState) => Promise<boolean>
   onRange: (dates: string[], state: CellState) => Promise<void>
@@ -417,9 +508,14 @@ export function MonthCalendar({
     [etatDe, onFormulaire, onApply, options],
   )
 
+  const couleur = colorForLine(line.id)
+
   return (
     <div>
-      <p className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+      <p
+        data-testid="legende-calendrier"
+        className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted"
+      >
         {/* Les fonds de week-end et de férié ne se lisent pas sans légende : la
             teinte et le motif y renvoient, ils ne se nomment pas eux-mêmes. */}
         {(['weekend', 'ferie'] as const).map((etat) => (
@@ -431,12 +527,40 @@ export function MonthCalendar({
             {TITRE_JOUR[etat]}
           </span>
         ))}
+
+        {/* Les formes de l'aplat. Une forme qu'on doit deviner ne se lit pas
+            mieux qu'un chiffre : la légende la nomme, et avec les mots que
+            l'infobulle et la barre de sélection emploient. */}
+        <span className="inline-flex items-center gap-1">
+          <Pastille couleur={couleur} />1 j
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Pastille couleur={couleur} decoupe="clip-half-am" />½ AM
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Pastille couleur={couleur} decoupe="clip-half-pm" />½ PM
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Horloge />
+          Prévisionnel
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span
+            aria-hidden="true"
+            className="inline-block h-4 w-4 rounded-sm border-2 border-ink bg-surface"
+          />
+          Aujourd’hui
+        </span>
       </p>
 
       <div
         ref={conteneur}
         data-testid="grille-calendrier"
-        className="grid grid-cols-7 gap-1"
+        // Gouttière d'un demi-pas et non d'un pas entier : sur un écran de
+        // 375 points, sept cases à 44 points et six gouttières de 4 ne tiennent
+        // pas dans les 327 points que la page laisse — la grille débordait,
+        // ou les cases tombaient sous la cible tactile. Voir le test de budget.
+        className="grid grid-cols-7 gap-0.5"
         // Sur le conteneur et non sur chaque case : au doigt, le pointeur est
         // relâché là où il se trouve, qui n'est pas la case d'où il est parti.
         onPointerUp={terminerGeste}
@@ -465,10 +589,12 @@ export function MonthCalendar({
                 saisies={saisiesDe(jour.date)}
                 previsionnel={previsionnelles.has(jour.date)}
                 occupe={occupes.has(jour.date)}
+                aujourdhui={jour.date === aujourdhui}
                 autres={autresParDate.get(jour.date) ?? []}
                 selected={drag.isSelected(line.id, jour.date)}
                 slots={slots}
                 line={line}
+                couleur={couleur}
                 consommerGlissement={consommerGlissement}
                 onClick={() => void cliquer(jour.date)}
                 onFormulaire={() => onFormulaire(jour.date, etatDe(jour.date))}
@@ -500,7 +626,7 @@ export function MonthCalendar({
               type="button"
               onClick={() => void appliquerPlage({ kind: 'DEMI', slotId })}
             >
-              ½ {libelleSlot(slotId, slots)}
+              {libelleDemiJournee(slotId, slots)}
             </Button>
           ))}
           <Button type="button" onClick={() => void appliquerPlage({ kind: 'VIDE' })}>
@@ -520,16 +646,36 @@ export function MonthCalendar({
   )
 }
 
+/**
+ * L'échantillon de la légende : une case en réduction, avec sa découpe.
+ *
+ * Le fond de la case est rendu, la découpe taille l'aplat par-dessus : c'est
+ * la même superposition que dans la grille, sans quoi la légende montrerait un
+ * triangle flottant plutôt que la moitié d'une case.
+ */
+function Pastille({ couleur, decoupe }: { couleur: LineColor; decoupe?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="relative inline-block h-4 w-4 overflow-hidden rounded-sm border border-rule bg-surface"
+    >
+      <span className={`absolute inset-0 ${couleur.bg} ${decoupe ?? ''}`} />
+    </span>
+  )
+}
+
 function Case({
   jour,
   etat,
   saisies,
   previsionnel,
   occupe,
+  aujourdhui,
   autres,
   selected,
   slots,
   line,
+  couleur,
   consommerGlissement,
   onClick,
   onFormulaire,
@@ -545,11 +691,15 @@ function Case({
   previsionnel: boolean
   /** l'agenda externe porte déjà quelque chose ce jour-là — informatif */
   occupe: boolean
+  /** ce jour est le jour courant */
+  aujourdhui: boolean
   /** autres prestations occupant ce jour, en lecture seule */
   autres: LineForGrid[]
   selected: boolean
   slots: Slot[]
   line: LineForGrid
+  /** teinte de la prestation saisie, celle de l'aplat */
+  couleur: LineColor
   consommerGlissement: () => boolean
   onClick: () => void
   onFormulaire: () => void
@@ -564,10 +714,21 @@ function Case({
   const jourDit = etatJour(jour)
   const titreJour = TITRE_JOUR[jourDit]
   // L'occupation s'ajoute à ce que la case disait déjà : un férié occupé reste
-  // un férié, et un marqueur muet ne dirait rien à qui ne le voit pas.
-  const detail = [titreJour, description(etat, slots), occupe ? OCCUPATION_TITRE : undefined]
+  // un férié, et un marqueur muet ne dirait rien à qui ne le voit pas. Le jour
+  // courant et le prévisionnel s'y ajoutent de la même façon : ni le trait
+  // épais ni l'horloge ne se lisent d'eux-mêmes.
+  const detail = [
+    aujourdhui ? 'Aujourd’hui' : undefined,
+    titreJour,
+    description(etat, slots),
+    previsionnel ? 'Prévisionnel' : undefined,
+    occupe ? OCCUPATION_TITRE : undefined,
+  ]
     .filter((t) => t !== undefined)
     .join(' — ')
+
+  const forme = formeDeLaCase(etat, saisies, slots)
+  const remplie = forme.kind !== 'AUCUNE'
 
   return (
     <div className="flex flex-col gap-0.5">
@@ -577,6 +738,7 @@ function Case({
         data-date={jour.date}
         data-jour={jourDit}
         data-busy={occupe ? 'true' : undefined}
+        data-aujourdhui={aujourdhui ? 'true' : undefined}
         aria-label={`${line.label} le ${jour.date} — ${detail}`}
         title={detail}
         onPointerDown={(ev) => {
@@ -634,25 +796,39 @@ function Case({
           }
           if (ev.key === 'Escape') onAbandonner()
         }}
-        className={`touch-target flex flex-col items-center justify-center rounded-sm border border-rule text-sm ${
+        // `relative` et `overflow-hidden` : l'aplat est posé en absolu dans la
+        // case, et sa découpe ne doit pas déborder du coin arrondi.
+        //
+        // Le jour courant se distingue par un trait épais, jamais par la seule
+        // teinte — et il se distingue quel que soit le contenu de la case,
+        // parce que c'est là que passe la frontière entre réalisé et
+        // prévisionnel.
+        className={`touch-target relative flex flex-col items-center justify-center overflow-hidden rounded-sm text-sm ${
           FOND_JOUR[jourDit]
-        } ${etat.kind === 'LIBRE' && etat.eclatee ? 'ring-1 ring-inset ring-warning-edge' : ''} ${
-          etat.kind === 'VIDE' ? 'text-muted' : 'text-ink'
-        } ${previsionnel ? 'pattern-hatch italic text-muted' : ''} ${
+        } ${aujourdhui ? 'border-2 border-ink' : 'border border-rule'} ${
+          etat.kind === 'LIBRE' && etat.eclatee ? 'ring-1 ring-inset ring-warning-edge' : ''
+        } ${remplie ? 'text-ink' : 'text-muted'} ${previsionnel ? 'italic' : ''} ${
           selected ? 'ring-2 ring-inset ring-focus' : ''
         }`}
       >
-        <span className="flex items-center gap-0.5 text-xs leading-none text-muted">
+        <Aplat date={jour.date} forme={forme} couleur={couleur} />
+
+        {/* `relative` : le contenu passe au-dessus de l'aplat, qui est le seul
+            nœud positionné en absolu de la case. */}
+        <span className="relative flex items-center gap-0.5 text-xs leading-none">
           {Number(jour.date.slice(8))}
           {occupe && (
             <span aria-hidden="true" data-testid={`occupation-${jour.date}`}>
               {MARQUEUR_OCCUPATION}
             </span>
           )}
+          {/* Le prévisionnel garde le remplissage du réalisé : c'est cette
+              horloge, et elle seule, qui les sépare. */}
+          {previsionnel && <Horloge date={jour.date} />}
         </span>
         {/* Le numéro du jour et la valeur sont deux nœuds distincts : les mêler
             rendrait « la case est vide » indistinguable de « la case affiche 10 ». */}
-        <span data-testid={`valeur-${jour.date}`} className="leading-tight">
+        <span data-testid={`valeur-${jour.date}`} className="relative leading-tight">
           {contenu(etat, slots, line, saisies)}
         </span>
       </button>

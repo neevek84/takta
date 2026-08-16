@@ -67,7 +67,7 @@ const deuxJournees: MonthEntry[] = [
 
 /** La vue tableau n'est plus la vue par défaut : ces tests l'ouvrent d'abord. */
 function ouvrirTableau(): void {
-  fireEvent.click(screen.getByRole('button', { name: 'Tableau' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Tableau multi-CRA' }))
 }
 
 function saisir(valeur: string): HTMLInputElement {
@@ -365,8 +365,10 @@ describe('SaisieClient — calendrier', () => {
   it('réserve la vue tableau au poste', () => {
     renderClient()
     // Sept colonnes tiennent sur un téléphone ; trente et une, non.
-    expect(screen.getByRole('button', { name: 'Tableau' }).className).toContain('hidden')
-    expect(screen.getByRole('button', { name: 'Tableau' }).className).toContain('md:inline-flex')
+    expect(screen.getByRole('button', { name: 'Tableau multi-CRA' }).className).toContain('hidden')
+    expect(screen.getByRole('button', { name: 'Tableau multi-CRA' }).className).toContain(
+      'md:inline-flex',
+    )
     // La vue calendrier, elle, reste offerte partout : la reléguer aussi au
     // poste ne laisserait aucune vue au téléphone.
     expect(screen.getByRole('button', { name: 'Calendrier' }).className).not.toContain('hidden')
@@ -450,18 +452,61 @@ describe('SaisieClient — calendrier', () => {
     await waitFor(() => expect(screen.getByTestId('valeur-2026-03-12').textContent).toBe(''))
   })
 
-  it('bascule entre « Cette prestation » et « Tout le mois »', () => {
+  // « Tout le mois » annonçait une portée de temps ; la bascule porte une
+  // portée de prestations — afficher, ou non, les autres à côté de celle
+  // qu'on saisit. Le libellé dit désormais la chose.
+  it('bascule entre « Cette prestation » et « Toutes les prestations »', () => {
     renderClient()
     expect(screen.getByRole('button', { name: 'Cette prestation' }).getAttribute('aria-pressed')).toBe(
       'true',
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Tout le mois' }))
-    expect(screen.getByRole('button', { name: 'Tout le mois' }).getAttribute('aria-pressed')).toBe(
-      'true',
-    )
+    fireEvent.click(screen.getByRole('button', { name: 'Toutes les prestations' }))
+    expect(
+      screen.getByRole('button', { name: 'Toutes les prestations' }).getAttribute('aria-pressed'),
+    ).toBe('true')
     expect(screen.getByRole('button', { name: 'Cette prestation' }).getAttribute('aria-pressed')).toBe(
       'false',
     )
+  })
+
+  it('n annonce plus une portée de temps', () => {
+    renderClient()
+    expect(screen.queryByRole('button', { name: 'Tout le mois' })).toBeNull()
+  })
+
+  // La bascule n'est transmise qu'au calendrier : en mode tableau, elle
+  // n'avait aucun effet. Un réglage sans effet visible apprend à
+  // l'utilisateur que l'interface ment.
+  it('retire la bascule de portée en mode tableau', () => {
+    renderClient()
+    expect(screen.getByRole('button', { name: 'Cette prestation' })).toBeDefined()
+
+    ouvrirTableau()
+    expect(screen.queryByRole('button', { name: 'Cette prestation' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Toutes les prestations' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
+    expect(screen.getByRole('button', { name: 'Cette prestation' })).toBeDefined()
+  })
+
+  // Le tableau montre toutes les missions et prestations auxquelles on est
+  // affecté : c'est sa nature, et son nom doit le dire.
+  it('nomme le tableau comme la vue multi-CRA', () => {
+    renderClient()
+    expect(screen.getByRole('button', { name: /multi-CRA/ })).toBeDefined()
+
+    ouvrirTableau()
+    expect(screen.getByTestId('nature-tableau').textContent).toContain(
+      'toutes les missions et prestations',
+    )
+  })
+
+  // Le jour courant vient de la page, jamais de l'horloge du navigateur : le
+  // rendu serveur et le rendu client doivent tomber d'accord.
+  it('marque la case du jour courant dans le calendrier', () => {
+    renderClient({ aujourdhui: '2026-03-12' })
+    expect(screen.getByTestId('case-2026-03-12').getAttribute('data-aujourdhui')).toBe('true')
+    expect(screen.getByTestId('case-2026-03-13').getAttribute('data-aujourdhui')).toBeNull()
   })
 
   it('change de prestation par le sélecteur', () => {
@@ -596,7 +641,7 @@ describe('SaisieClient — calendrier', () => {
 
     fireEvent.contextMenu(screen.getByTestId('case-2026-03-12'))
     // Le formulaire reçoit les créneaux réglés, pas une liste vide.
-    expect(screen.getByRole('option', { name: 'Matin' })).toBeDefined()
+    expect(screen.getByRole('option', { name: 'Matin (AM)' })).toBeDefined()
     fireEvent.change(screen.getByLabelText('Durée (heures)'), { target: { value: '3' } })
     fireEvent.click(screen.getByRole('button', { name: 'Enregistrer' }))
 

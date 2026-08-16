@@ -90,6 +90,14 @@ export function SaisieClient(props: {
    * Google retire le repère, jamais la saisie.
    */
   busyDates?: string[]
+  /**
+   * le jour courant, 'YYYY-MM-DD'.
+   *
+   * Calculé par la page — qui le calcule déjà pour le prévisionnel échu — et
+   * non lu ici à l'horloge du navigateur : le rendu serveur et le rendu client
+   * doivent tomber d'accord.
+   */
+  aujourdhui?: string
 }) {
   const [message, setMessage] = useState<Message | null>(null)
   const [vue, setVue] = useState<Vue>('CALENDRIER')
@@ -204,6 +212,9 @@ export function SaisieClient(props: {
         </Button>
         {/* Sept colonnes tiennent sur un téléphone ; trente et une, non. La
             vue calendrier, elle, reste offerte sur les deux. */}
+        {/* Le tableau montre toutes les missions et prestations auxquelles on
+            est affecté : son nom le dit, plutôt que de laisser croire à une
+            autre présentation de la seule prestation saisie. */}
         <Button
           type="button"
           aria-pressed={vue === 'TABLEAU'}
@@ -211,31 +222,40 @@ export function SaisieClient(props: {
           onClick={() => setVue('TABLEAU')}
           className="hidden md:inline-flex"
         >
-          Tableau
+          Tableau multi-CRA
         </Button>
 
-        {/* Séparateur tracé par un filet et non par un aplat : un fond de
-            jeton doit porter une encre déclarée, ce que ce trait n'a pas. */}
-        <span className="mx-2 h-5 w-0 border-l border-rule" aria-hidden="true" />
+        {/* La bascule de portée ne vaut que pour le calendrier : elle n'est
+            transmise qu'à lui, et un réglage sans effet visible apprend à
+            l'utilisateur que l'interface ment. */}
+        {vue === 'CALENDRIER' && (
+          <>
+            {/* Séparateur tracé par un filet et non par un aplat : un fond de
+                jeton doit porter une encre déclarée, ce que ce trait n'a pas. */}
+            <span className="mx-2 h-5 w-0 border-l border-rule" aria-hidden="true" />
 
-        {/* Portée de ce que le calendrier montre : la prestation saisie seule,
-            ou toutes celles du mois en lecture seule à côté d'elle. */}
-        <Button
-          type="button"
-          aria-pressed={!toutLeMois}
-          variant={toutLeMois ? 'secondary' : 'primary'}
-          onClick={() => setToutLeMois(false)}
-        >
-          Cette prestation
-        </Button>
-        <Button
-          type="button"
-          aria-pressed={toutLeMois}
-          variant={toutLeMois ? 'primary' : 'secondary'}
-          onClick={() => setToutLeMois(true)}
-        >
-          Tout le mois
-        </Button>
+            {/* Portée de **prestations**, jamais de temps : « Tout le mois »
+                annonçait une portée de temps quand la bascule choisit
+                d'afficher, ou non, les autres prestations en lecture seule à
+                côté de celle qu'on saisit. */}
+            <Button
+              type="button"
+              aria-pressed={!toutLeMois}
+              variant={toutLeMois ? 'secondary' : 'primary'}
+              onClick={() => setToutLeMois(false)}
+            >
+              Cette prestation
+            </Button>
+            <Button
+              type="button"
+              aria-pressed={toutLeMois}
+              variant={toutLeMois ? 'primary' : 'secondary'}
+              onClick={() => setToutLeMois(true)}
+            >
+              Toutes les prestations
+            </Button>
+          </>
+        )}
       </div>
 
       <div className="mb-3 flex flex-wrap items-end gap-3">
@@ -311,6 +331,8 @@ export function SaisieClient(props: {
             // `md` : un marquage réservé au tableau n'existerait pas pour un
             // usage au téléphone.
             busyDates={props.busyDates}
+            // La frontière entre réalisé et prévisionnel passe exactement là.
+            aujourdhui={props.aujourdhui}
             onApply={handleApply}
             onRange={handleRange}
             onFormulaire={(date, etat) => setFormulaire({ date, etat })}
@@ -341,19 +363,27 @@ export function SaisieClient(props: {
       )}
 
       {vue === 'TABLEAU' && (
-        <MonthGrid
-          days={props.days}
-          lines={props.lines}
-          entries={props.entries}
-          engagementTotals={props.engagementTotals}
-          capacityCentiemes={props.capacityCentiemes}
-          capacityMode={props.capacityMode}
-          busyDates={props.busyDates}
-          // Les créneaux réglés en administration : le tableau les propose
-          // cellule par cellule, comme le formulaire du calendrier le fait déjà.
-          slots={props.slots}
-          onSave={handleSave}
-        />
+        <>
+          {/* Ce que le tableau est, dit là où il s'affiche : la bascule de
+              portée vient de disparaître, et sans cette phrase l'utilisateur
+              n'a plus rien qui explique pourquoi il voit trois lignes. */}
+          <p data-testid="nature-tableau" className="mb-2 text-xs text-muted">
+            Le tableau montre toutes les missions et prestations auxquelles vous êtes affecté.
+          </p>
+          <MonthGrid
+            days={props.days}
+            lines={props.lines}
+            entries={props.entries}
+            engagementTotals={props.engagementTotals}
+            capacityCentiemes={props.capacityCentiemes}
+            capacityMode={props.capacityMode}
+            busyDates={props.busyDates}
+            // Les créneaux réglés en administration : le tableau les propose
+            // cellule par cellule, comme le formulaire du calendrier le fait déjà.
+            slots={props.slots}
+            onSave={handleSave}
+          />
+        </>
       )}
     </>
   )

@@ -120,6 +120,15 @@ describe('CellForm', () => {
     expect(valeurs).toEqual(['', 'matin', 'apres-midi', 'nuit'])
   })
 
+  // « AM » et « PM » partout : le porteur les veut aussi dans le formulaire,
+  // pour lever l'ambiguïté du matin et de l'après-midi. Pas « ½ AM » ici : on
+  // y saisit une durée libre, qui n'est pas forcément une demi-journée.
+  it('précise la moitié de journée de chaque créneau', () => {
+    renderForm()
+    const libelles = Array.from(creneau().options).map((o) => o.textContent)
+    expect(libelles).toEqual(['Journée entière', 'Matin (AM)', 'Après-midi (PM)', 'Nuit'])
+  })
+
   // `allowedSlotIds` : signalement, jamais refus.
   it('signale un créneau non autorisé sans le rendre inchoisissable', () => {
     const { onSubmit } = renderForm({ line: ligneRestreinte })

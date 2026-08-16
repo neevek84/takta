@@ -138,6 +138,21 @@
   );
 }
 
+/* Les deux moitiés d'une case de saisie, séparées par une diagonale qui monte
+   de bas-gauche à haut-droite — la convention retenue par le porteur au lot 1f.
+   Le matin est au-dessus, l'après-midi en dessous : les deux moitiés sont
+   *spatialement* distinctes, ce qui se lit sans l'apprendre.
+
+   Une découpe, jamais une opacité : le contrôle de contraste porte sur des
+   couleurs opaques, et un aplat à 45 % lui échapperait entièrement. */
+@utility clip-half-am {
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+@utility clip-half-pm {
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
 /* 44 points : la cible tactile minimale dont le lot 1c dépend. */
 @utility touch-target {
   min-height: 2.75rem;

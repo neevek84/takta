@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { isSlotAllowed } from '@/core/saisie/cycle'
 import type { CellState } from '@/core/saisie/cycle'
 import { cellStateToWrite } from '@/core/saisie/cell-state'
+import { libelleCreneauAvecMoment } from '@/core/saisie/slot-labels'
 import { parseQuantity } from '@/core/time/units'
 import type { Slot } from '@/core/time/slots'
 import type { LineForGrid } from '@/services/missions'
@@ -177,13 +178,19 @@ export function CellForm({
           className="w-52"
         >
           <option value="">Journée entière</option>
-          {slots.map((s) => (
-            <option key={s.id} value={s.id}>
-              {isSlotAllowed(s.id, line.allowedSlotIds)
-                ? s.label
-                : `${s.label} (hors créneaux autorisés)`}
-            </option>
-          ))}
+          {slots.map((s) => {
+            // « AM » et « PM » ici aussi : le porteur les veut partout. Pas
+            // « ½ AM » — ce formulaire écrit une durée libre, qui n'est pas
+            // forcément une demi-journée.
+            const libelle = libelleCreneauAvecMoment(s.id, slots)
+            return (
+              <option key={s.id} value={s.id}>
+                {isSlotAllowed(s.id, line.allowedSlotIds)
+                  ? libelle
+                  : `${libelle} (hors créneaux autorisés)`}
+              </option>
+            )
+          })}
         </Select>
       </div>
 

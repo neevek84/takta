@@ -135,6 +135,11 @@ const COUPLES_TEXTE_ATTENDUS = [
   'catDInk/catD', 'catDInk/catDEdge',
   'catEInk/catE', 'catEInk/catEEdge',
   'catFInk/catF', 'catFInk/catFEdge',
+  // Le chiffre d'une case du calendrier, posé sur l'aplat de la prestation
+  // (lot 1f) : `ink` et non l'encre catégorielle, parce qu'une demi-journée
+  // ne couvre que la moitié de la case et que le chiffre doit tenir aussi sur
+  // le fond du jour.
+  'ink/catA', 'ink/catB', 'ink/catC', 'ink/catD', 'ink/catE', 'ink/catF',
 ]
 
 const COUPLES_NON_TEXTUELS_ATTENDUS = [
@@ -243,9 +248,11 @@ describe('findContrastIssues', () => {
   })
 
   it('remonte tous les couples fautifs, pas seulement le premier', () => {
-    // L'or en encre casse ses quatre fonds : page, surface, off, offStrong.
+    // L'or en encre casse ses quatre fonds — page, surface, off, offStrong —
+    // et les six aplats catégoriels sur lesquels le calendrier pose désormais
+    // le chiffre d'une case.
     const fautive: ThemeTokens = { ...THEME_KREATIVPM, ink: '#d4943f' }
-    expect(contrastes(findContrastIssues(fautive)).filter((i) => i.text === 'ink')).toHaveLength(4)
+    expect(contrastes(findContrastIssues(fautive)).filter((i) => i.text === 'ink')).toHaveLength(10)
   })
 
   it('contrôle aussi les couples non textuels, à 3:1', () => {

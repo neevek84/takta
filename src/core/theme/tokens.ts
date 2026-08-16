@@ -553,6 +553,17 @@ export const TEXT_PAIRS: readonly TokenPair[] = [
       { text: t.ink, background: t.bordure },
     ]
   }),
+  // L'aplat d'une case du calendrier (lot 1f) : le fond catégoriel de la
+  // prestation saisie, avec le chiffre de la case **par-dessus**, en `ink`.
+  // Ce n'est pas le couple encre/fond de `colors.ts` — le chiffre reste `ink`
+  // parce qu'une demi-journée ne couvre que la moitié de la case, et qu'il
+  // doit donc aussi tenir sur le fond du jour, déjà exigé plus haut.
+  //
+  // Le balayage de `tokens.test.ts` ne peut pas former ce couple seul : le
+  // fond vient d'une variable (`colorForLine(line.id).bg`) et l'encre d'un
+  // autre `className` que le sien. Il est donc déclaré ici, à la main, comme
+  // le contrat d'usage l'exige.
+  ...CATEGORY_BACKGROUNDS.map((background): TokenPair => ({ text: 'ink', background })),
 ]
 
 /**
