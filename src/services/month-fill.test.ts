@@ -81,6 +81,27 @@ describe('fillMonth', () => {
     expect(apres!.kind).toBe('PREVISIONNEL')
   })
 
+  // Verrouille la frontière elle-même : le test précédent ne couvre que
+  // l'avant-veille et le surlendemain, jamais `today` pris pour lui-même.
+  // Convention du projet (cf. listPastForecast, task-10) : `today` n'est pas
+  // encore « passé », donc il se remplit en PREVISIONNEL comme le lendemain,
+  // et seule la veille bascule en REALISE. Une mutation `>=` -> `>` sur cette
+  // comparaison referait basculer `today` en REALISE sans qu'aucun autre test
+  // ne le remarque.
+  it('trace la frontière réalisé/prévisionnel exactement sur le jour today', async () => {
+    // 2026-03-10, -11, -12 sont mardi/mercredi/jeudi : trois jours ouvrés
+    // consécutifs, sans week-end ni férié entre eux.
+    await fillMonth({ userId, lineId: ligneA, month: '2026-03', today: '2026-03-11' })
+    const entries = await getMonthEntries(userId, '2026-03')
+    const veille = entries.find((e) => e.date === '2026-03-10')
+    const jourMeme = entries.find((e) => e.date === '2026-03-11')
+    const lendemain = entries.find((e) => e.date === '2026-03-12')
+
+    expect(veille!.kind).toBe('REALISE')
+    expect(jourMeme!.kind).toBe('PREVISIONNEL')
+    expect(lendemain!.kind).toBe('PREVISIONNEL')
+  })
+
   // Le test central de la spec : jamais d'écrasement silencieux.
   it('saute les jours sans capacité et le dit', async () => {
     await updateSettings({ capacityMode: 'BLOCAGE', capacityCentiemes: 100 })
