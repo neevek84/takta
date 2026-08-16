@@ -12,8 +12,20 @@ export const CONFLICT_RESOLUTIONS: readonly ConflictResolution[] = [
 
 /** Le seul fournisseur du lot ; la colonne reste générique pour la suite. */
 export const PROVIDER_GOOGLE = 'GOOGLE'
-/** La seule entité synchronisée du lot : une ligne de temps, un événement. */
+/** La seule entité synchronisée du lot 1b : une ligne de temps, un événement. */
 export const ENTITY_TIME_ENTRY = 'TimeEntry'
+/**
+ * La cible du connecteur Dolibarr : un CRA validé, dont on pousse les temps
+ * réalisés (lot 2).
+ *
+ * Nommée ici, à côté de `ENTITY_TIME_ENTRY`, parce que trois modules doivent
+ * s'accorder dessus sans jamais se lire : celui qui met en file (tâche 8),
+ * celui qui draine, et le gestionnaire qui refuse tout ce qu'il ne sait pas
+ * traiter. Une chaîne recopiée dans chacun aurait divergé en silence — un
+ * gestionnaire qui refuse « CRA » quand la file dépose « Cra » ne lève rien,
+ * il abandonne la ligne.
+ */
+export const ENTITY_CRA = 'Cra'
 
 /** Recul progressif : 1 min, 5 min, 15 min, 1 h, 6 h. */
 export const RETRY_DELAYS_MINUTES: readonly number[] = [1, 5, 15, 60, 360]
