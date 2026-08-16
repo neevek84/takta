@@ -3,6 +3,7 @@ import { listClients } from '@/services/clients'
 import { listMissionsForUser } from '@/services/missions'
 import { getSettings } from '@/services/settings'
 import { addClient, addMission, addLine } from './actions'
+import { SignataireForm } from './SignataireForm'
 import { PageShell } from '@/components/ui/PageShell'
 import { Card } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
@@ -57,6 +58,13 @@ export default async function MissionsPage() {
               placeholder={String(settings.minutesParJour / 60)}
               hint={`Vide = hérité (${settings.minutesParJour / 60} h)`}
             />
+            <Field label="Signataire du CRA" name="signataireNom" placeholder="Nom du contact" />
+            <Field
+              label="Adresse électronique du signataire"
+              name="signataireEmail"
+              type="email"
+              hint="Facultatif, et modifiable ensuite."
+            />
             <Button type="submit" variant="primary">
               Créer
             </Button>
@@ -99,6 +107,12 @@ export default async function MissionsPage() {
               Ajouter
             </Button>
           </form>
+
+          <SignataireForm
+            missionId={m.id}
+            signataireNom={m.signataireNom}
+            signataireEmail={m.signataireEmail}
+          />
         </Card>
       ))}
     </PageShell>

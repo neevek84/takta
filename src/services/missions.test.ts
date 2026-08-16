@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/db/client'
 import { createClient, listClients } from './clients'
-import { createMission, createLine, listActiveLines, listMissionsForUser } from './missions'
+import {
+  createMission,
+  createLine,
+  listActiveLines,
+  listMissionsForUser,
+  updateMissionSignataire,
+} from './missions'
 import { updateSettings } from './settings'
 
 let userId = ''
@@ -30,6 +36,7 @@ afterAll(async () => {
   await prisma.client.deleteMany({ where: { name: { startsWith: 'ACME' } } })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'SURCHARGE' } } })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'CASCADE' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'SIGNATAIRE' } } })
   await prisma.$disconnect()
 })
 
@@ -239,5 +246,147 @@ describe('LineForGrid et la cascade du facteur', () => {
 
     const ligne = (await listActiveLines(userId)).find((x) => x.id === l.id)
     expect(ligne!.minutesParJour).toBe(400)
+  })
+})
+
+describe('signataire de la mission', () => {
+  it('est vide à la création', async () => {
+    const c = await createClient('SIGNATAIRE vide')
+    const m = await createMission({ clientId: c.id, label: 'MV' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.label === 'MV')
+    expect(mission!.signataireNom).toBe('')
+    expect(mission!.signataireEmail).toBe('')
+  })
+
+  it('se renseigne à la création', async () => {
+    const c = await createClient('SIGNATAIRE creation')
+    const m = await createMission({
+      clientId: c.id,
+      label: 'MC',
+      signataireNom: 'Claire Martin',
+      signataireEmail: 'claire@acme.test',
+    })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.label === 'MC')
+    expect(mission!.signataireNom).toBe('Claire Martin')
+    expect(mission!.signataireEmail).toBe('claire@acme.test')
+  })
+
+  it('se modifie après coup', async () => {
+    const c = await createClient('SIGNATAIRE maj')
+    const m = await createMission({ clientId: c.id, label: 'MM' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const r = await updateMissionSignataire(userId, m.id, {
+      nom: 'Paul Durand',
+      email: 'paul@acme.test',
+    })
+    expect(r).toEqual({ ok: true })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.label === 'MM')
+    expect(mission!.signataireNom).toBe('Paul Durand')
+    expect(mission!.signataireEmail).toBe('paul@acme.test')
+  })
+
+  it('deux missions du même client portent deux interlocuteurs différents', async () => {
+    // La raison d être de la décision : le signataire n est pas une propriété
+    // du client.
+    const c = await createClient('SIGNATAIRE deux missions')
+    const a = await createMission({
+      clientId: c.id,
+      label: 'MA',
+      signataireNom: 'Chef de projet',
+      signataireEmail: 'cp@acme.test',
+    })
+    const b = await createMission({
+      clientId: c.id,
+      label: 'MB',
+      signataireNom: 'Responsable de service',
+      signataireEmail: 'rs@acme.test',
+    })
+    await createLine({ missionId: a.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+    await createLine({ missionId: b.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const missions = await listMissionsForUser(userId)
+    expect(missions.find((x) => x.label === 'MA')!.signataireEmail).toBe('cp@acme.test')
+    expect(missions.find((x) => x.label === 'MB')!.signataireEmail).toBe('rs@acme.test')
+  })
+
+  it('refuse une adresse électronique invalide', async () => {
+    const c = await createClient('SIGNATAIRE email invalide')
+    const m = await createMission({ clientId: c.id, label: 'MI' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const r = await updateMissionSignataire(userId, m.id, { nom: 'X', email: 'pas-une-adresse' })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erreur).toContain('adresse')
+
+    // Et rien n a été écrit : un refus qui laisse passer l écriture ne refuse rien.
+    const relu = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect(relu.signataireEmail).toBe('')
+  })
+
+  it('accepte de tout effacer — le signataire n est pas obligatoire', async () => {
+    const c = await createClient('SIGNATAIRE effacement')
+    const m = await createMission({
+      clientId: c.id,
+      label: 'ME',
+      signataireNom: 'X',
+      signataireEmail: 'x@acme.test',
+    })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    expect(await updateMissionSignataire(userId, m.id, { nom: '', email: '' })).toEqual({ ok: true })
+    const relu = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect([relu.signataireNom, relu.signataireEmail]).toEqual(['', ''])
+  })
+
+  it('refuse un nom sans adresse — un destinataire sans adresse n est pas joignable', async () => {
+    const c = await createClient('SIGNATAIRE sans email')
+    const m = await createMission({ clientId: c.id, label: 'MS' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const r = await updateMissionSignataire(userId, m.id, { nom: 'Sans adresse', email: '' })
+    expect(r.ok).toBe(false)
+  })
+
+  it('rogne les espaces plutôt que d enregistrer une adresse injoignable', async () => {
+    const c = await createClient('SIGNATAIRE espaces')
+    const m = await createMission({ clientId: c.id, label: 'MW' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    expect(
+      await updateMissionSignataire(userId, m.id, {
+        nom: '  Claire Martin  ',
+        email: '  claire@acme.test  ',
+      }),
+    ).toEqual({ ok: true })
+
+    const relu = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect(relu.signataireNom).toBe('Claire Martin')
+    expect(relu.signataireEmail).toBe('claire@acme.test')
+  })
+
+  it('ne touche pas la mission d un utilisateur non affecté', async () => {
+    const autre = await prisma.user.create({
+      data: { email: 'signataire-autre@test.local', name: 'A', passwordHash: 'x' },
+    })
+    const c = await createClient('SIGNATAIRE isolation')
+    const m = await createMission({ clientId: c.id, label: 'MZ' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+
+    const r = await updateMissionSignataire(autre.id, m.id, {
+      nom: 'Intrus',
+      email: 'intrus@acme.test',
+    })
+    expect(r.ok).toBe(false)
+
+    const relu = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect(relu.signataireNom).toBe('')
+
+    await prisma.user.delete({ where: { id: autre.id } })
   })
 })

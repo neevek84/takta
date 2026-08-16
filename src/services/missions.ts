@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { prisma } from '@/db/client'
 import { getSettings } from './settings'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
@@ -18,12 +19,16 @@ export async function createMission(args: {
   clientId: string
   label: string
   minutesParJour?: number | null
+  signataireNom?: string
+  signataireEmail?: string
 }): Promise<{ id: string }> {
   const m = await prisma.mission.create({
     data: {
       clientId: args.clientId,
       label: args.label,
       minutesParJour: args.minutesParJour ?? null,
+      signataireNom: args.signataireNom ?? '',
+      signataireEmail: args.signataireEmail ?? '',
     },
   })
   return { id: m.id }
@@ -76,6 +81,9 @@ export interface MissionForUser {
   minutesParJourEffectif: number
   /** surcharge portée par la mission elle-même, null si héritée */
   minutesParJourSurcharge: number | null
+  /** contact signataire du CRA, porté par la mission et non par le client */
+  signataireNom: string
+  signataireEmail: string
   lines: Array<{
     id: string
     label: string
@@ -120,6 +128,8 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
       global: settings.minutesParJour,
     }),
     minutesParJourSurcharge: m.minutesParJour,
+    signataireNom: m.signataireNom,
+    signataireEmail: m.signataireEmail,
     lines: m.lines.map((l) => ({
       id: l.id,
       label: l.label,
@@ -128,6 +138,54 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
       displayUnit: l.displayUnit as DisplayUnit,
     })),
   }))
+}
+
+export type SignataireResult = { ok: true } | { ok: false; erreur: string }
+
+const signataireSchema = z
+  .object({ nom: z.string().trim(), email: z.string().trim() })
+  .refine((v) => v.email === '' || z.string().email().safeParse(v.email).success, {
+    message: 'L’adresse électronique du signataire est invalide.',
+  })
+  // Un nom sans adresse produirait un destinataire qu'on ne peut pas joindre,
+  // et donc un bouton « Envoyer pour signature » qui semble prêt sans l'être.
+  .refine((v) => !(v.nom !== '' && v.email === ''), {
+    message: 'Une adresse électronique est requise dès qu’un nom de signataire est renseigné.',
+  })
+
+/**
+ * Renseigne le contact signataire d'une mission.
+ *
+ * Scopé par affectation : sans ligne affectée à l'utilisateur, la mission
+ * n'est pas la sienne et il ne décide pas à qui son CRA est envoyé.
+ *
+ * Le signataire est porté par la **mission** et non par le client : un même
+ * client peut porter plusieurs missions avec des interlocuteurs différents —
+ * un chef de projet pour l'une, un responsable de service pour l'autre.
+ */
+export async function updateMissionSignataire(
+  userId: string,
+  missionId: string,
+  patch: { nom: string; email: string },
+): Promise<SignataireResult> {
+  const valide = signataireSchema.safeParse(patch)
+  if (!valide.success) {
+    return { ok: false, erreur: valide.error.issues[0]?.message ?? 'Signataire invalide.' }
+  }
+
+  const mission = await prisma.mission.findFirst({
+    where: { id: missionId, lines: { some: { assignments: { some: { userId } } } } },
+    select: { id: true },
+  })
+  if (mission === null) {
+    return { ok: false, erreur: 'Cette mission ne vous est pas affectée.' }
+  }
+
+  await prisma.mission.update({
+    where: { id: missionId },
+    data: { signataireNom: valide.data.nom, signataireEmail: valide.data.email },
+  })
+  return { ok: true }
 }
 
 export async function listActiveLines(userId: string): Promise<LineForGrid[]> {

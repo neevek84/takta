@@ -43,6 +43,13 @@ model Mission {
   /// surcharge de la durée d'une journée, en minutes. null = hérite du client.
   minutesParJour Int?
 
+  /// Contact signataire, rattaché à la **mission** et non au client : un même
+  /// client peut porter plusieurs missions avec des interlocuteurs différents
+  /// — un chef de projet pour l'une, un responsable de service pour l'autre.
+  /// Le rattacher au client obligerait à ressaisir ou à se tromper.
+  signataireNom   String @default("")
+  signataireEmail String @default("")
+
   client Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
   lines  MissionLine[]
   cras   Cra[]
@@ -151,8 +158,62 @@ model Cra {
   mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  signatureRequest SignatureRequest?
+
   @@unique([missionId, userId, month])
   @@index([userId])
+}
+
+/// L'état d'une demande de signature. **Une seule par CRA** : renvoyer un CRA
+/// remplace la demande précédente. Empiler les demandes obligerait chaque
+/// lecture à décider laquelle fait foi, et une seule divergence suffirait à
+/// verrouiller un mois sur un document périmé.
+model SignatureRequest {
+  id       String @id @default(cuid())
+  craId    String @unique
+  /// identifiant du prestataire ; l'identifiant du document, lui, vit dans
+  /// `ExternalLink` — un seul endroit porte la correspondance externe.
+  provider String
+  /// 'EN_ATTENTE' | 'SIGNE' | 'REFUSE' | 'EXPIRE'
+  status   String @default("EN_ATTENTE")
+
+  /// destinataire au moment de l'envoi, figé : changer le signataire de la
+  /// mission ne réécrit pas à qui le document a réellement été adressé.
+  signataireNom   String @default("")
+  signataireEmail String @default("")
+
+  sentAt        DateTime  @default(now())
+  relances      Int       @default(0)
+  lastRelanceAt DateTime?
+  completedAt   DateTime?
+  /// trois relances passées sans réponse : le CRA reste ENVOYE et remonte
+  /// dans la liste des CRA en souffrance.
+  abandoned     Boolean   @default(false)
+
+  /// PDF signé, archivé tel que le prestataire l'a rendu. **Jamais
+  /// regénéré** : un document signé se conserve, il ne se recalcule pas.
+  /// `Bytes` se traduit en BLOB sur SQLite et en bytea sur Postgres — aucun
+  /// type propriétaire, et une instance complète se transporte en copiant un
+  /// seul fichier.
+  signedPdf Bytes?
+
+  updatedAt DateTime @updatedAt
+
+  cra Cra @relation(fields: [craId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+/// Les webhooks déjà traités. L'unicité du couple est le seul rempart contre
+/// un rejeu : un même événement livré deux fois ne doit franchir la
+/// transition qu'une fois.
+model SignatureWebhookEvent {
+  id         String   @id @default(cuid())
+  provider   String
+  eventId    String
+  receivedAt DateTime @default(now())
+
+  @@unique([provider, eventId])
 }
 
 /// Le pont vers l'événement distant : c'est lui, et lui seul, qui porte
@@ -225,6 +286,16 @@ model Settings {
   journeeDebutMinute Int @default(540)
   /// fin de la plage journée, minutes depuis minuit (18 h -> 1080)
   journeeFinMinute   Int @default(1080)
+
+  /// identité imprimée en tête du CRA. Vide = l'entête émetteur reste muet,
+  /// le document se génère quand même.
+  emetteurNom     String @default("")
+  emetteurAdresse String @default("")
+  emetteurSiret   String @default("")
+  emetteurEmail   String @default("")
+
+  /// délai avant relance d'une signature en attente, en jours. 0 = relances désactivées.
+  relanceJours    Int    @default(7)
 }
 
 /// Un **ensemble** d'entités à synchroniser, jamais un journal : l'unicité du

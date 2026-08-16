@@ -3,7 +3,12 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser } from '@/auth'
 import { createClient } from '@/services/clients'
-import { createMission, createLine } from '@/services/missions'
+import {
+  createMission,
+  createLine,
+  updateMissionSignataire,
+  type SignataireResult,
+} from '@/services/missions'
 import type { DisplayUnit } from '@/core/types'
 
 /**
@@ -32,8 +37,40 @@ export async function addMission(formData: FormData) {
     clientId: String(formData.get('clientId')),
     label: String(formData.get('label')),
     minutesParJour: surchargeOuNull(formData.get('heuresParJour')),
+    signataireNom: String(formData.get('signataireNom') ?? ''),
+    signataireEmail: String(formData.get('signataireEmail') ?? ''),
   })
   revalidatePath('/missions')
+}
+
+/** `null` = rien n'a encore été soumis. */
+export type SignataireState = SignataireResult | null
+
+/**
+ * Enregistre le contact signataire d'une mission, et **rend son verdict**.
+ *
+ * Le refus doit remonter jusqu'à l'écran : une adresse invalide qui ne
+ * s'écrirait pas en silence laisserait l'utilisateur devant un formulaire
+ * revenu à l'ancienne valeur, persuadé d'avoir enregistré — et le CRA partirait
+ * plus tard chez le mauvais destinataire, ou chez personne.
+ *
+ * Rien n'est revalidé quand rien n'a été écrit : un refus ne change aucune page.
+ */
+export async function saveSignataire(
+  _prevState: SignataireState,
+  formData: FormData,
+): Promise<SignataireState> {
+  const user = await requireUser()
+
+  const resultat = await updateMissionSignataire(user.id, String(formData.get('missionId')), {
+    nom: String(formData.get('signataireNom') ?? ''),
+    email: String(formData.get('signataireEmail') ?? ''),
+  })
+  if (!resultat.ok) return resultat
+
+  revalidatePath('/missions')
+  revalidatePath('/cra')
+  return resultat
 }
 
 export async function addLine(formData: FormData) {
