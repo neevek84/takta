@@ -132,6 +132,7 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 - **Le balayage des couples de contraste ne couvre pas** : une encre d'état sur un fond hors des quatre fonds de texte, `link`/`onAccent`/`onDark` posés seuls, un fond porté par une variable.
 - **Docker et Postgres n'ont jamais été exécutés** dans cet environnement. Un garde-fou statique détecte désormais la dérive du schéma, mais le chemin complet reste à éprouver.
 - **Trois vulnérabilités npm** transitives via `next`, surfaces de construction.
+- **`manifest.webmanifest` et `icon.svg` portent les couleurs KreativPM en dur.** Ce sont des fichiers statiques servis tels quels, hors de portée du système de jetons : quelqu'un qui change le thème garde l'icône d'origine sur son écran d'accueil. Le `themeColor` du document, lui, suit bien le thème enregistré.
 
 ---
 
