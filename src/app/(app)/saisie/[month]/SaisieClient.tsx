@@ -8,6 +8,7 @@ import { LineSelector } from '@/components/calendar/LineSelector'
 import { readSelection } from '@/components/calendar/selection-storage'
 import { resolveSelection } from '@/core/saisie/selection'
 import { formatClearReport, formatFillReport } from '@/core/saisie/report'
+import { phraseOccupation } from '@/core/saisie/occupation'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import type { CellState } from '@/core/saisie/cycle'
@@ -49,10 +50,20 @@ function phraseCapacite(date: string, totalCentiemes: number, capacityCentiemes:
 }
 
 /** Ce qui s'écrit dans le bandeau, et sur quel ton. */
-type Message = { texte: string; ton: 'warning' | 'danger' }
+type Message = { texte: string; ton: 'info' | 'warning' | 'danger' }
 
 function avertissement(texte: string): Message {
   return { texte, ton: 'warning' }
+}
+
+/**
+ * Une occupation d'agenda n'est ni un refus ni un avertissement : rien n'est
+ * en cause dans la saisie, on signale seulement que la journée porte déjà
+ * autre chose. La tonalité `info` en fait un `role="status"`, annoncé au
+ * moment opportun plutôt qu'en interrompant la frappe.
+ */
+function information(texte: string): Message {
+  return { texte, ton: 'info' }
 }
 
 /** Un refus n'est pas un avertissement : rien n'a été enregistré. */
@@ -71,6 +82,13 @@ export function SaisieClient(props: {
   capacityCentiemes: number
   capacityMode: CapacityMode
   slots: Slot[]
+  /**
+   * jours du mois déjà occupés dans l'agenda externe.
+   *
+   * Vide par défaut, et vide aussi quand la lecture a échoué : une panne de
+   * Google retire le repère, jamais la saisie.
+   */
+  busyDates?: string[]
 }) {
   const [message, setMessage] = useState<Message | null>(null)
   const [vue, setVue] = useState<Vue>('CALENDRIER')
@@ -87,6 +105,17 @@ export function SaisieClient(props: {
   }, [props.lines])
 
   const ligne = props.lines.find((l) => l.id === lineId)
+
+  /**
+   * Le signalement d'occupation, quand il n'y a rien de plus important à dire.
+   *
+   * Il vient en dernier : un dépassement de capacité et un créneau non
+   * autorisé parlent de la saisie elle-même, l'occupation ne parle que de son
+   * contexte. Aucun des trois ne bloque quoi que ce soit.
+   */
+  function messageDOccupation(date: string): Message | null {
+    return (props.busyDates ?? []).includes(date) ? information(phraseOccupation(date)) : null
+  }
 
   /**
    * Renvoie `true` quand la valeur a bien été enregistrée. — vue tableau
@@ -106,7 +135,7 @@ export function SaisieClient(props: {
           ? avertissement(
               `${phraseCapacite(date, r.warning.totalCentiemes, r.warning.capacityCentiemes)} La saisie est conservée.`,
             )
-          : null,
+          : messageDOccupation(date),
       )
       return true
     }
@@ -128,7 +157,7 @@ export function SaisieClient(props: {
         (r.warning
           ? `${phraseCapacite(date, r.warning.totalCentiemes, r.warning.capacityCentiemes)} La saisie est conservée.`
           : null)
-      setMessage(texte === null ? null : avertissement(texte))
+      setMessage(texte === null ? messageDOccupation(date) : avertissement(texte))
       return true
     }
 
@@ -259,6 +288,10 @@ export function SaisieClient(props: {
             entries={props.entries}
             autresLignes={props.lines.filter((l) => l.id !== ligne.id)}
             toutLeMois={toutLeMois}
+            // Le calendrier est la seule surface de saisie sous la largeur
+            // `md` : un marquage réservé au tableau n'existerait pas pour un
+            // usage au téléphone.
+            busyDates={props.busyDates}
             onApply={handleApply}
             onRange={handleRange}
             onFormulaire={(date, etat) => setFormulaire({ date, etat })}
@@ -296,6 +329,7 @@ export function SaisieClient(props: {
           engagementTotals={props.engagementTotals}
           capacityCentiemes={props.capacityCentiemes}
           capacityMode={props.capacityMode}
+          busyDates={props.busyDates}
           onSave={handleSave}
         />
       )}

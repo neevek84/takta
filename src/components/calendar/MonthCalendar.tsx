@@ -5,6 +5,7 @@ import { buildWeeks } from '@/core/month/weeks'
 import { buildCellStates } from '@/core/saisie/cell-state'
 import { colorForLine } from '@/core/saisie/colors'
 import { kindDeLaJournee } from '@/core/saisie/kind'
+import { OCCUPATION_TITRE } from '@/core/saisie/occupation'
 import { cycleSlotIds, nextCellState } from '@/core/saisie/cycle'
 import type { CellState } from '@/core/saisie/cycle'
 import { centiemesParFacteur, formatJours, formatQuantity } from '@/core/time/units'
@@ -21,6 +22,20 @@ import { useLongPress } from './useLongPress'
 const VIDE: CellState = { kind: 'VIDE' }
 
 const AUCUNE_SAISIE: MinutesAuFacteur[] = []
+
+/**
+ * Constante de module et non littéral dans la déstructuration : un `[]` écrit
+ * là créerait un tableau neuf à chaque rendu et invaliderait le `useMemo` qui
+ * en dérive l'ensemble des jours occupés.
+ */
+const AUCUNE_OCCUPATION: string[] = []
+
+/**
+ * Le marqueur d'occupation, visible sans distinguer les teintes — c'est le
+ * même parti que les glyphes des bandeaux. Masqué aux lecteurs d'écran : le
+ * nom accessible de la case porte déjà l'information en toutes lettres.
+ */
+const MARQUEUR_OCCUPATION = '◆'
 
 const EN_TETES = [
   { dayOfWeek: 1, court: 'L', long: 'Lun' },
@@ -144,6 +159,7 @@ export function MonthCalendar({
   entries,
   autresLignes,
   toutLeMois,
+  busyDates = AUCUNE_OCCUPATION,
   onApply,
   onRange,
   onFormulaire,
@@ -156,12 +172,21 @@ export function MonthCalendar({
   /** autres prestations, affichées en lecture seule quand `toutLeMois` */
   autresLignes: LineForGrid[]
   toutLeMois: boolean
+  /**
+   * jours du mois porteurs d'une occupation dans l'agenda externe.
+   *
+   * Facultatif, et vide par défaut : l'agenda injoignable est le cas nominal,
+   * pas une anomalie. Une case marquée reste cliquable — le marquage informe,
+   * il n'interdit rien.
+   */
+  busyDates?: string[]
   /** renvoie `true` quand l'état a bien été enregistré */
   onApply: (date: string, state: CellState) => Promise<boolean>
   onRange: (dates: string[], state: CellState) => Promise<void>
   onFormulaire: (date: string, etat: CellState) => void
 }) {
   const semaines = useMemo(() => buildWeeks(days), [days])
+  const occupes = useMemo(() => new Set(busyDates), [busyDates])
 
   const ctx = useMemo(
     () => ({ minutesParJour: line.minutesParJour, slots }),
@@ -439,6 +464,7 @@ export function MonthCalendar({
                 etat={etatDe(jour.date)}
                 saisies={saisiesDe(jour.date)}
                 previsionnel={previsionnelles.has(jour.date)}
+                occupe={occupes.has(jour.date)}
                 autres={autresParDate.get(jour.date) ?? []}
                 selected={drag.isSelected(line.id, jour.date)}
                 slots={slots}
@@ -499,6 +525,7 @@ function Case({
   etat,
   saisies,
   previsionnel,
+  occupe,
   autres,
   selected,
   slots,
@@ -516,6 +543,8 @@ function Case({
   /** saisies du jour, chacune sous le facteur figé à son écriture */
   saisies: readonly MinutesAuFacteur[]
   previsionnel: boolean
+  /** l'agenda externe porte déjà quelque chose ce jour-là — informatif */
+  occupe: boolean
   /** autres prestations occupant ce jour, en lecture seule */
   autres: LineForGrid[]
   selected: boolean
@@ -534,7 +563,11 @@ function Case({
   // Week-ends et fériés : grisés, jamais interdits.
   const jourDit = etatJour(jour)
   const titreJour = TITRE_JOUR[jourDit]
-  const detail = [titreJour, description(etat, slots)].filter((t) => t !== undefined).join(' — ')
+  // L'occupation s'ajoute à ce que la case disait déjà : un férié occupé reste
+  // un férié, et un marqueur muet ne dirait rien à qui ne le voit pas.
+  const detail = [titreJour, description(etat, slots), occupe ? OCCUPATION_TITRE : undefined]
+    .filter((t) => t !== undefined)
+    .join(' — ')
 
   return (
     <div className="flex flex-col gap-0.5">
@@ -543,6 +576,7 @@ function Case({
         data-testid={`case-${jour.date}`}
         data-date={jour.date}
         data-jour={jourDit}
+        data-busy={occupe ? 'true' : undefined}
         aria-label={`${line.label} le ${jour.date} — ${detail}`}
         title={detail}
         onPointerDown={(ev) => {
@@ -608,7 +642,14 @@ function Case({
           selected ? 'ring-2 ring-inset ring-focus' : ''
         }`}
       >
-        <span className="text-xs leading-none text-muted">{Number(jour.date.slice(8))}</span>
+        <span className="flex items-center gap-0.5 text-xs leading-none text-muted">
+          {Number(jour.date.slice(8))}
+          {occupe && (
+            <span aria-hidden="true" data-testid={`occupation-${jour.date}`}>
+              {MARQUEUR_OCCUPATION}
+            </span>
+          )}
+        </span>
         {/* Le numéro du jour et la valeur sont deux nœuds distincts : les mêler
             rendrait « la case est vide » indistinguable de « la case affiche 10 ». */}
         <span data-testid={`valeur-${jour.date}`} className="leading-tight">

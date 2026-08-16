@@ -444,6 +444,89 @@ describe('MonthGrid', () => {
     })
   })
 
+  // L'occupation de l'agenda est une information, jamais un blocage : elle se
+  // marque comme le week-end et le férié se grisent.
+  describe('occupation de l agenda', () => {
+    it('marque l en-tête d un jour occupé', () => {
+      renderGrid({ busyDates: ['2026-03-12'] })
+
+      const occupe = screen.getByTestId('day-header-2026-03-12')
+      expect(occupe.getAttribute('data-busy')).toBe('true')
+      expect(occupe.getAttribute('title')).toBe('Occupation dans votre agenda')
+    })
+
+    it('ne marque pas les autres jours', () => {
+      renderGrid({ busyDates: ['2026-03-12'] })
+      expect(screen.getByTestId('day-header-2026-03-13').getAttribute('data-busy')).toBeNull()
+    })
+
+    it('ne marque rien quand l agenda est injoignable', () => {
+      // Liste vide : c'est exactement ce que `getBusyDays` rend en cas de panne.
+      renderGrid({ busyDates: [] })
+      expect(screen.getByTestId('day-header-2026-03-12').getAttribute('data-busy')).toBeNull()
+    })
+
+    it('ne marque rien quand la page ne transmet aucune occupation', () => {
+      renderGrid()
+      expect(screen.getByTestId('day-header-2026-03-12').getAttribute('data-busy')).toBeNull()
+      expect(screen.getByTestId('day-header-2026-03-12').getAttribute('title')).toBeNull()
+    })
+
+    it('laisse la cellule d un jour occupé pleinement saisissable', async () => {
+      const onSave = vi.fn(async () => true)
+      renderGrid({ busyDates: ['2026-03-13'], onSave })
+      const input = cell('Consultant ITSM', '2026-03-13')
+      expect(input.readOnly).toBe(false)
+
+      fireEvent.change(input, { target: { value: '0,5' } })
+      fireEvent.blur(input)
+
+      // Marquer n'est pas bloquer : la valeur part au serveur et reste à l'écran.
+      await waitFor(() => expect(onSave).toHaveBeenCalledWith('l1', '2026-03-13', '0,5'))
+      expect(input.value).toBe('0,5')
+    })
+
+    // Le marquage est une couche de plus, pas un remplacement : un dimanche
+    // occupé reste un dimanche.
+    it('n efface pas l état du jour qu il marque', () => {
+      // 2026-03-01 est un dimanche.
+      renderGrid({ busyDates: ['2026-03-01'] })
+      const occupe = screen.getByTestId('day-header-2026-03-01')
+
+      expect(occupe.getAttribute('data-jour')).toBe('weekend')
+      expect(occupe.className).toContain('pattern-stripes')
+      expect(occupe.getAttribute('title')).toBe('Jour non ouvré — Occupation dans votre agenda')
+    })
+
+    // Aucune information portée par la seule couleur : le `title` n'existe qu'à
+    // la souris, et un liseré ne se voit pas d'un lecteur d'écran.
+    it('porte l occupation autrement que par la teinte', () => {
+      renderGrid({ busyDates: ['2026-03-12'] })
+      const occupe = screen.getByTestId('day-header-2026-03-12')
+      const libre = screen.getByTestId('day-header-2026-03-13')
+
+      // Un liseré : une différence de forme, lisible en vision monochrome.
+      expect(occupe.className).toContain('border-b-2')
+      expect(libre.className).not.toContain('border-b-2')
+
+      // Et un texte, pour qui ne voit pas la colonne du tout.
+      const cache = occupe.querySelector('.sr-only')
+      expect(cache).not.toBeNull()
+      expect(cache!.textContent).toContain('Occupation dans votre agenda')
+    })
+
+    it('nomme l occupation par une légende visible, seulement quand elle existe', () => {
+      renderGrid({ busyDates: ['2026-03-12'] })
+      expect(screen.getByTestId('legende-jours').textContent).toContain(
+        'Occupation dans votre agenda',
+      )
+
+      cleanup()
+      renderGrid()
+      expect(screen.getByTestId('legende-jours').textContent).not.toContain('Occupation')
+    })
+  })
+
   // I5 — le seul lien segment → sens des bandeaux d'engagement était un
   // `title` sur un `<div>` non focalisable : invisible au clavier, invisible
   // au tactile, non annoncé. La grille nomme ses segments visiblement.

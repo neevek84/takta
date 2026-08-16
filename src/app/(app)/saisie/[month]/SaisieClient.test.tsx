@@ -526,3 +526,129 @@ describe('SaisieClient — calendrier', () => {
     )
   })
 })
+
+/**
+ * L'occupation de l'agenda est un repère, jamais un verrou : elle se marque
+ * dans les deux vues et s'annonce sans rien refuser.
+ */
+describe('SaisieClient — occupation de l agenda', () => {
+  beforeEach(() => {
+    saveCell.mockReset()
+    appliquerCase.mockReset()
+    window.localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  it('marque le jour occupé dans la vue calendrier', () => {
+    // Sous `md`, la vue tableau est masquée : si le marquage n'existait que
+    // là, il n'existerait pas au téléphone.
+    renderClient({ busyDates: ['2026-03-12'] })
+    expect(screen.getByTestId('case-2026-03-12').getAttribute('data-busy')).toBe('true')
+    expect(screen.getByTestId('case-2026-03-13').getAttribute('data-busy')).toBeNull()
+  })
+
+  it('marque le jour occupé dans la vue tableau', () => {
+    renderClient({ busyDates: ['2026-03-12'] })
+    ouvrirTableau()
+    expect(screen.getByTestId('day-header-2026-03-12').getAttribute('data-busy')).toBe('true')
+    expect(screen.getByTestId('day-header-2026-03-13').getAttribute('data-busy')).toBeNull()
+  })
+
+  it('ne marque rien quand la lecture d occupation a échoué', () => {
+    // `getBusyDays` ne lève jamais : elle rend une liste vide, et la page
+    // s'affiche exactement comme si l'agenda n'était pas connecté.
+    renderClient({ busyDates: [] })
+    expect(screen.getByTestId('case-2026-03-12').getAttribute('data-busy')).toBeNull()
+    ouvrirTableau()
+    expect(screen.getByTestId('day-header-2026-03-12').getAttribute('data-busy')).toBeNull()
+  })
+
+  it('avertit sans bloquer quand on saisit sur un jour occupé — vue tableau', async () => {
+    saveCell.mockResolvedValue({ ok: true, minutes: 480 })
+    renderClient({ busyDates: ['2026-03-12'] })
+    ouvrirTableau()
+
+    const input = saisir('1')
+
+    const message = await screen.findByText(
+      'Votre agenda est déjà occupé le 2026-03-12. La saisie est conservée.',
+    )
+    // Une information, pas une alerte : `status` attend le moment opportun.
+    expect(message.closest('[role="status"]')).not.toBeNull()
+    // Non bloquant : la valeur reste à l'écran et l'action a bien été appelée.
+    expect(input.value).toBe('1')
+    expect(saveCell).toHaveBeenCalledTimes(1)
+  })
+
+  it('avertit sans bloquer quand on saisit sur un jour occupé — vue calendrier', async () => {
+    appliquerCase.mockResolvedValue({ ok: true, state: { kind: 'JOURNEE' } })
+    renderClient({ busyDates: ['2026-03-12'] })
+
+    fireEvent.click(screen.getByTestId('case-2026-03-12'))
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Votre agenda est déjà occupé le 2026-03-12. La saisie est conservée.'),
+      ).toBeDefined(),
+    )
+    // La saisie tient : le « 1 » optimiste n'est pas retiré.
+    expect(screen.getByTestId('valeur-2026-03-12').textContent).toBe('1')
+    expect(appliquerCase).toHaveBeenCalledTimes(1)
+  })
+
+  it('n avertit pas sur un jour libre', async () => {
+    saveCell.mockResolvedValue({ ok: true, minutes: 480 })
+    renderClient({ busyDates: ['2026-03-13'] })
+    ouvrirTableau()
+
+    saisir('1')
+
+    await waitFor(() => expect(saveCell).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText(/agenda est déjà occupé/)).toBeNull()
+  })
+
+  it('laisse le message de capacité l emporter', async () => {
+    // Un dépassement de capacité est plus important qu'une simple occupation.
+    saveCell.mockResolvedValue({
+      ok: true,
+      minutes: 480,
+      warning: { totalCentiemes: 150, capacityCentiemes: 100 },
+    })
+    renderClient({ busyDates: ['2026-03-12'] })
+    ouvrirTableau()
+
+    saisir('1')
+
+    const message = await screen.findByText(/Capacité dépassée/)
+    expect(message.textContent).toContain('conservée')
+    expect(screen.queryByText(/agenda est déjà occupé/)).toBeNull()
+  })
+
+  it('laisse le signalement de créneau l emporter — vue calendrier', async () => {
+    appliquerCase.mockResolvedValue({
+      ok: true,
+      state: { kind: 'JOURNEE' },
+      signalement:
+        'Créneau hors des créneaux autorisés pour cette prestation : Nuit. La saisie est conservée.',
+    })
+    renderClient({ busyDates: ['2026-03-12'] })
+
+    fireEvent.click(screen.getByTestId('case-2026-03-12'))
+
+    await waitFor(() => expect(screen.getByText(/hors des créneaux autorisés/)).toBeDefined())
+    expect(screen.queryByText(/agenda est déjà occupé/)).toBeNull()
+  })
+
+  it('ne transforme pas un refus en simple occupation', async () => {
+    // Le refus dit que rien n'a été enregistré : le recouvrir d'un message
+    // d'occupation ferait croire à une saisie conservée.
+    saveCell.mockResolvedValue({ ok: false, reason: 'VERROUILLE' })
+    renderClient({ busyDates: ['2026-03-12'] })
+    ouvrirTableau()
+
+    saisir('1')
+
+    await waitFor(() => expect(screen.getByText(/CRA de ce mois est validé/)).toBeDefined())
+    expect(screen.queryByText(/agenda est déjà occupé/)).toBeNull()
+  })
+})

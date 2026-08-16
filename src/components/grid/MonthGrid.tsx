@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { kindDeLaJournee } from '@/core/saisie/kind'
+import { OCCUPATION_TITRE } from '@/core/saisie/occupation'
 import { centiemesParFacteur, formatJours, formatQuantity } from '@/core/time/units'
 import type { MinutesAuFacteur } from '@/core/time/units'
 import type { MonthDay } from '@/core/month/build'
@@ -14,6 +15,13 @@ import { TotalsRow } from './TotalsRow'
 import { useDragSelect } from './useDragSelect'
 
 const AUCUN_TOTAL: LineEngagementTotals = []
+
+/**
+ * Constante de module et non littéral dans la déstructuration : un `[]` écrit
+ * là créerait un tableau neuf à chaque rendu et invaliderait le `useMemo` qui
+ * en dérive l'ensemble des jours occupés.
+ */
+const AUCUNE_OCCUPATION: string[] = []
 
 const CELLULE_CRENEAUX =
   'Journée saisie par créneaux : la cellule agrège plusieurs créneaux et ne se modifie pas ici.'
@@ -51,6 +59,18 @@ const TITRE_JOUR: Record<EtatJour, string | undefined> = {
   ouvre: undefined,
   weekend: 'Jour non ouvré',
   ferie: 'Jour férié',
+}
+
+/**
+ * L'occupation s'ajoute à l'état du jour, elle ne le remplace pas : un
+ * dimanche occupé reste un dimanche, et écraser le titre effacerait la seule
+ * chose que la colonne disait déjà.
+ */
+function titreEntete(etat: EtatJour, occupe: boolean): string | undefined {
+  const parties = [TITRE_JOUR[etat], occupe ? OCCUPATION_TITRE : undefined].filter(
+    (t) => t !== undefined,
+  )
+  return parties.length === 0 ? undefined : parties.join(' — ')
 }
 
 type EtatSaisie = 'vide' | 'realise' | 'previsionnel'
@@ -123,6 +143,7 @@ export function MonthGrid({
   engagementTotals,
   capacityCentiemes,
   capacityMode,
+  busyDates = AUCUNE_OCCUPATION,
   onSave,
 }: {
   days: MonthDay[]
@@ -146,9 +167,18 @@ export function MonthGrid({
    * journée.
    */
   capacityMode: CapacityMode
+  /**
+   * jours du mois porteurs d'une occupation dans l'agenda externe.
+   *
+   * Facultatif, et vide par défaut : l'agenda injoignable est le cas nominal,
+   * pas une anomalie. Un jour marqué reste saisissable — le marquage informe,
+   * il n'interdit rien.
+   */
+  busyDates?: string[]
   /** renvoie `true` quand la valeur a bien été enregistrée */
   onSave: (lineId: string, date: string, raw: string) => Promise<boolean>
 }) {
+  const occupes = useMemo(() => new Set(busyDates), [busyDates])
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines])
   const cells = useMemo(() => buildCells(entries), [entries])
 
@@ -229,6 +259,18 @@ export function MonthGrid({
               {TITRE_JOUR[etat]}
             </span>
           ))}
+          {/* Seulement quand il y a quelque chose à nommer : une légende qui
+              annonce un marquage absent de la grille égare plus qu'elle
+              n'aide, et l'agenda injoignable est un cas ordinaire. */}
+          {occupes.size > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span
+                aria-hidden="true"
+                className="inline-block h-3 w-4 rounded-sm border border-rule border-b-2 border-b-accent-dark bg-surface"
+              />
+              {OCCUPATION_TITRE}
+            </span>
+          )}
         </p>
         {lines.map((l) => (
           <EngagementBar key={l.id} line={l} totals={engagementTotals[l.id] ?? AUCUN_TOTAL} />
@@ -241,18 +283,31 @@ export function MonthGrid({
             <th scope="col" className="sticky left-0 bg-surface px-2 py-1 text-left">
               Ligne
             </th>
-            {days.map((d) => (
-              <th
-                key={d.date}
-                scope="col"
-                data-testid={`day-header-${d.date}`}
-                data-jour={etatJour(d)}
-                title={TITRE_JOUR[etatJour(d)]}
-                className={`w-11 px-1 py-1 text-center text-xs font-normal text-ink ${FOND_JOUR[etatJour(d)]}`}
-              >
-                {Number(d.date.slice(8))}
-              </th>
-            ))}
+            {days.map((d) => {
+              const occupe = occupes.has(d.date)
+              return (
+                <th
+                  key={d.date}
+                  scope="col"
+                  data-testid={`day-header-${d.date}`}
+                  data-jour={etatJour(d)}
+                  data-busy={occupe ? 'true' : undefined}
+                  title={titreEntete(etatJour(d), occupe)}
+                  // Un liseré et non un fond : le fond porte déjà l'état du
+                  // jour, et un aplat de plus l'effacerait. Le liseré est une
+                  // différence de forme, lisible sans distinguer les teintes.
+                  className={`w-11 px-1 py-1 text-center text-xs font-normal text-ink ${
+                    FOND_JOUR[etatJour(d)]
+                  } ${occupe ? 'border-b-2 border-b-accent-dark' : ''}`}
+                >
+                  {Number(d.date.slice(8))}
+                  {/* Ni le liseré ni le `title` n'existent pour un lecteur
+                      d'écran, et l'occupation ne se déduit pas de la date
+                      comme le week-end : elle se dit. */}
+                  {occupe && <span className="sr-only"> — {OCCUPATION_TITRE}</span>}
+                </th>
+              )
+            })}
           </tr>
         </thead>
 

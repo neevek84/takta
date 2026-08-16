@@ -783,3 +783,73 @@ describe('MonthCalendar', () => {
     })
   })
 })
+
+/**
+ * Sous la largeur `md`, la vue tableau est masquée : le calendrier est alors la
+ * seule surface de saisie. Un marquage d'occupation qui n'existerait que dans
+ * le tableau n'existerait pas du tout pour un usage au téléphone.
+ */
+describe('MonthCalendar — occupation de l agenda', () => {
+  afterEach(cleanup)
+
+  it('marque la case d un jour occupé', () => {
+    renderCalendar({ busyDates: ['2026-03-10'] })
+    expect(caseDu('2026-03-10').getAttribute('data-busy')).toBe('true')
+  })
+
+  it('ne marque pas les autres jours', () => {
+    renderCalendar({ busyDates: ['2026-03-10'] })
+    expect(caseDu('2026-03-11').getAttribute('data-busy')).toBeNull()
+  })
+
+  it('ne marque rien quand l agenda est injoignable', () => {
+    // Liste vide : ce que `getBusyDays` rend en cas de panne.
+    renderCalendar({ busyDates: [] })
+    expect(caseDu('2026-03-10').getAttribute('data-busy')).toBeNull()
+  })
+
+  it('dit l occupation dans le nom de la case, pas seulement par un signe', () => {
+    renderCalendar({ busyDates: ['2026-03-10'] })
+    expect(caseDu('2026-03-10').getAttribute('aria-label')).toContain(
+      'Occupation dans votre agenda',
+    )
+    expect(caseDu('2026-03-11').getAttribute('aria-label')).not.toContain('Occupation')
+  })
+
+  it('n efface pas l état du jour qu il marque', () => {
+    // 2026-03-02 est férié dans ce jeu d'essai.
+    renderCalendar({ busyDates: ['2026-03-02'] })
+    expect(classes(caseDu('2026-03-02'))).toContain('pattern-dots')
+    expect(caseDu('2026-03-02').getAttribute('aria-label')).toContain('Jour férié')
+    expect(caseDu('2026-03-02').getAttribute('aria-label')).toContain('Occupation dans votre agenda')
+  })
+
+  it('porte un marqueur visible qui ne dépend pas de la teinte', () => {
+    renderCalendar({ busyDates: ['2026-03-10'] })
+    const marqueur = screen.getByTestId('occupation-2026-03-10')
+    // Un glyphe, comme les bandeaux : il se voit en vision monochrome.
+    expect(marqueur.textContent).not.toBe('')
+    // Et il est masqué aux lecteurs d'écran, qui lisent déjà le nom de la case.
+    expect(marqueur.getAttribute('aria-hidden')).toBe('true')
+    expect(screen.queryByTestId('occupation-2026-03-11')).toBeNull()
+  })
+
+  it('laisse la case d un jour occupé pleinement cliquable', async () => {
+    const onApply = vi.fn(async () => true)
+    renderCalendar({ busyDates: ['2026-03-10'], onApply })
+
+    expect(caseDu('2026-03-10').disabled).toBe(false)
+    fireEvent.click(caseDu('2026-03-10'))
+
+    // Marquer n'est pas bloquer : le cran avance comme sur un jour libre.
+    await waitFor(() => expect(onApply).toHaveBeenCalledWith('2026-03-10', { kind: 'JOURNEE' }))
+    expect(valeurDu('2026-03-10').textContent).toBe('1')
+  })
+
+  it('ne trouble pas la valeur affichée par la case', () => {
+    renderCalendar({ busyDates: ['2026-03-10'], entries: [entree({ minutes: 240, slotId: '' })] })
+    // `toBe` et non `toContain` : le marqueur ne doit pas se glisser dans la
+    // valeur, et « 0,5 » contient déjà « 0 » comme « 5 ».
+    expect(valeurDu('2026-03-10').textContent).toBe('0,5')
+  })
+})

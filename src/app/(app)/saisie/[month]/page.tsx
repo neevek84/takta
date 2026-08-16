@@ -6,6 +6,7 @@ import {
   getMonthEntries,
   getPastForecastWithLockStatus,
 } from '@/services/time-entries'
+import { getBusyDays } from '@/services/availability'
 import { buildMonthDays } from '@/core/month/build'
 import { MonthNav } from '@/components/MonthNav'
 import { PastForecastNotice } from './PastForecastNotice'
@@ -24,6 +25,10 @@ export default async function SaisiePage({ params }: { params: Promise<{ month: 
     lines.map((l) => l.id),
   )
   const days = buildMonthDays(month, settings.workingDays, settings.holidays)
+
+  // Une lecture d'occupation à l'ouverture du mois. Elle ne lève jamais : un
+  // agenda injoignable rend une liste vide et la page s'affiche normalement.
+  const busyDates = await getBusyDays(user.id, month)
 
   // Rappel du prévisionnel échu : un simple encart, jamais une conversion
   // automatique — voir PastForecastNotice. Les deux chiffres viennent du même
@@ -55,6 +60,9 @@ export default async function SaisiePage({ params }: { params: Promise<{ month: 
         // marquerait un dépassement que le service ignore en `DESACTIVE`.
         capacityMode={settings.capacityMode}
         slots={settings.slots}
+        // Un repère, jamais un verrou : la liste est vide quand l'agenda n'est
+        // pas connecté ou pas joignable, et la saisie fonctionne à l'identique.
+        busyDates={busyDates}
       />
     </main>
   )
