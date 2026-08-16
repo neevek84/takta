@@ -123,6 +123,7 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 - **Un fichier `page.tsx` ne peut exporter que `default`, `metadata`, etc.** Une action serveur va dans `actions.ts`.
 - **`signIn` d'Auth.js lève aussi en cas de succès** (redirection). Un `catch` naïf casse la connexion qui marche.
 - **`toLocaleString('fr-FR')` sépare les milliers par une espace fine insécable U+202F.** Neutraliser les espaces avant de comparer.
+- **`npm run db:sqlite` échoue en silence** quand le push détruirait des données — il lui manque `--accept-data-loss`. `prisma generate` ne tourne alors pas, et le client reste périmé sans que rien ne le dise.
 
 ---
 
