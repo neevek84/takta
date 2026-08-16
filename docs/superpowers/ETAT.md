@@ -92,7 +92,9 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 **Arbitrage déjà tranché** : `SyncOutbox` et `ProviderCredential` sont portées par le **lot 1b**, et le lot 2 les consomme.
 
-**Arbitrage corrigé** : `ProviderCredential.userId` avait été noté **nullable**, au motif qu'une clé Dolibarr appartient à l'instance quand un jeton Google est personnel. **C'était faux, et pour la raison déjà apprise au lot 0** : la colonne entre dans `@@unique([userId, provider])`, or `NULL` n'est jamais égal à `NULL` — deux clés d'instance `(NULL, 'DOLIBARR')` passeraient la contrainte. Elle est donc `NOT NULL`. Le besoin réel — distinguer ce qui appartient à l'instance de ce qui appartient à une personne — **reste à trancher avant le lot 2** : soit une ligne `User` conventionnelle pour les clés d'instance, soit un `ownerScope` entrant dans l'unicité. Aucune des deux ne demande de colonne nullable.
+**Arbitrage corrigé** : `ProviderCredential.userId` avait été noté **nullable**, au motif qu'une clé Dolibarr appartient à l'instance quand un jeton Google est personnel. **C'était faux, et pour la raison déjà apprise au lot 0** : la colonne entre dans `@@unique([userId, provider])`, or `NULL` n'est jamais égal à `NULL` — deux clés d'instance `(NULL, 'DOLIBARR')` passeraient la contrainte. Elle est donc `NOT NULL`.
+
+**Tranché pour le lot 2** : la distinction instance / personne passe par un **`ownerScope` entrant dans la contrainte d'unicité**, et non par une ligne `User` conventionnelle. Un faux compte devrait être filtré par tous les écrans qui listent des utilisateurs, et se ferait oublier une fois sur deux.
 
 ---
 
@@ -151,6 +153,15 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 - **Documenso auto-hébergé**, pour le lot 3.
 - **n8n** disponible — consommateur de l'API du lot 4, jamais une dépendance.
 - **Identité de marque**, relevée sur `kreativpm.fr` : crème `#FAF5ED`, encre `#342820`, accent or `#D4943F`, **Manrope** 800 et **Inter**. Le bleu du thème Dolibarr n'est pas l'identité.
+
+---
+
+## 9 bis. Arbitrages rendus par le porteur le 16 août
+
+- **Déconnexion Google** : on ne révoque pas côté Google, **on le dit clairement à l'écran**. Une révocation qui échoue à moitié est pire qu'une déconnexion honnête.
+- **Écran de supervision** : il **attend le lot 4** et son journal de preuve. Il ne portera pas sa propre table d'historique.
+- **Identifiants d'événement** : mise à jour plutôt que suppression puis recréation, pour garder l'identifiant. Le porteur envisageait aussi de sortir du temps réel avec un bouton « sauvegarder » qui déclencherait Google et Dolibarr — écarté pour l'instant : **la synchronisation n'est déjà pas en temps réel** (la file ne part qu'au drainage), la file dédoublonne par cible, et un bouton coûterait le clic-qui-enregistre de Timizer tout en créant du travail perdable. À rouvrir s'il en juge autrement à l'usage.
+- **`ProviderCredential`** : `ownerScope` dans l'unicité, voir ci-dessus.
 
 ---
 
