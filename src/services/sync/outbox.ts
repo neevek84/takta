@@ -3,6 +3,7 @@ import { prisma } from '@/db/client'
 import {
   abandon,
   ENTITY_TIME_ENTRY,
+  MAX_PASSES,
   nextAttempt,
   PROVIDER_GOOGLE,
   TAILLE_LOT,
@@ -295,6 +296,104 @@ export async function flushOutbox(args: {
   }
 
   return rapport
+}
+
+export interface OutboxDrainReport extends OutboxFlushReport {
+  /**
+   * Lignes encore dues à l'instant du drainage, une fois les passes épuisées.
+   *
+   * `0` = file vidée. Sans ce chiffre, un compte rendu « 50 traité(s), 50
+   * synchronisé(s) » est strictement indiscernable d'une file vidée : le
+   * consultant referme l'écran en croyant ses CRA partis. Les lignes reculées
+   * après un échec transitoire n'y figurent pas — elles ne sont pas dues
+   * maintenant, et recliquer ne les ferait pas partir plus tôt.
+   */
+  reste: number
+}
+
+/**
+ * Lignes dues à cet instant pour les fournisseurs qu'on sait drainer.
+ *
+ * Même filtre que `flushOutbox`, et pour la même raison que côté agenda :
+ * compter ici une ligne qu'aucun gestionnaire ne prendra afficherait un reste
+ * que recliquer ne fait pas descendre. Un fournisseur sans clé d'API n'est pas
+ * un retard de synchronisation.
+ */
+function compterDues(userId: string, providers: string[], now: Date): Promise<number> {
+  return prisma.syncOutbox.count({
+    where: {
+      userId,
+      provider: { in: providers },
+      state: 'PENDING',
+      OR: [{ attempts: 0 }, { nextAttemptAt: { lte: now } }],
+    },
+  })
+}
+
+/**
+ * Draine la file d'un compte **jusqu'au bout**, en enchaînant les passes.
+ *
+ * `flushOutbox` s'arrête au lot ; le bouton « Synchroniser maintenant », lui,
+ * est le seul écoulement de l'installation autoportante. S'y arrêter laisserait
+ * des CRA validés en file sans que rien ne le dise — c'est exactement le défaut
+ * qui a déjà été corrigé côté agenda (`drainSyncOutbox`), et l'ajout d'un
+ * fournisseur ne doit pas le rouvrir par la petite porte.
+ */
+export async function drainOutbox(args: {
+  userId: string
+  handlers: Record<string, SyncHandler>
+  limit?: number
+  now?: Date
+  /** borne de sécurité, injectée par les tests */
+  maxPasses?: number
+}): Promise<OutboxDrainReport> {
+  const now = args.now ?? new Date()
+  const limit = args.limit ?? TAILLE_LOT
+  const maxPasses = args.maxPasses ?? MAX_PASSES
+  const providers = Object.keys(args.handlers)
+
+  const cumul: OutboxDrainReport = {
+    traitees: 0,
+    reussies: 0,
+    replanifiees: 0,
+    echouees: 0,
+    reste: 0,
+  }
+  if (providers.length === 0) return cumul
+
+  for (let passe = 0; passe < maxPasses; passe++) {
+    const r = await flushOutbox({ userId: args.userId, handlers: args.handlers, limit, now })
+    cumul.traitees += r.traitees
+    cumul.reussies += r.reussies
+    cumul.replanifiees += r.replanifiees
+    cumul.echouees += r.echouees
+    // Une passe non pleine a vu le fond de la file : la suivante ne trouverait
+    // que des lignes reculées après échec, pas encore dues.
+    if (r.traitees < limit) break
+  }
+
+  cumul.reste = await compterDues(args.userId, providers, now)
+  return cumul
+}
+
+/**
+ * Les comptes qui ont quelque chose en attente pour ces fournisseurs.
+ *
+ * C'est la file qui porte la liste, et non la table des identifiants : une clé
+ * d'API Dolibarr est de portée instance, donc aucun jeton personnel ne désigne
+ * les comptes à drainer. Énumérer les comptes d'agenda — ce que fait le
+ * drainage Google, qui n'a pas le choix — laisserait dehors tout consultant qui
+ * n'a jamais connecté Google, c'est-à-dire l'installation par défaut.
+ */
+export async function listPendingOutboxUsers(providers: string[]): Promise<string[]> {
+  if (providers.length === 0) return []
+
+  const lignes = await prisma.syncOutbox.findMany({
+    where: { provider: { in: providers }, state: 'PENDING' },
+    select: { userId: true },
+    distinct: ['userId'],
+  })
+  return lignes.map((l) => l.userId)
 }
 
 /** La cible unique du lot 1b : une ligne de temps vers Google. */

@@ -3,6 +3,7 @@ import { CalendarApiError, type CalendarConnector } from '@/core/calendar/connec
 import { buildCalendarEvent } from '@/core/calendar/event'
 import {
   abandon,
+  MAX_PASSES,
   nextAttempt,
   PROVIDER_GOOGLE,
   TAILLE_LOT,
@@ -246,18 +247,6 @@ export async function flushSyncOutbox(args: {
 
   return report
 }
-
-/**
- * Nombre maximal de passes par compte et par déclenchement.
- *
- * `flushSyncOutbox` traite au plus `limit` lignes et ne s'enchaîne pas : sans
- * reprise, un déclenchement laisserait derrière lui tout ce qui dépasse, et
- * une file de 200 lignes attendrait quatre déclenchements pour partir. La
- * borne, elle, garde la main : au-delà de 20 × 50 lignes en un seul passage,
- * ce n'est plus un retard mais un défaut, et boucler sans fin sur un compte
- * priverait tous les suivants de leur drainage.
- */
-const MAX_PASSES = 20
 
 export interface DrainReport extends FlushReport {
   /**

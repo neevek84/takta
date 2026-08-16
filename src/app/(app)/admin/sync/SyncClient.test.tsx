@@ -204,7 +204,10 @@ describe('synchroniser maintenant', () => {
     expect(synchroniserMaintenant).toHaveBeenCalledTimes(1)
   })
 
-  it('le dit quand aucun compte n est connecté', async () => {
+  // « Aucun agenda joignable » ne suffit plus : le bouton draine aussi
+  // Dolibarr, et ce message-là est le seul que voie une installation sans
+  // aucun connecteur.
+  it('le dit quand aucun connecteur n est joignable', async () => {
     synchroniserMaintenant.mockResolvedValue({
       nonConnecte: true,
       traitees: 0,
@@ -219,7 +222,7 @@ describe('synchroniser maintenant', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toContain(
-        'Aucun agenda joignable. La saisie continue de fonctionner normalement.',
+        'Aucun connecteur joignable. La saisie et la validation continuent de fonctionner normalement.',
       )
     })
   })

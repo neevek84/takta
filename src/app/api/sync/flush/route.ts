@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
-import { flushAllSyncOutboxes } from '@/services/sync/flush'
+import { flushAllProviders } from '@/services/sync/drain'
 import { journalAvertissement, journalErreur, journalInfo, type Contexte } from '@/services/log'
 
 /**
@@ -33,7 +33,12 @@ function jetonValide(header: string): boolean {
 /**
  * Le déclenchement appelable de l'extérieur : un cron système, n8n, ou un
  * `curl`. Il porte son propre jeton parce qu'il n'a pas de session — et il
- * reste fermé par défaut, puisqu'il écrit dans l'agenda d'autrui.
+ * reste fermé par défaut, puisqu'il écrit dans l'agenda et le Dolibarr
+ * d'autrui.
+ *
+ * `flushAllProviders`, et non le seul drainage de l'agenda : un point d'entrée
+ * qui rend 200 en laissant les CRA validés dans la file est pire que pas de
+ * point d'entrée du tout — le cron a l'air de tourner.
  *
  * Rien ne l'exige : le bouton « Synchroniser maintenant » suffit à
  * l'autoportance de l'application.
@@ -50,9 +55,9 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'Jeton de synchronisation invalide.' }, { status: 401 })
   }
 
-  let r: Awaited<ReturnType<typeof flushAllSyncOutboxes>>
+  let r: Awaited<ReturnType<typeof flushAllProviders>>
   try {
-    r = await flushAllSyncOutboxes()
+    r = await flushAllProviders()
   } catch (err) {
     // La levée continue son chemin (500) : c'est le contrat de l'appelant.
     // Mais elle ne doit pas partir sans avoir dit ce qui a cassé.

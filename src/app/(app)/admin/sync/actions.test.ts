@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const {
   requireUser,
   revalidatePath,
+  drainProvidersForUser,
   drainSyncOutbox,
   resolveConflict,
   retrySyncRow,
@@ -10,6 +11,7 @@ const {
 } = vi.hoisted(() => ({
   requireUser: vi.fn(),
   revalidatePath: vi.fn(),
+  drainProvidersForUser: vi.fn(),
   drainSyncOutbox: vi.fn(),
   resolveConflict: vi.fn(),
   retrySyncRow: vi.fn(),
@@ -18,6 +20,7 @@ const {
 
 vi.mock('@/auth', () => ({ requireUser }))
 vi.mock('next/cache', () => ({ revalidatePath }))
+vi.mock('@/services/sync/drain', () => ({ drainProvidersForUser }))
 vi.mock('@/services/sync/flush', () => ({ drainSyncOutbox }))
 vi.mock('@/services/sync/conflicts', () => ({ resolveConflict }))
 vi.mock('@/services/sync/queue', () => ({ retrySyncRow }))
@@ -30,6 +33,7 @@ const RAPPORT = { nonConnecte: false, traitees: 1, reussies: 1, conflits: 0, ech
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
   revalidatePath.mockReset()
+  drainProvidersForUser.mockReset().mockResolvedValue(RAPPORT)
   drainSyncOutbox.mockReset().mockResolvedValue(RAPPORT)
   resolveConflict.mockReset().mockResolvedValue({ ok: true, resolution: 'RETABLIR' })
   retrySyncRow.mockReset().mockResolvedValue(true)
@@ -56,6 +60,7 @@ describe('chaque action exige une session', () => {
 
       await expect(appeler()).rejects.toThrow('Non authentifié')
 
+      expect(drainProvidersForUser).not.toHaveBeenCalled()
       expect(drainSyncOutbox).not.toHaveBeenCalled()
       expect(resolveConflict).not.toHaveBeenCalled()
       expect(retrySyncRow).not.toHaveBeenCalled()
@@ -65,17 +70,26 @@ describe('chaque action exige une session', () => {
 })
 
 describe('chaque action agit sur le seul compte de la session', () => {
-  // `drainSyncOutbox` et non `flushSyncOutbox` : ce bouton est le seul
-  // drainage disponible par défaut, et une seule passe s'arrêterait au lot en
-  // rendant un compte rendu indiscernable d'une file vidée.
-  it('draine la file de la session jusqu au bout, et rend le rapport tel quel', async () => {
+  /**
+   * `drainProvidersForUser` et non `drainSyncOutbox` : ce bouton draine **tous**
+   * les fournisseurs. Branché sur le seul drainage de l'agenda, il laissait un
+   * CRA validé s'empiler pour toujours dans la file Dolibarr — sans erreur,
+   * sans message, et sans que l'écran ne montre quoi que ce soit.
+   *
+   * Et un drainage, pas une passe : une seule passe s'arrêterait au lot en
+   * rendant un compte rendu indiscernable d'une file vidée.
+   */
+  it('draine tous les fournisseurs de la session, et rend le rapport tel quel', async () => {
     expect(await synchroniserMaintenant()).toEqual(RAPPORT)
-    expect(drainSyncOutbox).toHaveBeenCalledWith({ userId: 'u1' })
+    expect(drainProvidersForUser).toHaveBeenCalledWith({ userId: 'u1' })
+    // Le drainage de l'agenda n'est plus appelé d'ici : il l'est par
+    // `drainProvidersForUser`, avec celui des gestionnaires.
+    expect(drainSyncOutbox).not.toHaveBeenCalled()
     expect(revalidatePath).toHaveBeenCalledWith('/admin/sync')
   })
 
   it('relaie le reste annoncé par le drainage', async () => {
-    drainSyncOutbox.mockResolvedValue({ ...RAPPORT, traitees: 1000, reste: 42 })
+    drainProvidersForUser.mockResolvedValue({ ...RAPPORT, traitees: 1000, reste: 42 })
     expect(await synchroniserMaintenant()).toMatchObject({ reste: 42 })
   })
 

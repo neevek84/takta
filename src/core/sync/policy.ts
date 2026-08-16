@@ -42,6 +42,22 @@ export const MAX_ATTEMPTS = 5
  */
 export const TAILLE_LOT = 50
 
+/**
+ * Nombre maximal de passes par compte et par déclenchement.
+ *
+ * Un drainage traite au plus `TAILLE_LOT` lignes et ne s'enchaîne pas de
+ * lui-même : sans reprise, un déclenchement laisserait derrière lui tout ce qui
+ * dépasse, et une file de 200 lignes attendrait quatre déclenchements pour
+ * partir. La borne, elle, garde la main : au-delà de 20 × 50 lignes en un seul
+ * passage, ce n'est plus un retard mais un défaut, et boucler sans fin sur un
+ * compte priverait tous les suivants de leur drainage.
+ *
+ * Elle vit ici, avec `TAILLE_LOT`, parce que deux drainages l'appliquent
+ * désormais — celui de l'agenda et le générique. Recopiée dans chacun, elle se
+ * contredirait sans que rien ne le dise.
+ */
+export const MAX_PASSES = 20
+
 export interface NextAttempt {
   state: SyncState
   attempts: number

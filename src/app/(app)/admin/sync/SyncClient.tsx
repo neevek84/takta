@@ -32,10 +32,14 @@ const KIND_LABELS: Record<string, string> = {
 type Message = { tone: 'info' | 'warning' | 'danger'; title?: string; texte: string }
 
 function compteRendu(r: DrainReport): Message {
+  // `nonConnecte` ne vaut que si **aucun** fournisseur n'est joignable : ni
+  // l'agenda, ni Dolibarr. Nommer le seul agenda ferait chercher une panne de
+  // Google à qui n'a jamais eu que Dolibarr.
   if (r.nonConnecte) {
     return {
       tone: 'info',
-      texte: 'Aucun agenda joignable. La saisie continue de fonctionner normalement.',
+      texte:
+        'Aucun connecteur joignable. La saisie et la validation continuent de fonctionner normalement.',
     }
   }
 
