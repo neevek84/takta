@@ -1,0 +1,149 @@
+import { describe, it, expect } from 'vitest'
+import { buildTimeSpentPayloads, compareDayLength, type PushableEntry } from './timespent'
+
+function saisie(over: Partial<PushableEntry> = {}): PushableEntry {
+  return {
+    id: 'e1',
+    lineId: 'l1',
+    date: '2026-05-04',
+    slotId: '',
+    minutes: 480,
+    kind: 'REALISE',
+    minutesParJour: 480,
+    comment: '',
+    ...over,
+  }
+}
+
+describe('buildTimeSpentPayloads', () => {
+  it('convertit les minutes en secondes, sans autre facteur', () => {
+    const [p] = buildTimeSpentPayloads([saisie({ minutes: 480 })])
+    expect(p!.durationSeconds).toBe(28_800)
+  })
+
+  it('donne la même durée quel que soit le facteur figé de la saisie', () => {
+    // Le facteur ne convertit pas des minutes en secondes : 8 heures restent
+    // 8 heures. Il ne sert qu'à dire combien de JOURS ces minutes valent.
+    const a = buildTimeSpentPayloads([saisie({ minutes: 480, minutesParJour: 480 })])[0]!
+    const b = buildTimeSpentPayloads([saisie({ minutes: 480, minutesParJour: 420 })])[0]!
+    expect(a.durationSeconds).toBe(b.durationSeconds)
+    expect(a.centiemesDeJour).toBe(100)
+    expect(b.centiemesDeJour).toBe(114)
+  })
+
+  it('exprime les jours au facteur figé de chaque saisie, jamais d un facteur commun', () => {
+    const p = buildTimeSpentPayloads([
+      saisie({ id: 'a', date: '2026-05-04', minutes: 480, minutesParJour: 480 }),
+      saisie({ id: 'b', date: '2026-05-05', minutes: 420, minutesParJour: 420 }),
+    ])
+    expect(p.map((x) => x.centiemesDeJour)).toEqual([100, 100])
+    expect(p.map((x) => x.durationSeconds)).toEqual([28_800, 25_200])
+  })
+
+  it('ne laisse jamais passer de prévisionnel', () => {
+    // Le test central de la spec : un mois mêlant réalisé et prévu ne pousse
+    // que le réalisé.
+    const p = buildTimeSpentPayloads([
+      saisie({ id: 'r', date: '2026-05-04', kind: 'REALISE' }),
+      saisie({ id: 'p', date: '2026-05-05', kind: 'PREVISIONNEL' }),
+    ])
+    expect(p.map((x) => x.entryId)).toEqual(['r'])
+  })
+
+  it('ignore une saisie à zéro minute', () => {
+    expect(buildTimeSpentPayloads([saisie({ minutes: 0 })])).toEqual([])
+  })
+
+  it('refuse une saisie dont le facteur figé est inexploitable', () => {
+    // Sauter silencieusement une telle saisie la ferait disparaître de la
+    // facturation sans que personne ne s'en aperçoive.
+    expect(() => buildTimeSpentPayloads([saisie({ minutesParJour: 0 })])).toThrow(/inexploitable/)
+    expect(() => buildTimeSpentPayloads([saisie({ minutesParJour: -420 })])).toThrow(/inexploitable/)
+  })
+
+  it('refuse un facteur figé fractionnaire, que rien ne saurait rendre entier', () => {
+    // « Entiers partout » : un facteur de 450,5 minutes ne vient d'aucun
+    // réglage légitime, et le laisser passer ferait dépendre la quantité
+    // facturée d'un flottant.
+    expect(() => buildTimeSpentPayloads([saisie({ minutesParJour: 450.5 })])).toThrow(
+      /inexploitable/,
+    )
+  })
+
+  it('reporte le commentaire de la saisie en note, débarrassé de ses blancs', () => {
+    const [p] = buildTimeSpentPayloads([saisie({ comment: '  Recette V2  ' })])
+    expect(p!.note).toBe('Recette V2')
+  })
+
+  it('trie par date puis par ligne, pour un push reproductible', () => {
+    const p = buildTimeSpentPayloads([
+      saisie({ id: 'c', lineId: 'l2', date: '2026-05-05' }),
+      saisie({ id: 'a', lineId: 'l2', date: '2026-05-04' }),
+      saisie({ id: 'b', lineId: 'l1', date: '2026-05-04' }),
+    ])
+    expect(p.map((x) => x.entryId)).toEqual(['b', 'a', 'c'])
+  })
+
+  it('départage deux créneaux d une même cellule par leur identifiant', () => {
+    // Sans ce départage, l'ordre des deux créneaux d'une même journée sur une
+    // même ligne dépendrait de l'ordre d'arrivée : le push cesserait d'être
+    // reproductible là où il l'est le plus utile, sur une journée coupée.
+    const p = buildTimeSpentPayloads([
+      saisie({ id: 's', slotId: 'matin', minutes: 240 }),
+      saisie({ id: 'a', slotId: 'apres-midi', minutes: 240 }),
+    ])
+    expect(p.map((x) => x.entryId)).toEqual(['a', 's'])
+  })
+
+  it('conserve le créneau, qui fait partie de l identité d une cellule', () => {
+    const p = buildTimeSpentPayloads([
+      saisie({ id: 'm', slotId: 'matin', minutes: 240 }),
+      saisie({ id: 's', slotId: 'apres-midi', minutes: 240 }),
+    ])
+    expect(p.map((x) => x.slotId).sort()).toEqual(['apres-midi', 'matin'])
+  })
+})
+
+describe('compareDayLength', () => {
+  it('signale l écart entre 8 h locales et 7 h Dolibarr', () => {
+    const c = compareDayLength({ minutesParJourLocal: 480, heuresParJourDolibarr: 7 })
+    expect(c.minutesParJourDolibarr).toBe(420)
+    expect(c.divergent).toBe(true)
+    // Une journée locale pleine s'affichera comme 1,14 jour chez Dolibarr :
+    // le fameux septième de trop.
+    expect(c.centiemesAffichesParDolibarr).toBe(114)
+  })
+
+  it('ne signale rien quand les deux côtés comptent pareil', () => {
+    const c = compareDayLength({ minutesParJourLocal: 420, heuresParJourDolibarr: 7 })
+    expect(c.divergent).toBe(false)
+    expect(c.centiemesAffichesParDolibarr).toBe(100)
+  })
+
+  it('accepte une durée Dolibarr fractionnaire', () => {
+    const c = compareDayLength({ minutesParJourLocal: 450, heuresParJourDolibarr: 7.5 })
+    expect(c.minutesParJourDolibarr).toBe(450)
+    expect(c.divergent).toBe(false)
+  })
+
+  it('ramène une durée Dolibarr à la minute entière', () => {
+    // 7,5 h tombe juste et ne prouve rien de l'arrondi. 8,2 h vaut
+    // 491,999999... en flottant, et 7,005 h vaut 420,3 : les deux doivent
+    // ressortir en minutes entières, sans quoi un flottant se propagerait
+    // jusqu'à la comparaison des journées.
+    const bruit = compareDayLength({ minutesParJourLocal: 480, heuresParJourDolibarr: 8.2 })
+    expect(bruit.minutesParJourDolibarr).toBe(492)
+    expect(Number.isInteger(bruit.minutesParJourDolibarr)).toBe(true)
+    expect(bruit.divergent).toBe(true)
+
+    const fraction = compareDayLength({ minutesParJourLocal: 420, heuresParJourDolibarr: 7.005 })
+    expect(fraction.minutesParJourDolibarr).toBe(420)
+    expect(fraction.divergent).toBe(false)
+  })
+
+  it('refuse une durée Dolibarr inexploitable', () => {
+    expect(() =>
+      compareDayLength({ minutesParJourLocal: 480, heuresParJourDolibarr: 0 }),
+    ).toThrow(/inexploitable/)
+  })
+})
