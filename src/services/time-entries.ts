@@ -4,6 +4,7 @@ import { checkCapacity } from '@/core/capacity/check'
 import { isLocked } from '@/core/cra/state-machine'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { getSettings } from './settings'
+import { enqueueTimeEntry } from './sync/outbox'
 
 export interface MonthEntry {
   id: string
@@ -205,9 +206,26 @@ export async function saveEntry(args: {
   }
 
   if (args.minutes === 0) {
-    await prisma.timeEntry.deleteMany({
-      where: { userId: args.userId, lineId: args.lineId, date, slotId },
+    // La suppression et sa mise en file tiennent dans la même transaction :
+    // une suppression qui échapperait à la file laisserait un bloc fantôme
+    // occuper une journée qu'on pourrait revendre.
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.timeEntry.findUnique({
+        where: {
+          lineId_userId_date_slotId: { lineId: args.lineId, userId: args.userId, date, slotId },
+        },
+        select: { id: true },
+      })
+      if (existing === null) return
+
+      await tx.timeEntry.delete({ where: { id: existing.id } })
+      await enqueueTimeEntry(tx, {
+        userId: args.userId,
+        entryId: existing.id,
+        operation: 'DELETE',
+      })
     })
+
     return { ok: true, minutes: 0 }
   }
 
@@ -252,20 +270,24 @@ export async function saveEntry(args: {
       ? { totalCentiemes: verdict.totalCentiemes, capacityCentiemes: verdict.capacityCentiemes }
       : null
 
-  await prisma.timeEntry.upsert({
-    where: {
-      lineId_userId_date_slotId: { lineId: args.lineId, userId: args.userId, date, slotId },
-    },
-    create: {
-      lineId: args.lineId,
-      userId: args.userId,
-      date,
-      slotId,
-      minutes: args.minutes,
-      kind: args.kind,
-      minutesParJour,
-    },
-    update: { minutes: args.minutes, kind: args.kind, minutesParJour },
+  await prisma.$transaction(async (tx) => {
+    const entry = await tx.timeEntry.upsert({
+      where: {
+        lineId_userId_date_slotId: { lineId: args.lineId, userId: args.userId, date, slotId },
+      },
+      create: {
+        lineId: args.lineId,
+        userId: args.userId,
+        date,
+        slotId,
+        minutes: args.minutes,
+        kind: args.kind,
+        minutesParJour,
+      },
+      update: { minutes: args.minutes, kind: args.kind, minutesParJour },
+    })
+
+    await enqueueTimeEntry(tx, { userId: args.userId, entryId: entry.id, operation: 'UPSERT' })
   })
 
   return warning === null
@@ -374,9 +396,17 @@ export async function convertPastForecast(
   const { convertibles, lockedCount } = await splitPastForecastByLock(userId, month, today)
 
   if (convertibles.length > 0) {
-    await prisma.timeEntry.updateMany({
-      where: { id: { in: convertibles.map((e) => e.id) }, userId },
-      data: { kind: 'REALISE' },
+    await prisma.$transaction(async (tx) => {
+      await tx.timeEntry.updateMany({
+        where: { id: { in: convertibles.map((e) => e.id) }, userId },
+        data: { kind: 'REALISE' },
+      })
+
+      // Le prévisionnel converti change de couleur dans l'agenda : chaque
+      // saisie repart donc dans la file, dans la transaction qui la convertit.
+      for (const e of convertibles) {
+        await enqueueTimeEntry(tx, { userId, entryId: e.id, operation: 'UPSERT' })
+      }
     })
   }
 

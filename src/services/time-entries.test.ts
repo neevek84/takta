@@ -59,6 +59,9 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
+  // La file survit à la saisie qu'elle vise (aucune clé étrangère sur
+  // `entityId`) : elle se vide donc avant les saisies, pas après.
+  await prisma.syncOutbox.deleteMany({})
   await prisma.timeEntry.deleteMany({ where: { userId: { in: [userId, intrusId, autreId] } } })
   await updateSettings({ minutesParJour: 480, capacityMode: 'BLOCAGE', capacityCentiemes: 100 })
 })
