@@ -7,6 +7,24 @@
 
 ---
 
+---
+
+## ⚠ Amendement du 16 août — la facture n'existe plus
+
+**À lire avant toute tâche.** Ce plan a été écrit alors que l'application savait demander à Dolibarr de créer une facture. **Cette fonctionnalité a été retirée** (commit `c1aeb8c`), avec `createDraftInvoice`, `src/core/dolibarr/invoice.ts` et `src/services/dolibarr/invoicing.ts`.
+
+La raison, en une phrase : Dolibarr porte déjà ce flux depuis ses écrans — on coche les temps consommés d'un projet, on lance « Facturer », et chaque ligne passe de « Facturée : Non » à la référence de la facture. Notre demande créait une facture **parallèle** que Dolibarr ne reliait à rien, si bien que les temps poussés restaient refacturables. Vérifié : **l'API REST n'expose pas cette action.** Le détail est dans la spec du lot 2, section 8 bis.
+
+**Conséquences pour ce plan :**
+
+- Le catalogue Dolibarr compte **dix appels**, pas douze. `POST /invoices` et `GET /invoices/{invoiceId}` **n'y figurent pas**.
+- Partout où le corps d'une tâche mentionne encore ces deux gabarits, `createDraftInvoice`, `faux.invoices` ou la relecture d'une référence de facture — **ignore-le**. Le code correspondant n'existe plus, et le test de couverture échouerait précisément parce qu'aucun appel ne les frappe.
+- Le double HTTP n'a donc aucune route de facture à servir.
+
+C'est aussi une illustration de ce que ce lot construit : **un catalogue engendré depuis le code ne pourrait pas porter cette erreur**, puisque le code ne contient plus ces appels. Ce plan, lui, l'a portée pendant deux heures.
+
+---
+
 ## 0. Ce que ce lot livre, et pourquoi dans cet ordre
 
 Le porteur veut **savoir où sont les appels aux API externes, quels paramètres chacun porte, et comment les mettre à jour**. Un chapitre en prose répondrait à la question aujourd'hui et mentirait dans trois mois.
@@ -571,7 +589,7 @@ Annuler les trois.
 
 ## Tâche 2 — Le catalogue Dolibarr
 
-**But.** Déclarer les douze appels que l'application émet vers Dolibarr, avec la provenance de chaque paramètre.
+**But.** Déclarer les dix appels que l'application émet vers Dolibarr, avec la provenance de chaque paramètre.
 
 **Fichiers créés**
 - `src/integrations/dolibarr/catalogue.ts`
@@ -581,7 +599,7 @@ Annuler les trois.
 
 **Interfaces produites.** `CATALOGUE_DOLIBARR: CatalogueSysteme`.
 
-**Source d'autorité.** Les douze appels sont ceux de `src/services/dolibarr/http.ts`, relus ligne à ligne. Ne rien ajouter que le client n'émette pas ; ne rien omettre qu'il émette.
+**Source d'autorité.** Les dix appels sont ceux de `src/services/dolibarr/http.ts`, relus ligne à ligne. Ne rien ajouter que le client n'émette pas ; ne rien omettre qu'il émette.
 
 ### Étapes
 
@@ -599,16 +617,14 @@ describe('catalogue Dolibarr', () => {
     expect(verifierCatalogue(CATALOGUE_DOLIBARR, AUJOURDHUI)).toEqual([])
   })
 
-  it('déclare exactement les douze appels du client HTTP', () => {
+  it('déclare exactement les dix appels du client HTTP', () => {
     expect(CATALOGUE_DOLIBARR.appels.map(cleAppel).sort()).toEqual([
       'DELETE /tasks/{taskId}/timespent/{timespentId}',
-      'GET /invoices/{invoiceId}',
       'GET /projects',
       'GET /projects/{projectId}/tasks',
       'GET /proposals/{proposalId}',
       'GET /setup/conf/{constante}',
       'GET /thirdparties',
-      'POST /invoices',
       'POST /tasks',
       'POST /tasks/{taskId}/addtimespent',
       'POST /thirdparties',
@@ -748,8 +764,6 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
     //  GET    /proposals/{proposalId}                    getProposal
     //  PUT    /tasks/{taskId}/timespent/{timespentId}    updateTimeSpent
     //  DELETE /tasks/{taskId}/timespent/{timespentId}    deleteTimeSpent  (TOLERE)
-    //  POST   /invoices                                  createDraftInvoice
-    //  GET    /invoices/{invoiceId}                      createDraftInvoice, relecture de la ref
     //  GET    /setup/conf/{constante}                    getSetupValue    (TOLERE)
   ],
 }
@@ -764,8 +778,6 @@ Précisions à porter, entrée par entrée, sans en inventer d'autres :
 - `GET /proposals/{proposalId}` — `proposalId` `SAISIE`, origine « référence de propale saisie au rattachement d'un engagement ». Note : `subprice` est relu en euros et converti en centimes (`× 100`) par le client. **Note supplémentaire, à écrire telle quelle** : « Aucun service n'appelle encore cette opération ; seul le client HTTP la porte. » — c'est vrai en l'état du dépôt, et c'est exactement le genre de fait que le code ne dit pas.
 - `PUT /tasks/{taskId}/timespent/{timespentId}` — mêmes paramètres que le push, moins `user_id`. Échec `REJOUE`.
 - `DELETE …` — échec `TOLERE`, `visible` : « Rien. Un temps déjà disparu est un objectif atteint. »
-- `POST /invoices` — `socid` `IDENTIFIANT` ; `status` `CONSTANTE` `0` (brouillon) ; `lines[].desc` `CALCUL` (`src/core/dolibarr/invoice.ts · buildInvoiceDraft`) ; `lines[].qty` `CALCUL` « centièmes de jour ÷ 100 » ; `lines[].subprice` `CALCUL` « centimes ÷ 100 ». `reglagesTiers: ['Taux de TVA par défaut du tiers']`. Note : aucun taux de TVA n'est transmis, l'application ne valide jamais la facture.
-- `GET /invoices/{invoiceId}` — `invoiceId` `IDENTIFIANT`, origine « identifiant rendu par `POST /invoices` ». Note : appelé uniquement pour relire `ref`.
 - `GET /setup/conf/{constante}` — `constante` `CONSTANTE`, origine « `src/services/dolibarr/setup.ts` — `SOCIETE_FISCAL_MONTH_START`, `TIMESHEET_DAY_DURATION` », exemple `TIMESHEET_DAY_DURATION`. Échec `TOLERE` : « L'écran de reprise ne propose simplement pas la valeur. » `reglagesTiers: ['SOCIETE_FISCAL_MONTH_START', 'TIMESHEET_DAY_DURATION']`.
 
 **4. Le voir passer.**

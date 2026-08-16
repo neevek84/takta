@@ -10,7 +10,7 @@
 
 Cesser la double saisie. Les tiers, les projets et les engagements vivent déjà dans Dolibarr ; les temps consommés doivent y retourner sans qu'on les retape.
 
-**Dolibarr facture, pas le CRA.** Ce lot pousse les temps réalisés, et peut demander à Dolibarr de créer la facture correspondante (voir §8 bis). Demander à un outil de faire son métier n'est pas le faire soi-même : numérotation, TVA, émission et conservation restent entièrement chez lui, avec toute la charge réglementaire qu'elles portent.
+**Dolibarr facture, pas le CRA.** Ce lot pousse les temps réalisés, **et rien d'autre**. La création de facture a été implémentée puis retirée (voir §8 bis) : Dolibarr la fait mieux depuis ses propres écrans. Demander à un outil de faire son métier n'est pas le faire soi-même : numérotation, TVA, émission et conservation restent entièrement chez lui, avec toute la charge réglementaire qu'elles portent.
 
 ### Le connecteur est additif, jamais exclusif
 
@@ -34,7 +34,7 @@ Toute référence externe est nullable, à tout moment, pour toute entité. C'es
 
 **Jamais de prévisionnel vers Dolibarr.** Du temps prévu n'est pas du temps consommé et n'a rien à faire dans une facture. Cette règle ne vaut que pour Dolibarr : vers l'agenda, le prévisionnel est au contraire le cas d'usage principal.
 
-**La création de facture est une demande adressée à Dolibarr**, sur proposition acceptée par l'utilisateur (voir §8 bis). L'application transmet des données ; elle ne numérote rien, ne calcule aucune TVA et n'émet aucun document.
+**L'application ne crée aucune facture, ni directement ni par demande.** Elle pousse les temps consommés ; l'utilisateur les facture depuis Dolibarr (voir §8 bis).
 
 ---
 
@@ -118,30 +118,21 @@ Le mécanisme qui le garantit est spécifié au **lot 1d** : chaque saisie porte
 
 ---
 
-## 8 bis. Demander la facture à Dolibarr
+## 8 bis. La facture — retirée le 16 août, et pourquoi
 
-Après validation d'un CRA et push réussi des temps, l'application **propose** de faire créer la facture correspondante dans Dolibarr. Une proposition, jamais un automatisme.
+**Cette section décrivait une fonctionnalité qui a été implémentée, puis retirée.** Elle est conservée sous cette forme pour que personne ne la reconstruise en croyant combler un oubli.
 
-**Ce n'est pas une entorse à la règle « l'application ne facture pas ».** C'est exactement ce qu'elle fait déjà en poussant les temps : elle demande à Dolibarr de faire son métier. **Dolibarr facture, pas le CRA.** La distinction n'est pas cosmétique — elle détermine où vit la charge réglementaire.
+L'application proposait, après validation d'un CRA, de demander à Dolibarr de créer une facture brouillon avec les temps validés. Le code était bon et testé. Le porteur l'a fait retirer, et sa raison est meilleure que la fonctionnalité.
 
-**Ce que l'application fait :** elle demande à Dolibarr de créer une facture, avec une ligne par prestation, quantité égale aux jours validés et prix unitaire égal au TJM de la ligne. C'est un appel d'API qui transmet des données à l'outil dont c'est la responsabilité.
+**Dolibarr porte déjà ce flux, et mieux.** Dans un projet, on liste les temps consommés, on coche ceux qu'on veut, on lance l'action « Facturer ». Chaque ligne de temps passe alors de « Facturée : Non » à la **référence de la facture**, avec sa quantité et son total. C'est un état porté par la ligne de temps elle-même.
 
-**Par défaut, la facture est créée au brouillon.** Non par principe, mais par prudence : un brouillon se corrige, une facture validée est numérotée et immuable — d'autant plus sur une instance française où le module de journalisation inaltérable est actif. L'utilisateur vérifie et valide dans Dolibarr.
+**Notre demande créait une facture parallèle**, calculée depuis nos propres saisies. Dolibarr n'établissait aucun lien entre les deux : les temps poussés restaient marqués « non facturés », et pouvaient être refacturés sans que rien ne le signale. Nous fabriquions un doublon silencieux.
 
-**Ce que l'application ne fait jamais :**
+**Vérifié sur l'instance du porteur (Dolibarr 23.0.1) : l'API REST n'expose pas cette action.** Créer une facture, ajouter des lignes, valider, convertir une commande — oui. Facturer des temps consommés sélectionnés — non. C'est une action de masse de l'interface, pas un point d'entrée.
 
-- elle ne **numérote** rien et n'attribue aucune référence de facture ;
-- elle ne calcule **aucune TVA**, ne choisit aucun taux, n'applique aucune mention légale ;
-- elle n'**émet**, ne transmet et n'archive **aucun document** ;
-- elle ne gère **ni relance, ni paiement, ni lettrage**.
+**Ce qui reste :** l'application pousse les temps consommés, et c'est tout. C'est ce qui alimente l'écran où le porteur facture. Les champs manuels du CRA — numéro de facture associé, date de facturation, date de paiement — n'ont jamais dépendu de cette fonctionnalité et demeurent.
 
-Toute la charge réglementaire — facturation électronique, numérotation, conservation, journalisation inaltérable — demeure du côté de Dolibarr. C'est ce qui permet à cette application de rester un outil de CRA et de ne jamais devenir un produit de conformité.
-
-**Le CRA reste sans montant** (voir lot 3) : le document que le client signe atteste du temps passé, et rien d'autre.
-
-Si la proposition est déclinée, ou si Dolibarr est indisponible, le CRA reste validé et les temps restent poussés. La facture se crée alors à la main dans Dolibarr, comme aujourd'hui.
-
----
+**Ce que cela confirme :** « Dolibarr facture, pas le CRA » n'était pas seulement une règle de périmètre réglementaire. C'était aussi, sans qu'on le sache alors, la bonne réponse technique.
 
 ## 9. Règles métier
 
