@@ -53,7 +53,7 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 ## 4. État du code
 
-**Branche `main`** — 502 tests, `tsc` à 0, `next build` vert, 11 routes.
+**Branche `main`** — 830 tests, `tsc` à 0, `next build` vert, 11 routes.
 
 | Lot | Contenu | État |
 |---|---|---|
@@ -61,6 +61,7 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 | 1a | Prévisionnel, exercice fiscal, plan de charge | fusionné |
 | 1d | Gel du facteur de conversion, cascade client/mission/prestation | fusionné |
 | 1e | Système de design, thème paramétrable | fusionné |
+| 1c | Calendrier, saisie cyclique, PWA | fusionné |
 
 **Écrans** : `/login` `/saisie/[month]` `/missions` `/cra` `/charge` `/admin/saisie` `/admin/theme`
 
@@ -70,7 +71,6 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 | Lot | Spec | Plan | Tâches |
 |---|---|---|---|
-| **1c** — Calendrier et saisie cyclique | oui | oui | 11 (+1 hors plan) |
 | **1b** — Google Calendar | oui | oui | 12 |
 | **2** — Connecteur Dolibarr | oui | oui | 14 |
 | **3** — Validation client (PDF, signature) | oui | oui | 15 |
@@ -79,7 +79,10 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 **Les dix plans sont écrits.** Il ne reste que de l'implémentation.
 
-**Tâche 12 du lot 1c, ajoutée hors plan** : le contrôle de capacité compare des minutes cumulées à facteurs différents contre un seuil converti au facteur global. Une journée pleine chez un client à 600 min/jour est refusée ; 1,14 jour chez un client à 420 passe sans un mot. Brief rédigé, à lancer après la vague en cours — il modifie `checkCapacity`, dont dépend la tâche 4.
+**Deux points du lot 1c à soumettre au porteur du produit :**
+
+- **La palette catégorielle** — les six teintes qui distinguent les prestations sont plus saturées que les fonds d'état. C'était nécessaire pour tenir l'écart de distinguabilité dans une fenêtre chaude, mais cela se juge à l'œil.
+- **Le glissement au doigt n'est pas prouvé.** `releasePointerCapture` n'est couvert par aucun test : `happy-dom` n'implémente pas la capture implicite, et la mutation survit. Sans cette ligne, le glissement tactile est inopérant sur un appareil réel. **À essayer sur un téléphone.**
 
 **Ordre retenu** : 1c → 1b → 2 → 3 → 4 → 5.
 
