@@ -45,6 +45,20 @@ export default function middleware(request: NextRequest, event: NextFetchEvent) 
   return protege(request, event)
 }
 
+/**
+ * `api/sync` rejoint `api/auth` hors du champ : le déclenchement externe porte
+ * son propre jeton et n'a pas de session. Gaté, il recevrait une redirection
+ * 307 vers `/login` puis du `text/html` — un cron ou n8n n'en tirerait rien,
+ * et le refus ressemblerait à un succès.
+ *
+ * L'exclusion est celle du **routage**, pas de l'autorisation : la route
+ * refuse elle-même toute requête sans jeton valide (voir
+ * `src/app/api/sync/flush/route.ts`), et elle ne s'ouvre pas pour autant —
+ * sans `SYNC_FLUSH_TOKEN`, elle reste fermée.
+ *
+ * Elle ne touche pas aux fichiers publics de la PWA ci-dessus, qui passent,
+ * eux, par le middleware et en ressortent aussitôt.
+ */
 export const config = {
-  matcher: ['/((?!api/auth|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!api/auth|api/sync|_next/static|_next/image|favicon.ico).*)'],
 }

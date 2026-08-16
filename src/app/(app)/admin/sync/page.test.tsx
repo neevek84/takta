@@ -1,0 +1,98 @@
+// @vitest-environment happy-dom
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, cleanup } from '@testing-library/react'
+import type { OpenConflict } from '@/services/sync/conflicts'
+import type { FailedSyncRow } from '@/services/sync/queue'
+
+const { requireUser, getConnectionState, listOpenConflicts, listFailedSyncRows } = vi.hoisted(
+  () => ({
+    requireUser: vi.fn(),
+    getConnectionState: vi.fn(),
+    listOpenConflicts: vi.fn(),
+    listFailedSyncRows: vi.fn(),
+  }),
+)
+
+vi.mock('@/auth', () => ({ requireUser }))
+vi.mock('@/services/google/connect', () => ({ getConnectionState }))
+vi.mock('@/services/sync/conflicts', () => ({ listOpenConflicts }))
+vi.mock('@/services/sync/queue', () => ({ listFailedSyncRows }))
+
+// Le client est remplacé par un témoin : ce test porte sur le **câblage** de la
+// page, pas sur le rendu du client, qui a ses propres tests.
+const recu = vi.hoisted(() => ({ props: null as unknown }))
+vi.mock('./SyncClient', () => ({
+  SyncClient: (props: unknown) => {
+    recu.props = props
+    return <div data-testid="client" />
+  },
+}))
+
+import AdminSyncPage from './page'
+
+const CONNEXION = {
+  connected: true,
+  calendarId: 'cra@group.calendar.google.com',
+  scope: 'calendar',
+  connectedAt: new Date('2026-03-01T09:00:00.000Z'),
+}
+
+const conflit: OpenConflict = {
+  id: 'c1',
+  entityId: 'e1',
+  kind: 'REMOTE_MODIFIED',
+  detectedAt: new Date('2026-03-20T10:00:00.000Z'),
+  libelle: '2026-03-12 · ACME · ITSM · Consultant',
+  remote: null,
+}
+
+const echec: FailedSyncRow = {
+  id: 'r1',
+  entityId: 'e2',
+  operation: 'UPSERT',
+  attempts: 5,
+  lastError: 'Agenda injoignable : fetch failed',
+  libelle: '2026-03-13 · ACME · ITSM · Consultant',
+}
+
+beforeEach(() => {
+  recu.props = null
+  requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
+  getConnectionState.mockReset().mockResolvedValue(CONNEXION)
+  listOpenConflicts.mockReset().mockResolvedValue([conflit])
+  listFailedSyncRows.mockReset().mockResolvedValue([echec])
+})
+afterEach(cleanup)
+
+describe('page Administration · Synchronisation', () => {
+  it('donne au client ce que les services rendent, pour l utilisateur de la session', async () => {
+    render(await AdminSyncPage({ searchParams: Promise.resolve({}) }))
+
+    // La lecture est scopée par l'identifiant de la session : une page qui
+    // lirait sans le passer montrerait les divergences de tout le monde.
+    expect(getConnectionState).toHaveBeenCalledWith('u1')
+    expect(listOpenConflicts).toHaveBeenCalledWith('u1')
+    expect(listFailedSyncRows).toHaveBeenCalledWith('u1')
+
+    // Et elle les transmet : un écran câblé sur des tableaux vides afficherait
+    // « aucune divergence » pendant qu'une divergence attend en base.
+    expect(recu.props).toEqual({
+      connection: CONNEXION,
+      conflicts: [conflit],
+      failures: [echec],
+    })
+    expect(screen.getByTestId('client')).toBeTruthy()
+  })
+
+  it('n annonce rien quand la redirection ne porte aucun message', async () => {
+    render(await AdminSyncPage({ searchParams: Promise.resolve({}) }))
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('affiche le message rapporté par la redirection de connexion', async () => {
+    render(
+      await AdminSyncPage({ searchParams: Promise.resolve({ message: 'Agenda connecté.' }) }),
+    )
+    expect(screen.getByRole('status').textContent).toContain('Agenda connecté.')
+  })
+})

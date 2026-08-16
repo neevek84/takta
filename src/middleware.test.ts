@@ -12,7 +12,7 @@ vi.hoisted(() => {
   process.env.AUTH_SECRET ??= 'secret-de-test-du-middleware'
 })
 
-import middleware from './middleware'
+import middleware, { config } from './middleware'
 
 // Le middleware réel est exercé ici : la requête traverse `src/middleware.ts`,
 // NextAuth et `authorized()` de `auth.config.ts` comme en production. Aucune
@@ -90,5 +90,34 @@ describe('middleware — routes protégées', () => {
 
   it('laisse passer /login sans session', async () => {
     expect(redirige(await sansSession('/login'))).toBe(false)
+  })
+})
+
+describe('middleware — le déclenchement externe n est pas gaté par la session', () => {
+  // Le matcher est appliqué par Next avant d'entrer dans le fichier : aucun
+  // appel au middleware ne peut le prouver. On l'évalue donc tel qu'il est
+  // écrit — c'est une expression régulière — sur les chemins qui comptent.
+  const matcher = new RegExp(`^${config.matcher[0] as string}$`)
+
+  it('laisse POST /api/sync/flush hors du champ du middleware', () => {
+    // n8n, un cron système ou curl portent un jeton, jamais un cookie de
+    // session : gaté, l'endpoint leur répondrait une page de connexion en
+    // HTML avec un 307, que rien côté appelant ne sait interpréter.
+    expect(matcher.test('/api/sync/flush')).toBe(false)
+  })
+
+  it('garde les pages applicatives dans le champ du middleware', () => {
+    // Le garde-fou de l'exclusion ci-dessus : une exclusion trop large
+    // ouvrirait l'application entière sans qu'aucune assertion ne bouge.
+    expect(matcher.test('/saisie/2026-03')).toBe(true)
+    expect(matcher.test('/admin/sync')).toBe(true)
+    expect(matcher.test('/')).toBe(true)
+  })
+
+  it('redirige la page de supervision sans session vers /login', async () => {
+    const reponse = await sansSession('/admin/sync')
+
+    expect(reponse?.status).toBe(307)
+    expect(reponse?.headers.get('location')).toContain('/login')
   })
 })

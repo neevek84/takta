@@ -1,7 +1,7 @@
 import { prisma } from '@/db/client'
 import { CalendarApiError, type CalendarConnector } from '@/core/calendar/connector'
 import { buildCalendarEvent } from '@/core/calendar/event'
-import { abandon, nextAttempt, type ConflictKind } from '@/core/sync/policy'
+import { abandon, nextAttempt, PROVIDER_GOOGLE, type ConflictKind } from '@/core/sync/policy'
 import type { TimeEntryKind } from '@/core/types'
 import type { FetchLike } from '@/integrations/google/calendar'
 import { getSettings } from '@/services/settings'
@@ -221,4 +221,53 @@ export async function flushSyncOutbox(args: {
   }
 
   return report
+}
+
+/**
+ * Nombre maximal de passes par compte et par déclenchement.
+ *
+ * `flushSyncOutbox` traite au plus `limit` lignes et ne s'enchaîne pas : sans
+ * reprise, un déclenchement laisserait derrière lui tout ce qui dépasse, et
+ * une file de 200 lignes attendrait quatre déclenchements pour partir. La
+ * borne, elle, garde la main : au-delà de 20 × 50 lignes en un seul passage,
+ * ce n'est plus un retard mais un défaut, et boucler sans fin sur un compte
+ * priverait tous les suivants de leur drainage.
+ */
+const MAX_PASSES = 20
+
+/**
+ * Draine la file de chaque compte connecté. C'est ce que l'endpoint interne
+ * appelle : il n'a pas de session, donc pas d'utilisateur courant.
+ */
+export async function flushAllSyncOutboxes(
+  limit = 50,
+  /** injectées par les tests ; la production n'en passe aucune */
+  deps: { now?: Date; fetchFn?: FetchLike } = {},
+): Promise<{ comptes: number; traitees: number }> {
+  const now = deps.now ?? new Date()
+  const comptes = await prisma.providerCredential.findMany({
+    where: { provider: PROVIDER_GOOGLE, calendarId: { not: '' } },
+    select: { userId: true },
+  })
+
+  let traitees = 0
+  for (const compte of comptes) {
+    // Résolu une fois par compte, pas une fois par passe : un jeton
+    // rafraîchi vingt fois de suite ferait vingt appels à Google pour rien.
+    const connector = await resolveConnector(compte.userId, {
+      ...(deps.fetchFn === undefined ? {} : { fetchFn: deps.fetchFn }),
+      now,
+    })
+    if (connector === null) continue
+
+    for (let passe = 0; passe < MAX_PASSES; passe++) {
+      const r = await flushSyncOutbox({ userId: compte.userId, limit, now, connector })
+      traitees += r.traitees
+      // Une passe non pleine a vu le fond de la file : la suivante ne
+      // trouverait que des lignes reculées après échec, pas encore dues.
+      if (r.traitees < limit) break
+    }
+  }
+
+  return { comptes: comptes.length, traitees }
 }

@@ -8,7 +8,7 @@ import { saveEntry } from '@/services/time-entries'
 import { saveCredential } from '@/services/credentials'
 import { createGoogleCalendarConnector } from '@/integrations/google/calendar'
 import { createFakeGoogleApi, type FakeGoogleApi } from '@/integrations/google/fake-google-api'
-import { flushSyncOutbox } from './flush'
+import { flushAllSyncOutboxes, flushSyncOutbox } from './flush'
 
 const DEDIE = 'cra-dedie@group.calendar.google.com'
 const NOW = new Date('2026-03-20T10:00:00.000Z')
@@ -428,5 +428,109 @@ describe('isolation par utilisateur', () => {
     const r = await flushSyncOutbox({ userId, now: NOW, connector: connector() })
     expect(r.traitees).toBe(1)
     expect(await prisma.syncOutbox.count({ where: { userId: autreId } })).toBe(1)
+  })
+})
+
+describe('drainage de tous les comptes', () => {
+  /** Lignes visant des saisies absentes : consommées sans le moindre appel réseau. */
+  async function fileFantome(id: string, combien: number): Promise<void> {
+    await prisma.syncOutbox.createMany({
+      data: Array.from({ length: combien }, (_, i) => ({
+        userId: id,
+        entityType: 'TimeEntry',
+        entityId: `fantome-${id}-${i}`,
+        provider: 'GOOGLE',
+        operation: 'UPSERT',
+      })),
+    })
+  }
+
+  async function connecter(id: string): Promise<void> {
+    await saveCredential(id, 'GOOGLE', {
+      accessToken: 'ya29.acces',
+      refreshToken: '1//valide',
+      expiresAt: new Date(NOW.getTime() + 3_600_000),
+      scope: 'calendar',
+      calendarId: DEDIE,
+    })
+  }
+
+  it('ne draine que les comptes connectés', async () => {
+    await saisir('2026-03-12')
+
+    // Personne n'est connecté : rien n'est tenté, rien n'est marqué en échec.
+    expect(await flushAllSyncOutboxes()).toEqual({ comptes: 0, traitees: 0 })
+    const ligne = await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })
+    expect(ligne.state).toBe('PENDING')
+  })
+
+  // La table des jetons est générique et accueillera d'autres fournisseurs :
+  // les drainer avec le connecteur Google pousserait des événements dans le
+  // mauvais agenda, ou tenterait de le faire.
+  it('ne draine que les comptes du fournisseur Google', async () => {
+    await prisma.providerCredential.create({
+      data: {
+        userId: autreId,
+        provider: 'AUTRE',
+        accessTokenEnc: 'x',
+        refreshTokenEnc: 'x',
+        expiresAt: new Date(NOW.getTime() + 3_600_000),
+        scope: 'calendar',
+        calendarId: 'un-autre-agenda',
+      },
+    })
+    await fileFantome(autreId, 1)
+
+    expect(await flushAllSyncOutboxes(50, { now: NOW, fetchFn: api.fetchFn })).toEqual({
+      comptes: 0,
+      traitees: 0,
+    })
+  })
+
+  // Un consentement donné sans calendrier dédié n'est pas une connexion : le
+  // compte rendu qui l'annoncerait comme drainé ferait passer une file
+  // intacte pour une file partie.
+  it('ne compte pas un consentement sans calendrier dédié', async () => {
+    await saveCredential(userId, 'GOOGLE', {
+      accessToken: 'ya29.acces',
+      refreshToken: '1//valide',
+      expiresAt: new Date(NOW.getTime() + 3_600_000),
+      scope: 'calendar',
+      calendarId: '',
+    })
+    await saisir('2026-03-12')
+
+    expect(await flushAllSyncOutboxes(50, { now: NOW, fetchFn: api.fetchFn })).toEqual({
+      comptes: 0,
+      traitees: 0,
+    })
+    expect((await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })).state).toBe('PENDING')
+  })
+
+  it('draine chaque compte connecté, pas seulement le premier', async () => {
+    await connecter(userId)
+    await connecter(autreId)
+    await fileFantome(userId, 1)
+    await fileFantome(autreId, 1)
+
+    expect(await flushAllSyncOutboxes(50, { now: NOW, fetchFn: api.fetchFn })).toEqual({
+      comptes: 2,
+      traitees: 2,
+    })
+    expect(await prisma.syncOutbox.count({})).toBe(0)
+  })
+
+  // `flushSyncOutbox` traite au plus `limit` lignes et ne s'enchaîne pas :
+  // sans reprise ici, un déclenchement laisserait 5 lignes derrière lui à
+  // chaque passage, et une file de 200 mettrait quatre déclenchements à partir.
+  it('enchaîne les passes jusqu à vider une file plus longue que la limite', async () => {
+    await connecter(userId)
+    await fileFantome(userId, 55)
+
+    expect(await flushAllSyncOutboxes(50, { now: NOW, fetchFn: api.fetchFn })).toEqual({
+      comptes: 1,
+      traitees: 55,
+    })
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
   })
 })

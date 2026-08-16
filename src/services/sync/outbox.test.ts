@@ -5,6 +5,7 @@ import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
 import { saveEntry, convertPastForecast } from '@/services/time-entries'
 import { enqueueTimeEntry, RETENTION_JOURS } from './outbox'
+import { listFailedSyncRows, retrySyncRow } from './queue'
 
 // Un interrupteur pour faire échouer la mise en file à la demande. C'est le
 // seul moyen d'observer le sens « pas d'écriture sans mise en file » : la
@@ -337,5 +338,57 @@ describe('la mise en file est transactionnelle avec l écriture', () => {
     )
 
     expect(await prisma.timeEntry.count({ where: { userId, kind: 'PREVISIONNEL' } })).toBe(1)
+  })
+})
+
+describe('les échecs remontent au lieu de disparaître', () => {
+  async function echouer(): Promise<string> {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
+    const ligne = await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })
+    await prisma.syncOutbox.update({
+      where: { id: ligne.id },
+      data: { state: 'FAILED', attempts: 5, lastError: 'Agenda injoignable : fetch failed' },
+    })
+    return ligne.id
+  }
+
+  it('liste les lignes en échec avec leur motif et un libellé lisible', async () => {
+    await echouer()
+
+    const echecs = await listFailedSyncRows(userId)
+    expect(echecs.length).toBe(1)
+    expect(echecs[0]?.attempts).toBe(5)
+    expect(echecs[0]?.lastError).toContain('Agenda injoignable')
+    expect(echecs[0]?.libelle).toContain('2026-03-12')
+  })
+
+  it('ne liste pas les lignes encore en attente', async () => {
+    await saveEntry({ userId, lineId: lineB, date: '2026-03-13', minutes: 240, kind: 'REALISE' })
+    expect(await listFailedSyncRows(userId)).toEqual([])
+  })
+
+  it('ne laisse pas voir les échecs d un autre utilisateur', async () => {
+    await echouer()
+    expect(await listFailedSyncRows(autreId)).toEqual([])
+  })
+
+  it('rejoue une ligne en la remettant immédiatement en attente', async () => {
+    const id = await echouer()
+
+    expect(await retrySyncRow(userId, id)).toBe(true)
+
+    const ligne = await prisma.syncOutbox.findUniqueOrThrow({ where: { id } })
+    expect({ state: ligne.state, attempts: ligne.attempts, lastError: ligne.lastError }).toEqual({
+      state: 'PENDING',
+      attempts: 0,
+      lastError: '',
+    })
+    expect(ligne.nextAttemptAt.getTime()).toBeLessThanOrEqual(Date.now())
+  })
+
+  it('refuse de rejouer la ligne d un autre utilisateur', async () => {
+    const id = await echouer()
+    expect(await retrySyncRow(autreId, id)).toBe(false)
+    expect((await prisma.syncOutbox.findUniqueOrThrow({ where: { id } })).state).toBe('FAILED')
   })
 })

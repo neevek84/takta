@@ -10,6 +10,8 @@ const LIENS = [
   { href: '/cra', label: 'CRA' },
   { href: '/admin/saisie', label: 'Admin' },
   { href: '/admin/theme', label: 'Thème' },
+  // Un écran de supervision qu'aucun lien n'atteint ne supervise rien.
+  { href: '/admin/sync', label: 'Synchro' },
 ]
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
