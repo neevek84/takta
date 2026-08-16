@@ -47,8 +47,71 @@ describe('checkCapacity', () => {
 
   it('applique la même règle un dimanche qu un mardi', () => {
     // la fonction ne connaît pas la date : c'est la garantie
-    const v = checkCapacity({ existing: [j480(480)], added: [j480(240)], capacityCentiemes: CAP, mode: 'BLOCAGE' })
+    const v = checkCapacity({ existing: [j480(480)], added: [j480(1)], capacityCentiemes: CAP, mode: 'BLOCAGE' })
     expect(v.ok).toBe(false)
+  })
+
+  // --- Le défaut que la tâche 14 corrige -----------------------------------
+  //
+  // La comparaison arrondissait au centième de jour avant de comparer : à 480
+  // minutes par jour, un centième vaut 4,8 minutes, et tout ce qui dépassait
+  // de moins de la moitié — près de deux minutes et demie — franchissait le
+  // garde-fou sans un mot. Le centième est la bonne unité pour *afficher* des
+  // jours, pas pour *comparer* : la comparaison se fait désormais au
+  // millicentième, où une minute pèse au moins 69 unités. Le verdict, lui,
+  // continue d'exposer des centièmes — c'est ce que l'affichage sait lire.
+
+  it('signale une minute au-delà de la capacité', () => {
+    // Une journée pleine chez un client à 420 min/jour, plus une minute :
+    // 421 min valent 100,238 centièmes. Arrondis à 100, ils tenaient
+    // exactement dans la capacité et passaient inaperçus.
+    const v = checkCapacity({
+      existing: [{ minutes: 300, minutesParJour: 420 }],
+      added: [{ minutes: 121, minutesParJour: 420 }],
+      capacityCentiemes: CAP,
+      mode: 'BLOCAGE',
+    })
+    expect(v).toEqual({ ok: false, severity: 'block', totalCentiemes: 100, capacityCentiemes: 100 })
+  })
+
+  it('voit la minute de trop même quand la journée mêle deux facteurs', () => {
+    // 211 min à 420 (50,238 centièmes) et 300 min à 600 (50 centièmes) : la
+    // journée dépasse d'une minute exactement. La somme des centièmes arrondis
+    // vaut 100 et la ramenait à une journée pile — et le total exposé, lui,
+    // reste bien cette valeur d'affichage.
+    const v = checkCapacity({
+      existing: [{ minutes: 211, minutesParJour: 420 }],
+      added: [{ minutes: 300, minutesParJour: 600 }],
+      capacityCentiemes: CAP,
+      mode: 'AVERTISSEMENT',
+    })
+    expect(v).toEqual({ ok: false, severity: 'warn', totalCentiemes: 100, capacityCentiemes: 100 })
+  })
+
+  it('accepte encore la journée exactement pleine, à facteurs mêlés', () => {
+    // La même journée à la minute près : 210 min à 420 plus 300 min à 600 font
+    // une journée pile. Comparer plus fin ne doit pas transformer l'égalité en
+    // dépassement.
+    const v = checkCapacity({
+      existing: [{ minutes: 210, minutesParJour: 420 }],
+      added: [{ minutes: 300, minutesParJour: 600 }],
+      capacityCentiemes: CAP,
+      mode: 'BLOCAGE',
+    })
+    expect(v).toEqual({ ok: true })
+  })
+
+  it('accepte encore une journée que l arrondi au centième gonflait', () => {
+    // 419 min à 420 : 99,76 centièmes, soit 100 une fois arrondis. Comparer au
+    // centième aurait pu faire passer cette journée incomplète pour pleine ;
+    // elle l'est de toute façon moins que la capacité, dans les deux unités.
+    const v = checkCapacity({
+      existing: [{ minutes: 419, minutesParJour: 420 }],
+      added: [],
+      capacityCentiemes: CAP,
+      mode: 'BLOCAGE',
+    })
+    expect(v).toEqual({ ok: true })
   })
 
   // --- Le défaut que la tâche 12 corrige -----------------------------------

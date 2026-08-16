@@ -3,6 +3,7 @@ import {
   minutesToCentiemes,
   centiemesToMinutes,
   centiemesParFacteur,
+  millicentiemesParFacteur,
   formatQuantity,
   parseQuantity,
 } from './units'
@@ -65,6 +66,64 @@ describe('centiemesParFacteur', () => {
         { minutes: 130, minutesParJour: 420 },
       ]),
     ).toBe(104)
+  })
+
+  it('ignore un facteur inexploitable plutôt que de rendre un infini', () => {
+    // Une saisie dont la durée de journée serait nulle ne peut pas être
+    // convertie : elle compte pour zéro, jamais pour `Infinity`.
+    expect(
+      centiemesParFacteur([
+        { minutes: 240, minutesParJour: 480 },
+        { minutes: 60, minutesParJour: 0 },
+      ]),
+    ).toBe(50)
+  })
+})
+
+describe('millicentiemesParFacteur', () => {
+  it('ne compte rien sans saisie', () => {
+    expect(millicentiemesParFacteur([])).toBe(0)
+  })
+
+  it('sépare deux totaux que le centième confond', () => {
+    // 420 et 421 minutes sur une journée de 420 valent toutes deux 100
+    // centièmes une fois arrondies : au centième, la minute de trop est
+    // invisible. L'unité fine la voit.
+    expect(centiemesParFacteur([{ minutes: 421, minutesParJour: 420 }])).toBe(100)
+    expect(millicentiemesParFacteur([{ minutes: 420, minutesParJour: 420 }])).toBe(100000)
+    expect(millicentiemesParFacteur([{ minutes: 421, minutesParJour: 420 }])).toBe(100238)
+  })
+
+  it('groupe par facteur exactement comme le calcul en centièmes', () => {
+    // 211 min à 420 (50 238) + 300 min à 600 (50 000) : une journée dépassée
+    // d'une seule minute, que la somme des centièmes arrondis (50 + 50) ramène
+    // à une journée pile.
+    const saisies = [
+      { minutes: 211, minutesParJour: 420 },
+      { minutes: 300, minutesParJour: 600 },
+    ]
+    expect(centiemesParFacteur(saisies)).toBe(100)
+    expect(millicentiemesParFacteur(saisies)).toBe(100238)
+  })
+
+  it('cumule les minutes d un même facteur avant de convertir', () => {
+    // 130 + 131 = 261 min à 420 → 62 143. Converties une par une :
+    // 30 952 + 31 190 = 62 142, un millicentième de plus par accumulation.
+    expect(
+      millicentiemesParFacteur([
+        { minutes: 130, minutesParJour: 420 },
+        { minutes: 131, minutesParJour: 420 },
+      ]),
+    ).toBe(62143)
+  })
+
+  it('ignore un facteur inexploitable plutôt que de rendre un infini', () => {
+    expect(
+      millicentiemesParFacteur([
+        { minutes: 240, minutesParJour: 480 },
+        { minutes: 60, minutesParJour: 0 },
+      ]),
+    ).toBe(50000)
   })
 })
 

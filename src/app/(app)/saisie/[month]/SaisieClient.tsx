@@ -10,9 +10,11 @@ import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
 
 /**
  * Centièmes de jour → jours, comme la charge et l'engagement les affichent
- * déjà. Le contrôle de capacité raisonne désormais dans cette unité : le
- * message la reprend plutôt que de reconvertir en heures avec un facteur qu'il
- * n'a pas.
+ * déjà. Le contrôle de capacité raisonne dans cette unité : le message la
+ * reprend plutôt que de reconvertir en heures avec un facteur qu'il n'a pas.
+ *
+ * Pas `formatJours` : celui-ci laisse le zéro vide, ce qui écrirait ici « pour
+ * une capacité de  j » quand la capacité est réglée à zéro.
  */
 function jours(centiemes: number): string {
   return String(centiemes / 100).replace('.', ',')
@@ -24,8 +26,7 @@ export function SaisieClient(props: {
   lines: LineForGrid[]
   entries: MonthEntry[]
   engagementTotals: Record<string, LineEngagementTotals>
-  capacityMinutes: number
-  minutesParJour: number
+  capacityCentiemes: number
 }) {
   const [message, setMessage] = useState<string | null>(null)
 
@@ -71,8 +72,7 @@ export function SaisieClient(props: {
         lines={props.lines}
         entries={props.entries}
         engagementTotals={props.engagementTotals}
-        capacityMinutes={props.capacityMinutes}
-        minutesParJour={props.minutesParJour}
+        capacityCentiemes={props.capacityCentiemes}
         onSave={handleSave}
       />
     </>

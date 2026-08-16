@@ -8,7 +8,7 @@ import {
   type ExerciceProgress,
 } from '@/core/fiscal/revenue'
 import { computeEngagement, type EngagementSummary } from '@/core/engagement/compute'
-import { minutesToCentiemes } from '@/core/time/units'
+import { centiemesParFacteur } from '@/core/time/units'
 import { getSettings } from './settings'
 import { toIsoDate } from './time-entries'
 import type { TimeEntryKind } from '@/core/types'
@@ -45,8 +45,8 @@ interface ChargeLine {
 }
 
 /**
- * Convertit un cumul de minutes déjà **groupé par facteur** : un seul arrondi
- * par groupe, comme `centiemesParFacteur` dans `core/engagement/compute`.
+ * Convertit un cumul de minutes déjà **groupé par facteur**, en passant par la
+ * règle unique du domaine (`centiemesParFacteur`) : un seul arrondi par groupe.
  *
  * La convention du lot est « cumuler les minutes, convertir une fois ». Elle ne
  * tient qu'à facteur constant : des minutes valorisées à 420 min/jour et à
@@ -55,15 +55,15 @@ interface ChargeLine {
  * journée — et convertir chaque saisie séparément ferait dériver l'arrondi
  * (dix saisies d'une heure sur une journée à 420 min donnent 140 centièmes au
  * lieu de 143). En pratique un groupe est presque toujours seul.
+ *
+ * Le regroupement est fait ici en amont, cellule par cellule ; cette fonction
+ * ne fait plus que le remettre dans la forme qu'attend le domaine, pour que le
+ * plan de charge ne porte pas sa propre copie de la conversion.
  */
 function centiemesDuCumul(parFacteur: ReadonlyMap<number, number>): number {
-  let centiemes = 0
-  for (const [facteur, minutes] of parFacteur) {
-    // Facteur inexploitable : contribue zéro plutôt que d'afficher un Infinity.
-    if (facteur <= 0) continue
-    centiemes += minutesToCentiemes(minutes, facteur)
-  }
-  return centiemes
+  return centiemesParFacteur(
+    [...parFacteur].map(([minutesParJour, minutes]) => ({ minutes, minutesParJour })),
+  )
 }
 
 /** Minuit UTC du premier jour du mois `YYYY-MM`. */

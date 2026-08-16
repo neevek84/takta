@@ -1,22 +1,36 @@
 'use client'
 
-import { dailyTotals } from '@/core/month/build'
-import { formatQuantity } from '@/core/time/units'
+import { saisiesParJour } from '@/core/month/build'
+import { centiemesParFacteur, formatJours } from '@/core/time/units'
+import { depasseCapacite } from '@/core/capacity/check'
 import type { MonthDay } from '@/core/month/build'
+import type { MinutesAuFacteur } from '@/core/time/units'
 import type { MonthEntry } from '@/services/time-entries'
 
+const AUCUNE_SAISIE: MinutesAuFacteur[] = []
+
+/**
+ * Ligne de totaux de la grille.
+ *
+ * Le chiffre affiché et le marqueur de dépassement sortent du **même calcul
+ * que le service** : chaque saisie est convertie sous le facteur figé à son
+ * écriture (`centiemesParFacteur`), et le dépassement est jugé par
+ * `depasseCapacite`, celui-là même qu'emploie `checkCapacity`. Sommer les
+ * minutes brutes de la journée puis les convertir au facteur global — ce que
+ * faisait cette ligne — affichait sur le même écran un total et un « ! » que
+ * le service pouvait contredire sur la même journée.
+ */
 export function TotalsRow({
   days,
   entries,
-  capacityMinutes,
-  minutesParJour,
+  capacityCentiemes,
 }: {
   days: MonthDay[]
   entries: MonthEntry[]
-  capacityMinutes: number
-  minutesParJour: number
+  /** capacité d'une journée, telle qu'elle est réglée : jamais convertie */
+  capacityCentiemes: number
 }) {
-  const totals = dailyTotals(entries)
+  const parJour = saisiesParJour(entries)
 
   return (
     <tr className="border-t-2 border-rule font-medium">
@@ -24,8 +38,8 @@ export function TotalsRow({
         Total
       </th>
       {days.map((d) => {
-        const minutes = totals.get(d.date) ?? 0
-        const over = capacityMinutes > 0 && minutes > capacityMinutes
+        const saisies = parJour.get(d.date) ?? AUCUNE_SAISIE
+        const over = capacityCentiemes > 0 && depasseCapacite(saisies, capacityCentiemes)
         return (
           // Le dépassement porte trois signaux — teinte, graisse soulignée et
           // glyphe — dont deux survivent à une vision monochrome.
@@ -39,7 +53,7 @@ export function TotalsRow({
             }`}
           >
             {over && <span aria-hidden="true">! </span>}
-            {formatQuantity(minutes, 'JOUR', minutesParJour)}
+            {formatJours(centiemesParFacteur(saisies))}
           </td>
         )
       })}

@@ -32,8 +32,7 @@ function renderClient(): void {
       lines={lines}
       entries={[]}
       engagementTotals={{ l1: [] }}
-      capacityMinutes={480}
-      minutesParJour={480}
+      capacityCentiemes={100}
     />,
   )
 }

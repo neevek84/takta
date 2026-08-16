@@ -7,7 +7,6 @@ import {
   getPastForecastWithLockStatus,
 } from '@/services/time-entries'
 import { buildMonthDays } from '@/core/month/build'
-import { centiemesToMinutes } from '@/core/time/units'
 import { MonthNav } from '@/components/MonthNav'
 import { PastForecastNotice } from './PastForecastNotice'
 import { SaisieClient } from './SaisieClient'
@@ -48,8 +47,10 @@ export default async function SaisiePage({ params }: { params: Promise<{ month: 
         lines={lines}
         entries={entries}
         engagementTotals={engagementTotals}
-        capacityMinutes={centiemesToMinutes(settings.capacityCentiemes, settings.minutesParJour)}
-        minutesParJour={settings.minutesParJour}
+        // Transmise telle qu'elle est réglée : la convertir en minutes avec le
+        // facteur global donnerait à la ligne de totaux un seuil qu'aucune
+        // saisie ne partage forcément (voir `TotalsRow`).
+        capacityCentiemes={settings.capacityCentiemes}
       />
     </main>
   )

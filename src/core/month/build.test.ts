@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { buildMonthDays, dailyTotals, shiftMonth } from './build'
+import { buildMonthDays, saisiesParJour, shiftMonth } from './build'
+import { centiemesParFacteur } from '../time/units'
 
 describe('buildMonthDays', () => {
   it('produit le bon nombre de jours', () => {
@@ -32,19 +33,36 @@ describe('buildMonthDays', () => {
   })
 })
 
-describe('dailyTotals', () => {
-  it('agrège toutes lignes confondues', () => {
-    const totals = dailyTotals([
-      { date: '2026-03-12', minutes: 240 },
-      { date: '2026-03-12', minutes: 240 },
-      { date: '2026-03-13', minutes: 480 },
+describe('saisiesParJour', () => {
+  // Volontairement un regroupement, jamais une somme de minutes : chaque
+  // saisie porte le facteur figé à son écriture, et des minutes écrites à
+  // 420 min/jour ne s'additionnent pas à des minutes écrites à 600. C'est
+  // `centiemesParFacteur` — jamais ce module — qui sait les totaliser.
+  it('rassemble toutes lignes confondues sans écraser les facteurs', () => {
+    const parJour = saisiesParJour([
+      { date: '2026-03-12', minutes: 240, minutesParJour: 480 },
+      { date: '2026-03-12', minutes: 300, minutesParJour: 600 },
+      { date: '2026-03-13', minutes: 480, minutesParJour: 480 },
     ])
-    expect(totals.get('2026-03-12')).toBe(480)
-    expect(totals.get('2026-03-13')).toBe(480)
+    expect(parJour.get('2026-03-12')).toEqual([
+      { minutes: 240, minutesParJour: 480 },
+      { minutes: 300, minutesParJour: 600 },
+    ])
+    expect(parJour.get('2026-03-13')).toEqual([{ minutes: 480, minutesParJour: 480 }])
+  })
+
+  it('convertit chaque jour au facteur de ses saisies', () => {
+    const parJour = saisiesParJour([
+      { date: '2026-03-12', minutes: 240, minutesParJour: 480 },
+      { date: '2026-03-12', minutes: 300, minutesParJour: 600 },
+    ])
+    // 50 + 50 centièmes. La somme brute (540 min) convertie en une fois
+    // donnerait 113 à 480 ou 90 à 600 : ni l'une ni l'autre n'est le total.
+    expect(centiemesParFacteur(parJour.get('2026-03-12') ?? [])).toBe(100)
   })
 
   it('renvoie une table vide sans saisie', () => {
-    expect(dailyTotals([]).size).toBe(0)
+    expect(saisiesParJour([]).size).toBe(0)
   })
 })
 

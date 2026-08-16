@@ -87,8 +87,7 @@ export function MonthGrid({
   lines,
   entries,
   engagementTotals,
-  capacityMinutes,
-  minutesParJour,
+  capacityCentiemes,
   onSave,
 }: {
   days: MonthDay[]
@@ -97,9 +96,13 @@ export function MonthGrid({
   entries: MonthEntry[]
   /** cumul par ligne, toutes périodes confondues : il alimente l'engagement */
   engagementTotals: Record<string, LineEngagementTotals>
-  capacityMinutes: number
-  /** unité de référence globale (`Settings.minutesParJour`), pour les totaux */
-  minutesParJour: number
+  /**
+   * capacité d'une journée en centièmes de jour, telle qu'elle est réglée.
+   *
+   * Jamais convertie en minutes : la ligne de totaux compare des journées, et
+   * les saisies qu'elle additionne n'ont pas toutes la même durée de journée.
+   */
+  capacityCentiemes: number
   /** renvoie `true` quand la valeur a bien été enregistrée */
   onSave: (lineId: string, date: string, raw: string) => Promise<boolean>
 }) {
@@ -268,12 +271,7 @@ export function MonthGrid({
             </tr>
           ))}
 
-          <TotalsRow
-            days={days}
-            entries={entries}
-            capacityMinutes={capacityMinutes}
-            minutesParJour={minutesParJour}
-          />
+          <TotalsRow days={days} entries={entries} capacityCentiemes={capacityCentiemes} />
         </tbody>
       </table>
     </div>

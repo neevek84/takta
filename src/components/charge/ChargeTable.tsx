@@ -1,14 +1,11 @@
 import { DataTable } from '@/components/ui/DataTable'
+import { formatJours as jours } from '@/core/time/units'
 import type { ChargeMatrix } from '@/services/charge'
 
 const MOIS_COURT = ['janv', 'févr', 'mars', 'avr', 'mai', 'juin', 'juil', 'août', 'sept', 'oct', 'nov', 'déc']
 
 function moisCourt(month: string): string {
   return `${MOIS_COURT[Number(month.slice(5, 7)) - 1]} ${month.slice(2, 4)}`
-}
-
-function jours(centiemes: number): string {
-  return centiemes === 0 ? '' : String(centiemes / 100).replace('.', ',')
 }
 
 function euros(cents: number): string {

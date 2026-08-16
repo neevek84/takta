@@ -1,3 +1,5 @@
+import type { MinutesAuFacteur } from '../time/units'
+
 export interface MonthDay {
   /** 'YYYY-MM-DD' */
   date: string
@@ -35,14 +37,28 @@ export function buildMonthDays(
   return out
 }
 
-export function dailyTotals(
-  entries: ReadonlyArray<{ date: string; minutes: number }>,
-): Map<string, number> {
-  const totals = new Map<string, number>()
+/**
+ * Saisies d'un mois regroupées par jour, toutes lignes confondues.
+ *
+ * Volontairement **pas** une somme de minutes : chaque saisie porte le facteur
+ * de conversion figé à son écriture, et des minutes écrites à 420 min/jour ne
+ * s'additionnent pas à des minutes écrites à 600. Écraser le facteur ici
+ * donnerait à la ligne de totaux un chiffre — et un dépassement — que le
+ * contrôle de capacité du service ne reconnaîtrait pas. C'est
+ * `centiemesParFacteur` (affichage) et `depasseCapacite` (comparaison) qui
+ * savent totaliser un tel groupe.
+ */
+export function saisiesParJour(
+  entries: ReadonlyArray<{ date: string } & MinutesAuFacteur>,
+): Map<string, MinutesAuFacteur[]> {
+  const parJour = new Map<string, MinutesAuFacteur[]>()
   for (const e of entries) {
-    totals.set(e.date, (totals.get(e.date) ?? 0) + e.minutes)
+    const bucket = parJour.get(e.date)
+    const saisie = { minutes: e.minutes, minutesParJour: e.minutesParJour }
+    if (bucket === undefined) parJour.set(e.date, [saisie])
+    else bucket.push(saisie)
   }
-  return totals
+  return parJour
 }
 
 function padYear(n: number): string {

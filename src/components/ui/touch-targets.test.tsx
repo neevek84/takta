@@ -61,8 +61,7 @@ describe('cibles tactiles', () => {
         lines={lines}
         entries={[]}
         engagementTotals={{ l1: [] }}
-        capacityMinutes={480}
-        minutesParJour={480}
+        capacityCentiemes={100}
         onSave={vi.fn(async () => true)}
       />,
     )

@@ -52,8 +52,7 @@ function renderGrid(
       lines={lines}
       entries={entries}
       engagementTotals={engagementTotals}
-      capacityMinutes={480}
-      minutesParJour={480}
+      capacityCentiemes={100}
       onSave={vi.fn(async () => true)}
       {...overrides}
     />,
@@ -94,7 +93,7 @@ describe('MonthGrid', () => {
 
   it('signale le dépassement de capacité sur la ligne de totaux', () => {
     renderGrid()
-    // 480 + 240 = 720 > 480
+    // 480 + 240 = 720 min à 480 min/jour, soit 150 centièmes > 100
     const total = screen.getByTestId('total-2026-03-12')
     expect(total.className).toContain('text-danger-ink')
     expect(total.getAttribute('data-depassement')).toBe('true')
@@ -219,26 +218,29 @@ describe('MonthGrid', () => {
     expect(bandeau).toContain('12 restants')
   })
 
-  // I2 — le total agrège toutes les lignes : il s'exprime dans l'unité de
-  // référence globale, jamais dans celle de la première ligne de la grille.
+  // I2 — le total agrège toutes les lignes. Chaque saisie s'y convertit sous
+  // le facteur figé à son écriture : ni celui de la première ligne affichée,
+  // ni le réglage global du moment.
   describe('ligne de totaux', () => {
     const journeeCourte: LineForGrid = { ...lines[0]!, minutesParJour: 432 }
     const journeeStandard: LineForGrid = { ...lines[1]!, displayUnit: 'JOUR', minutesParJour: 480 }
-    const uneJourneeSurL2: MonthEntry[] = [
-      { id: 'e1', lineId: 'l2', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', minutesParJour: 480 },
+    // Une journée pleine écrite sous un réglage à 7 h 12 : 432 minutes valent
+    // 1 j, jamais 0,9 j — ce que donnerait le facteur global de 8 h.
+    const uneJourneeSurL1: MonthEntry[] = [
+      { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 432, kind: 'REALISE', slotId: '', minutesParJour: 432 },
     ]
 
-    it('formate avec le minutesParJour global, pas celui de la première ligne', () => {
-      renderGrid({ lines: [journeeCourte, journeeStandard], entries: uneJourneeSurL2 })
+    it('formate chaque saisie au facteur figé à son écriture', () => {
+      renderGrid({ lines: [journeeCourte, journeeStandard], entries: uneJourneeSurL1 })
       expect(screen.getByTestId('total-2026-03-12').textContent).toBe('1')
     })
 
     it('donne le même total quel que soit l ordre d affichage des lignes', () => {
-      renderGrid({ lines: [journeeCourte, journeeStandard], entries: uneJourneeSurL2 })
+      renderGrid({ lines: [journeeCourte, journeeStandard], entries: uneJourneeSurL1 })
       const premier = screen.getByTestId('total-2026-03-12').textContent
       cleanup()
 
-      renderGrid({ lines: [journeeStandard, journeeCourte], entries: uneJourneeSurL2 })
+      renderGrid({ lines: [journeeStandard, journeeCourte], entries: uneJourneeSurL1 })
       expect(screen.getByTestId('total-2026-03-12').textContent).toBe(premier)
     })
   })
@@ -289,8 +291,7 @@ describe('MonthGrid', () => {
             { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: '', minutesParJour: 480 },
           ]}
           engagementTotals={engagementTotals}
-          capacityMinutes={480}
-          minutesParJour={480}
+          capacityCentiemes={100}
           onSave={vi.fn(async () => true)}
         />,
       )
@@ -310,8 +311,7 @@ describe('MonthGrid', () => {
           lines={lines}
           entries={[...entries]}
           engagementTotals={engagementTotals}
-          capacityMinutes={480}
-          minutesParJour={480}
+          capacityCentiemes={100}
           onSave={vi.fn(async () => true)}
         />,
       )
