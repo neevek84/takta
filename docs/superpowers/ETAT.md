@@ -79,6 +79,8 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 **Les dix plans sont écrits.** Il ne reste que de l'implémentation.
 
+**Dépendance croisée à ne pas oublier, lot 1b → lot 5** : `chargerOuCreerEnv` du lot 5 ne génère qu'`AUTH_SECRET` au premier démarrage. Il doit aussi générer **`CREDENTIALS_KEY`** dans le dossier de données — sans quoi l'archive portable diffuse la clé de développement, et le chiffrement des jetons Google ne protège plus rien. **Il n'existe aucune rotation de clé** : la changer déconnecte tout le monde en silence.
+
 **Deux points du lot 1c à soumettre au porteur du produit :**
 
 - **La palette catégorielle** — les six teintes qui distinguent les prestations sont plus saturées que les fonds d'état. C'était nécessaire pour tenir l'écart de distinguabilité dans une fenêtre chaude, mais cela se juge à l'œil.
