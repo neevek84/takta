@@ -46,6 +46,22 @@ export function useDragSelect(onApply: (sel: DragSelection, raw: string) => void
     setState((s) => (s ? { ...s, dragging: false } : s))
   }, [])
 
+  /**
+   * Étend la sélection jusqu'à `date`, sans glissement en cours.
+   *
+   * C'est la primitive des deux équivalents du glissement : Maj+flèche au
+   * clavier, et le doigt qui touche un autre jour — un doigt n'ayant pas de
+   * touche Maj. Faute de sélection, elle s'ancre sur `ancre`, la case d'où le
+   * geste part.
+   */
+  const extendTo = useCallback((lineId: string, ancre: string, date: string) => {
+    setState((s) =>
+      s !== null && s.lineId === lineId
+        ? { ...s, head: date, dragging: false }
+        : { lineId, anchor: ancre, head: date, dragging: false },
+    )
+  }, [])
+
   const clear = useCallback(() => setState(null), [])
 
   const selection: DragSelection | null = state
@@ -67,5 +83,12 @@ export function useDragSelect(onApply: (sel: DragSelection, raw: string) => void
     [selection, onApply],
   )
 
-  return { selection, isSelected, handlers: { onMouseDown, onMouseEnter, onMouseUp }, applyToSelection, clear }
+  return {
+    selection,
+    isSelected,
+    handlers: { onMouseDown, onMouseEnter, onMouseUp },
+    extendTo,
+    applyToSelection,
+    clear,
+  }
 }

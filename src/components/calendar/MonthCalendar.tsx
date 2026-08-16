@@ -1,12 +1,13 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { buildWeeks } from '@/core/month/weeks'
 import { buildCellStates } from '@/core/saisie/cell-state'
 import { colorForLine } from '@/core/saisie/colors'
 import { cycleSlotIds, nextCellState } from '@/core/saisie/cycle'
 import type { CellState } from '@/core/saisie/cycle'
-import { formatQuantity } from '@/core/time/units'
+import { centiemesParFacteur, formatJours, formatQuantity } from '@/core/time/units'
+import type { MinutesAuFacteur } from '@/core/time/units'
 import type { MonthDay } from '@/core/month/build'
 import type { Slot } from '@/core/time/slots'
 import { Button } from '@/components/ui/Button'
@@ -17,6 +18,8 @@ import { useLongPress } from './useLongPress'
 
 const VIDE: CellState = { kind: 'VIDE' }
 
+const AUCUNE_SAISIE: MinutesAuFacteur[] = []
+
 const EN_TETES = [
   { dayOfWeek: 1, court: 'L', long: 'Lun' },
   { dayOfWeek: 2, court: 'M', long: 'Mar' },
@@ -26,6 +29,20 @@ const EN_TETES = [
   { dayOfWeek: 6, court: 'S', long: 'Sam' },
   { dayOfWeek: 7, court: 'D', long: 'Dim' },
 ]
+
+/**
+ * Ce que Maj+flèche déplace, en jours.
+ *
+ * Les verticales valent une semaine parce que c'est ce que la grille montre :
+ * sept colonnes, une ligne par semaine. Sans elles, une plage de plusieurs
+ * semaines demanderait autant de frappes qu'elle compte de jours.
+ */
+const PAS_DE_FLECHE: Record<string, number> = {
+  ArrowLeft: -1,
+  ArrowRight: 1,
+  ArrowUp: -7,
+  ArrowDown: 7,
+}
 
 type EtatJour = 'ouvre' | 'weekend' | 'ferie'
 
@@ -53,8 +70,24 @@ function libelleSlot(slotId: string, slots: readonly Slot[]): string {
   return slots.find((s) => s.id === slotId)?.label ?? slotId
 }
 
-/** Ce que la case affiche. Aucune conversion maison : `formatQuantity` sait le faire. */
-function contenu(etat: CellState, slots: readonly Slot[], minutesParJour: number): string {
+/**
+ * Ce que la case affiche.
+ *
+ * L'unité est celle sous laquelle la prestation est vendue, jamais l'heure
+ * par défaut : la même saisie s'affichait « 3h » ici et « 0,38 » dans le
+ * tableau, pour la même donnée.
+ *
+ * En journées, chaque saisie se convertit sous le facteur figé à son écriture
+ * — c'est le rôle de `centiemesParFacteur` —, jamais la somme des minutes sous
+ * le facteur courant de la ligne : une journée écrite en deux temps à 7 h puis
+ * à 8 h vaut 1,07 j, pas 1 j. C'est le chemin exact que `MonthGrid` emprunte.
+ */
+function contenu(
+  etat: CellState,
+  slots: readonly Slot[],
+  line: LineForGrid,
+  saisies: readonly MinutesAuFacteur[],
+): string {
   switch (etat.kind) {
     case 'VIDE':
       return ''
@@ -63,7 +96,9 @@ function contenu(etat: CellState, slots: readonly Slot[], minutesParJour: number
     case 'DEMI':
       return `½ ${libelleSlot(etat.slotId, slots).slice(0, 1).toUpperCase()}`
     case 'LIBRE':
-      return formatQuantity(etat.minutes, 'HEURE', minutesParJour)
+      return line.displayUnit === 'HEURE'
+        ? formatQuantity(etat.minutes, 'HEURE', line.minutesParJour)
+        : formatJours(centiemesParFacteur(saisies))
   }
 }
 
@@ -81,6 +116,17 @@ function description(etat: CellState, slots: readonly Slot[]): string {
         : `Durée libre${etat.slotId === '' ? '' : ` — ${libelleSlot(etat.slotId, slots)}`}`
   }
 }
+
+/**
+ * Le geste de sélection en cours.
+ *
+ * `ANCRE` est un glissement parti d'une case ; `EXTENSION` est le jour touché
+ * pour agrandir une sélection déjà posée. Les distinguer est nécessaire :
+ * relâcher un glissement qui n'a jamais quitté sa case efface la sélection —
+ * un simple clic ne laisse rien derrière lui —, alors que relâcher une
+ * extension doit la conserver.
+ */
+type Geste = { type: 'ANCRE'; date: string } | { type: 'EXTENSION' }
 
 /**
  * La vue mensuelle : sept colonnes, une case par jour, un clic par cran.
@@ -136,6 +182,20 @@ export function MonthCalendar({
     [entries, line.id],
   )
 
+  // Les saisies du jour, une à une, chacune avec le facteur figé à son
+  // écriture : les sommer avant de convertir écraserait cette distinction.
+  const saisiesParDate = useMemo(() => {
+    const parDate = new Map<string, MinutesAuFacteur[]>()
+    for (const e of entries) {
+      if (e.lineId !== line.id) continue
+      const valeur = { minutes: e.minutes, minutesParJour: e.minutesParJour }
+      const bucket = parDate.get(e.date)
+      if (bucket === undefined) parDate.set(e.date, [valeur])
+      else bucket.push(valeur)
+    }
+    return parDate
+  }, [entries, line.id])
+
   // Affichage optimiste : le cran suivant s'affiche avant l'aller-retour
   // serveur, et disparaît si l'écriture est refusée.
   const [optimiste, setOptimiste] = useState<Map<string, CellState>>(new Map())
@@ -148,6 +208,22 @@ export function MonthCalendar({
   const etatDe = useCallback(
     (date: string): CellState => optimiste.get(date) ?? serveur.get(date) ?? VIDE,
     [optimiste, serveur],
+  )
+
+  /**
+   * Les saisies à afficher pour une date. Une case affichée de façon optimiste
+   * n'a pas encore de saisie au serveur : elle vaut ce que le geste vient
+   * d'écrire, sous le facteur courant de la prestation.
+   */
+  const saisiesDe = useCallback(
+    (date: string): MinutesAuFacteur[] => {
+      const attendu = optimiste.get(date)
+      if (attendu === undefined) return saisiesParDate.get(date) ?? AUCUNE_SAISIE
+      return attendu.kind === 'LIBRE'
+        ? [{ minutes: attendu.minutes, minutesParJour: line.minutesParJour }]
+        : AUCUNE_SAISIE
+    },
+    [optimiste, saisiesParDate, line.minutesParJour],
   )
 
   // Les autres prestations ne servent qu'à voir si un jour est déjà pris
@@ -173,6 +249,94 @@ export function MonthCalendar({
   const drag = useDragSelect(() => {})
   const plage = drag.selection?.dates ?? []
   const barreVisible = plage.length > 1
+
+  const conteneur = useRef<HTMLDivElement>(null)
+  const geste = useRef<Geste | null>(null)
+  /** Vrai quand le geste en cours a dépassé sa case : le clic qui suit est à lui. */
+  const aGlisse = useRef(false)
+
+  const consommerGlissement = useCallback((): boolean => {
+    const oui = aGlisse.current
+    aGlisse.current = false
+    return oui
+  }, [])
+
+  /**
+   * Le pointeur s'appuie sur une case — doigt, stylet ou souris.
+   *
+   * En événements *pointer* et non *mouse* : `mouseenter` n'est pas émis
+   * pendant qu'un doigt glisse, et la barre de sélection n'apparaissait donc
+   * jamais sur un téléphone — où la vue tableau est masquée, donc où le
+   * calendrier est la seule surface de saisie.
+   */
+  const debuterGeste = useCallback(
+    (date: string) => {
+      aGlisse.current = false
+      // Une sélection déjà posée s'étend au jour touché : c'est le seul
+      // équivalent de Maj+clic dont un doigt dispose, et la seule façon
+      // d'atteindre une plage qui déborde de la semaine sans que le
+      // navigateur ne reprenne le geste pour faire défiler la page.
+      if (drag.selection !== null && drag.selection.dates.length > 1) {
+        geste.current = { type: 'EXTENSION' }
+        aGlisse.current = true
+        drag.extendTo(line.id, date, date)
+        return
+      }
+      geste.current = { type: 'ANCRE', date }
+      drag.handlers.onMouseDown(line.id, date)
+    },
+    [drag, line.id],
+  )
+
+  const survolerPendantGeste = useCallback(
+    (date: string) => {
+      const encours = geste.current
+      if (encours === null || encours.type !== 'ANCRE') return
+      if (date !== encours.date) aGlisse.current = true
+      drag.handlers.onMouseEnter(line.id, date)
+    },
+    [drag, line.id],
+  )
+
+  const terminerGeste = useCallback(() => {
+    const encours = geste.current
+    geste.current = null
+    if (encours === null) return
+    drag.handlers.onMouseUp()
+    // Un simple clic ne laisse rien derrière lui : sans cela, la case gardait
+    // sa bague jusqu'au prochain appui, alors que rien n'était sélectionné.
+    if (encours.type === 'ANCRE' && !aGlisse.current) drag.clear()
+  }, [drag])
+
+  /** Le navigateur reprend le geste — un défilement, le plus souvent. */
+  const abandonnerGeste = useCallback(() => {
+    const encours = geste.current
+    geste.current = null
+    aGlisse.current = false
+    if (encours !== null && encours.type === 'ANCRE') drag.clear()
+  }, [drag])
+
+  const rangParDate = useMemo(() => new Map(days.map((d, i) => [d.date, i])), [days])
+
+  /**
+   * Maj+flèche : l'équivalent clavier du glissement.
+   *
+   * Le déplacement se compte en rangs dans le mois plutôt qu'en dates : les
+   * jours y sont consécutifs, une semaine vaut donc sept rangs, et rien ne
+   * peut déborder du mois affiché.
+   */
+  const etendreAuClavier = useCallback(
+    (depuis: string, pas: number) => {
+      const rang = rangParDate.get(depuis)
+      if (rang === undefined) return
+      const cible = days[rang + pas]
+      if (cible === undefined) return
+
+      drag.extendTo(line.id, depuis, cible.date)
+      conteneur.current?.querySelector<HTMLElement>(`[data-date="${cible.date}"]`)?.focus()
+    },
+    [days, rangParDate, drag, line.id],
+  )
 
   const appliquerPlage = useCallback(
     async (state: CellState) => {
@@ -229,7 +393,15 @@ export function MonthCalendar({
         ))}
       </p>
 
-      <div data-testid="grille-calendrier" className="grid grid-cols-7 gap-1">
+      <div
+        ref={conteneur}
+        data-testid="grille-calendrier"
+        className="grid grid-cols-7 gap-1"
+        // Sur le conteneur et non sur chaque case : au doigt, le pointeur est
+        // relâché là où il se trouve, qui n'est pas la case d'où il est parti.
+        onPointerUp={terminerGeste}
+        onPointerCancel={abandonnerGeste}
+      >
         {EN_TETES.map((e) => (
           <div
             key={e.dayOfWeek}
@@ -250,19 +422,19 @@ export function MonthCalendar({
                 key={jour.date}
                 jour={jour}
                 etat={etatDe(jour.date)}
+                saisies={saisiesDe(jour.date)}
                 previsionnel={previsionnelles.has(jour.date)}
                 autres={autresParDate.get(jour.date) ?? []}
                 selected={drag.isSelected(line.id, jour.date)}
                 slots={slots}
-                minutesParJour={line.minutesParJour}
-                label={line.label}
+                line={line}
+                consommerGlissement={consommerGlissement}
                 onClick={() => void cliquer(jour.date)}
                 onFormulaire={() => onFormulaire(jour.date, etatDe(jour.date))}
-                dragHandlers={{
-                  onMouseDown: () => drag.handlers.onMouseDown(line.id, jour.date),
-                  onMouseEnter: () => drag.handlers.onMouseEnter(line.id, jour.date),
-                  onMouseUp: drag.handlers.onMouseUp,
-                }}
+                onGesteDebut={() => debuterGeste(jour.date)}
+                onGesteSurvol={() => survolerPendantGeste(jour.date)}
+                onEtendreClavier={(pas) => etendreAuClavier(jour.date, pas)}
+                onAbandonner={drag.clear}
               />
             ),
           ),
@@ -272,6 +444,9 @@ export function MonthCalendar({
       {barreVisible && (
         <div
           data-testid="barre-selection"
+          // Au clavier, la sélection ne se voit que par la bague : sans région
+          // vivante, Maj+flèche resterait muette pour un lecteur d'écran.
+          role="status"
           className="mt-2 flex flex-wrap items-center gap-2 rounded border border-rule bg-off px-3 py-2 text-sm text-ink"
         >
           <span className="font-medium">{plage.length} jours sélectionnés</span>
@@ -293,6 +468,11 @@ export function MonthCalendar({
           <Button type="button" onClick={drag.clear}>
             Annuler la sélection
           </Button>
+          {/* Le geste d'agrandissement ne se devine pas : il se dit. */}
+          <span className="basis-full text-xs text-muted">
+            Touchez un autre jour pour étendre la sélection, ou Maj et une flèche au clavier.
+            Échap l’abandonne.
+          </span>
         </div>
       )}
     </div>
@@ -302,28 +482,37 @@ export function MonthCalendar({
 function Case({
   jour,
   etat,
+  saisies,
   previsionnel,
   autres,
   selected,
   slots,
-  minutesParJour,
-  label,
+  line,
+  consommerGlissement,
   onClick,
   onFormulaire,
-  dragHandlers,
+  onGesteDebut,
+  onGesteSurvol,
+  onEtendreClavier,
+  onAbandonner,
 }: {
   jour: MonthDay
   etat: CellState
+  /** saisies du jour, chacune sous le facteur figé à son écriture */
+  saisies: readonly MinutesAuFacteur[]
   previsionnel: boolean
   /** autres prestations occupant ce jour, en lecture seule */
   autres: LineForGrid[]
   selected: boolean
   slots: Slot[]
-  minutesParJour: number
-  label: string
+  line: LineForGrid
+  consommerGlissement: () => boolean
   onClick: () => void
   onFormulaire: () => void
-  dragHandlers: { onMouseDown: () => void; onMouseEnter: () => void; onMouseUp: () => void }
+  onGesteDebut: () => void
+  onGesteSurvol: () => void
+  onEtendreClavier: (pas: number) => void
+  onAbandonner: () => void
 }) {
   const appuiLong = useLongPress(onFormulaire)
 
@@ -337,15 +526,37 @@ function Case({
       <button
         type="button"
         data-testid={`case-${jour.date}`}
+        data-date={jour.date}
         data-jour={jourDit}
-        aria-label={`${label} le ${jour.date} — ${detail}`}
+        aria-label={`${line.label} le ${jour.date} — ${detail}`}
         title={detail}
-        {...appuiLong.handlers}
-        {...dragHandlers}
+        onPointerDown={(ev) => {
+          appuiLong.handlers.onPointerDown(ev)
+          // Sans relâcher la capture implicite, tous les événements du doigt
+          // restent adressés à cette case : aucune autre ne le verrait passer,
+          // et le glissement n'existerait toujours qu'à la souris.
+          const cible = ev.currentTarget
+          if (
+            typeof cible.hasPointerCapture === 'function' &&
+            ev.pointerId !== undefined &&
+            cible.hasPointerCapture(ev.pointerId)
+          ) {
+            cible.releasePointerCapture(ev.pointerId)
+          }
+          onGesteDebut()
+        }}
+        onPointerMove={appuiLong.handlers.onPointerMove}
+        onPointerEnter={onGesteSurvol}
+        onPointerUp={appuiLong.handlers.onPointerUp}
+        onPointerLeave={appuiLong.handlers.onPointerLeave}
+        onPointerCancel={appuiLong.handlers.onPointerCancel}
         onClick={() => {
           // L'appui long a déjà ouvert le formulaire : le clic qui le suit ne
           // doit pas faire avancer la case d'un cran derrière lui.
           if (appuiLong.consommerAppuiLong()) return
+          // Le glissement, lui, a sélectionné une plage : au doigt, le `click`
+          // qui le termine est adressé à la case où il a commencé.
+          if (consommerGlissement()) return
           onClick()
         }}
         onContextMenu={(ev) => {
@@ -361,7 +572,18 @@ function Case({
           if (ev.key === 'ContextMenu' || (ev.key === 'Enter' && ev.shiftKey)) {
             ev.preventDefault()
             onFormulaire()
+            return
           }
+          // Maj+flèche étend la sélection et emmène le focus avec elle : sans
+          // cela, le glissement — donc la barre et ses boutons — n'avait aucun
+          // équivalent au clavier.
+          const pas = ev.shiftKey ? PAS_DE_FLECHE[ev.key] : undefined
+          if (pas !== undefined) {
+            ev.preventDefault()
+            onEtendreClavier(pas)
+            return
+          }
+          if (ev.key === 'Escape') onAbandonner()
         }}
         className={`touch-target flex flex-col items-center justify-center rounded-sm border border-rule text-sm ${
           FOND_JOUR[jourDit]
@@ -375,7 +597,7 @@ function Case({
         {/* Le numéro du jour et la valeur sont deux nœuds distincts : les mêler
             rendrait « la case est vide » indistinguable de « la case affiche 10 ». */}
         <span data-testid={`valeur-${jour.date}`} className="leading-tight">
-          {contenu(etat, slots, minutesParJour)}
+          {contenu(etat, slots, line, saisies)}
         </span>
       </button>
       {autres.map((a) => {

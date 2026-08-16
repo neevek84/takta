@@ -282,9 +282,33 @@ describe('MonthCalendar', () => {
       expect(caseDu('2026-03-10').title).toContain('Après-midi')
     })
 
-    it('affiche les heures d une valeur libre', () => {
+    // M4 : la même saisie s'affichait « 3h » ici et « 0,38 » dans le tableau.
+    // L'unité d'une prestation est celle sous laquelle elle est vendue ; les
+    // deux vues la suivent, elles ne se choisissent plus chacune la leur.
+    it('affiche une valeur libre dans l unité de la prestation — en jours', () => {
       renderCalendar({ entries: [entree({ minutes: 180, slotId: 'nuit' })] })
+      expect(valeurDu('2026-03-10').textContent).toBe('0,38')
+    })
+
+    it('affiche une valeur libre en heures sur une prestation vendue à l heure', () => {
+      renderCalendar({
+        line: ligneHeure,
+        entries: [entree({ lineId: 'l2', minutes: 180, slotId: 'nuit' })],
+      })
       expect(valeurDu('2026-03-10').textContent).toBe('3h')
+    })
+
+    // Le piège corrigé trois fois : convertir la SOMME des minutes sous le
+    // facteur courant de la ligne donnerait « 1 » (480 min / 480), là où
+    // chaque saisie convertie sous son propre facteur vaut 0,50 + 0,57.
+    it('convertit chaque saisie sous le facteur figé à son écriture', () => {
+      renderCalendar({
+        entries: [
+          entree({ id: 'a', minutes: 240, slotId: 'matin', minutesParJour: 480 }),
+          entree({ id: 'b', minutes: 240, slotId: 'nuit', minutesParJour: 420 }),
+        ],
+      })
+      expect(valeurDu('2026-03-10').textContent).toBe('1,07')
     })
 
     it('distingue le prévisionnel du réalisé', () => {
@@ -311,6 +335,41 @@ describe('MonthCalendar', () => {
 
       fireEvent.click(caseDu('2026-03-10'))
       await waitFor(() => expect(valeurDu('2026-03-10').textContent).toBe(''))
+    })
+
+    // I7 : le refus était couvert, le succès ne l'était pas. Après « Vider le
+    // CRA » ou « Remplir le CRA », la case sur laquelle on venait de cliquer
+    // gardait indéfiniment sa valeur optimiste, en contradiction avec la base.
+    it('purge l affichage optimiste quand le serveur répond après un succès', async () => {
+      const onApply = vi.fn(async () => true)
+      const { rerender } = renderCalendar({
+        onApply,
+        entries: [entree({ minutes: 480, slotId: '' })],
+      })
+      expect(valeurDu('2026-03-10').textContent).toBe('1')
+
+      // Le clic fait avancer la case d'un cran : « ½ M » s'affiche avant même
+      // que le serveur ait répondu.
+      fireEvent.click(caseDu('2026-03-10'))
+      await waitFor(() => expect(valeurDu('2026-03-10').textContent).toBe('½ M'))
+      await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1))
+
+      // Le mois est vidé ailleurs — la graine serveur change et ne porte plus
+      // rien. L'optimiste doit disparaître avec elle.
+      rerender(
+        <MonthCalendar
+          days={days}
+          line={ligneJour}
+          slots={DEFAULT_SLOTS}
+          entries={[]}
+          autresLignes={[]}
+          toutLeMois={false}
+          onApply={onApply}
+          onRange={vi.fn(async () => {})}
+          onFormulaire={vi.fn()}
+        />,
+      )
+      expect(valeurDu('2026-03-10').textContent).toBe('')
     })
 
     it('reprend les saisies du serveur quand elles changent', () => {
@@ -397,10 +456,29 @@ describe('MonthCalendar', () => {
   })
 
   describe('sélection par glissement', () => {
+    /**
+     * Un glissement, quel que soit le doigt ou la souris qui le fait.
+     *
+     * En événements *pointer* et non *mouse* : `mouseenter` n'est pas émis
+     * pendant qu'un doigt glisse, et la barre de sélection n'apparaissait
+     * jamais sur un téléphone — où le tableau est masqué, donc où le
+     * calendrier est la seule surface de saisie.
+     */
+    function glisserAvec(pointerType: string, de: string, versLesDates: string[]): void {
+      fireEvent.pointerDown(caseDu(de), { pointerId: 1, pointerType, clientX: 10, clientY: 10 })
+      for (const date of versLesDates) {
+        fireEvent.pointerEnter(caseDu(date), { pointerId: 1, pointerType, clientX: 10, clientY: 10 })
+      }
+      fireEvent.pointerUp(caseDu(versLesDates[versLesDates.length - 1] ?? de), {
+        pointerId: 1,
+        pointerType,
+        clientX: 10,
+        clientY: 10,
+      })
+    }
+
     function glisser(de: string, versLesDates: string[]): void {
-      fireEvent.mouseDown(caseDu(de))
-      for (const date of versLesDates) fireEvent.mouseEnter(caseDu(date))
-      fireEvent.mouseUp(caseDu(versLesDates[versLesDates.length - 1] ?? de))
+      glisserAvec('mouse', de, versLesDates)
     }
 
     it('n affiche aucune barre tant qu un seul jour est sélectionné', () => {
@@ -461,6 +539,223 @@ describe('MonthCalendar', () => {
 
       expect(screen.queryByRole('button', { name: '½ Matin' })).toBeNull()
       expect(screen.getByRole('button', { name: '1 jour' })).toBeDefined()
+    })
+
+    describe('au doigt', () => {
+      it('sélectionne une plage au doigt, comme à la souris', async () => {
+        const onRange = vi.fn(async () => {})
+        renderCalendar({ onRange })
+        glisserAvec('touch', '2026-03-09', ['2026-03-10', '2026-03-11'])
+
+        expect(screen.getByTestId('barre-selection').textContent).toContain('3 jours')
+        fireEvent.click(screen.getByRole('button', { name: '1 jour' }))
+        await waitFor(() =>
+          expect(onRange).toHaveBeenCalledWith(
+            ['2026-03-09', '2026-03-10', '2026-03-11'],
+            { kind: 'JOURNEE' },
+          ),
+        )
+      })
+
+      // Au doigt, la capture implicite du pointeur adresse le `pointerup` — et
+      // le `click` qui le suit — à la case de départ : sans garde, un
+      // glissement ferait avancer d'un cran la case où il a commencé.
+      it('ne fait pas avancer d un cran la case où le glissement a commencé', async () => {
+        const onApply = vi.fn(async () => true)
+        renderCalendar({ onApply })
+        glisserAvec('touch', '2026-03-09', ['2026-03-10', '2026-03-11'])
+        fireEvent.click(caseDu('2026-03-09'))
+
+        expect(onApply).not.toHaveBeenCalled()
+        // La sélection, elle, survit au clic parasite.
+        expect(screen.getByTestId('barre-selection').textContent).toContain('3 jours')
+      })
+
+      it('n ouvre pas le formulaire par appui long pendant un glissement', () => {
+        vi.useFakeTimers()
+        try {
+          const onFormulaire = vi.fn()
+          renderCalendar({ onFormulaire })
+
+          fireEvent.pointerDown(caseDu('2026-03-09'), {
+            pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10,
+          })
+          fireEvent.pointerEnter(caseDu('2026-03-10'), {
+            pointerId: 1, pointerType: 'touch', clientX: 60, clientY: 10,
+          })
+          fireEvent.pointerLeave(caseDu('2026-03-09'), {
+            pointerId: 1, pointerType: 'touch', clientX: 60, clientY: 10,
+          })
+          act(() => {
+            vi.advanceTimersByTime(500)
+          })
+
+          expect(onFormulaire).not.toHaveBeenCalled()
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      // Le doigt qui fait défiler la page ne quitte pas forcément la case, et
+      // le navigateur n'émet pas toujours un `pointercancel` en prenant la
+      // main : sans le seuil de glissement, le formulaire s'ouvrait au bout
+      // d'une demi-seconde de défilement.
+      it('n ouvre pas le formulaire quand le doigt défile sans quitter la case', () => {
+        vi.useFakeTimers()
+        try {
+          const onFormulaire = vi.fn()
+          renderCalendar({ onFormulaire })
+
+          const c = caseDu('2026-03-09')
+          fireEvent.pointerDown(c, { pointerId: 1, pointerType: 'touch', clientX: 20, clientY: 20 })
+          fireEvent.pointerMove(c, { pointerId: 1, pointerType: 'touch', clientX: 20, clientY: 58 })
+          act(() => {
+            vi.advanceTimersByTime(500)
+          })
+
+          expect(onFormulaire).not.toHaveBeenCalled()
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      // Un défilement de la page annule le geste : le navigateur reprend la
+      // main par un `pointercancel`, et il ne doit rien rester à l'écran.
+      it('abandonne la sélection quand le navigateur reprend le geste', () => {
+        renderCalendar()
+        fireEvent.pointerDown(caseDu('2026-03-09'), {
+          pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10,
+        })
+        fireEvent.pointerEnter(caseDu('2026-03-10'), {
+          pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 60,
+        })
+        fireEvent.pointerCancel(caseDu('2026-03-09'), { pointerId: 1, pointerType: 'touch' })
+
+        expect(screen.queryByTestId('barre-selection')).toBeNull()
+      })
+
+      // Un doigt n'a pas de touche Maj : une plage qui déborde de la semaine
+      // se termine en touchant son dernier jour.
+      it('étend une sélection posée en touchant un autre jour', async () => {
+        const onApply = vi.fn(async () => true)
+        const recues: string[][] = []
+        const onRange = vi.fn(async (dates: string[]) => {
+          recues.push(dates)
+        })
+        renderCalendar({ onApply, onRange })
+        glisserAvec('touch', '2026-03-09', ['2026-03-10'])
+
+        glisserAvec('touch', '2026-03-20', [])
+        fireEvent.click(caseDu('2026-03-20'))
+
+        expect(screen.getByTestId('barre-selection').textContent).toContain('12 jours')
+        // Le jour touché étend la plage ; il ne fait pas avancer sa case.
+        expect(onApply).not.toHaveBeenCalled()
+
+        fireEvent.click(screen.getByRole('button', { name: 'Vider ces jours' }))
+        await waitFor(() => expect(recues).toHaveLength(1))
+        expect(recues[0]).toHaveLength(12)
+        expect(recues[0]![0]).toBe('2026-03-09')
+        expect(recues[0]![11]).toBe('2026-03-20')
+      })
+    })
+
+    describe('au clavier', () => {
+      it('étend la sélection avec Maj et les flèches, et suit le focus', () => {
+        renderCalendar()
+        caseDu('2026-03-09').focus()
+
+        fireEvent.keyDown(caseDu('2026-03-09'), { key: 'ArrowRight', shiftKey: true })
+        expect(screen.getByTestId('barre-selection').textContent).toContain('2 jours')
+        expect(document.activeElement).toBe(caseDu('2026-03-10'))
+
+        // Une flèche verticale avance d'une semaine : c'est ce que la grille
+        // montre, et la seule façon d'atteindre une plage de plusieurs semaines
+        // sans trente frappes.
+        fireEvent.keyDown(caseDu('2026-03-10'), { key: 'ArrowDown', shiftKey: true })
+        expect(screen.getByTestId('barre-selection').textContent).toContain('9 jours')
+        expect(document.activeElement).toBe(caseDu('2026-03-17'))
+      })
+
+      it('applique une valeur à la plage sélectionnée au clavier', async () => {
+        const onRange = vi.fn(async () => {})
+        renderCalendar({ onRange })
+
+        fireEvent.keyDown(caseDu('2026-03-09'), { key: 'ArrowRight', shiftKey: true })
+        fireEvent.keyDown(caseDu('2026-03-10'), { key: 'ArrowRight', shiftKey: true })
+        fireEvent.click(screen.getByRole('button', { name: '1 jour' }))
+
+        await waitFor(() =>
+          expect(onRange).toHaveBeenCalledWith(
+            ['2026-03-09', '2026-03-10', '2026-03-11'],
+            { kind: 'JOURNEE' },
+          ),
+        )
+      })
+
+      // Le rang hors du mois ne se rabat sur rien : ni sur le dernier jour, ni
+      // sur le premier. Une plage posée en bord de mois y reste telle quelle.
+      it('ne déborde pas du mois, ni par la fin ni par le début', () => {
+        renderCalendar()
+
+        fireEvent.keyDown(caseDu('2026-03-30'), { key: 'ArrowRight', shiftKey: true })
+        expect(screen.getByTestId('barre-selection').textContent).toContain('2 jours')
+        fireEvent.keyDown(caseDu('2026-03-31'), { key: 'ArrowRight', shiftKey: true })
+        expect(screen.getByTestId('barre-selection').textContent).toContain('2 jours')
+        expect(document.activeElement).not.toBe(caseDu('2026-03-30'))
+
+        fireEvent.click(screen.getByRole('button', { name: 'Annuler la sélection' }))
+        fireEvent.keyDown(caseDu('2026-03-02'), { key: 'ArrowLeft', shiftKey: true })
+        expect(screen.getByTestId('barre-selection').textContent).toContain('2 jours')
+        fireEvent.keyDown(caseDu('2026-03-01'), { key: 'ArrowUp', shiftKey: true })
+        expect(screen.getByTestId('barre-selection').textContent).toContain('2 jours')
+      })
+
+      it('abandonne la sélection sur Échap', () => {
+        renderCalendar()
+        fireEvent.keyDown(caseDu('2026-03-09'), { key: 'ArrowRight', shiftKey: true })
+        expect(screen.getByTestId('barre-selection')).toBeDefined()
+
+        fireEvent.keyDown(caseDu('2026-03-10'), { key: 'Escape' })
+        expect(screen.queryByTestId('barre-selection')).toBeNull()
+      })
+
+      it('laisse Maj+Entrée ouvrir le formulaire, sans rien sélectionner', () => {
+        const onFormulaire = vi.fn()
+        renderCalendar({ onFormulaire })
+
+        fireEvent.keyDown(caseDu('2026-03-11'), { key: 'Enter', shiftKey: true })
+
+        expect(onFormulaire).toHaveBeenCalledWith('2026-03-11', { kind: 'VIDE' })
+        expect(screen.queryByTestId('barre-selection')).toBeNull()
+      })
+    })
+
+    // M1 : `onMouseUp` remettait `dragging` à faux sans effacer la sélection
+    // d'un jour que `mousedown` venait de créer. La case gardait sa bague
+    // `ring-focus` — la couleur du focus, posée sur un élément qui ne l'a pas.
+    describe('un simple clic ne laisse rien derrière lui', () => {
+      it('n entoure aucune case après un clic sans glissement', async () => {
+        const onApply = vi.fn(async () => true)
+        renderCalendar({ onApply })
+
+        glisserAvec('mouse', '2026-03-10', [])
+        fireEvent.click(caseDu('2026-03-10'))
+
+        expect(classes(caseDu('2026-03-10'))).not.toContain('ring-focus')
+        expect(screen.queryByTestId('barre-selection')).toBeNull()
+        // Le cran, lui, a bien avancé : c'est un clic, pas un geste avalé.
+        await waitFor(() => expect(onApply).toHaveBeenCalledWith('2026-03-10', { kind: 'JOURNEE' }))
+      })
+
+      it('garde la bague sur les jours réellement sélectionnés', () => {
+        renderCalendar()
+        glisser('2026-03-09', ['2026-03-10'])
+
+        expect(classes(caseDu('2026-03-09'))).toContain('ring-focus')
+        expect(classes(caseDu('2026-03-10'))).toContain('ring-focus')
+        expect(classes(caseDu('2026-03-11'))).not.toContain('ring-focus')
+      })
     })
   })
 })
