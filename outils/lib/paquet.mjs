@@ -1,4 +1,5 @@
-import { readdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { readdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -79,4 +80,143 @@ export function listerFichiersDuPaquet(racine) {
 
   descendre(racine, '')
   return out.sort()
+}
+
+/**
+ * Retire du chantier tout ce que les règles excluent, **avant** la création de
+ * l'archive.
+ *
+ * Le prédicat `estExclu` seul ne prouve rien sur ce qui est livré : c'est cette
+ * fonction, puis `entreesDeLArchive`, qui font le lien entre la règle et le
+ * fichier `.zip` réel. Un dossier exclu part d'un bloc, sans être parcouru.
+ *
+ * @param {string} racine dossier mis en scène (celui qui deviendra l'archive)
+ * @returns {number} nombre d'entrées retirées
+ */
+export function purgerExclus(racine) {
+  let purges = 0
+
+  const descendre = (absolu, prefixe) => {
+    for (const entree of readdirSync(absolu, { withFileTypes: true })) {
+      const relatif = prefixe === '' ? entree.name : `${prefixe}/${entree.name}`
+      const cible = path.join(absolu, entree.name)
+      if (estExclu(relatif)) {
+        rmSync(cible, { recursive: true, force: true })
+        purges++
+        continue
+      }
+      if (entree.isDirectory()) descendre(cible, relatif)
+    }
+  }
+
+  descendre(racine, '')
+  return purges
+}
+
+/**
+ * Crée l'archive `.zip` de `dossier`, depuis `chantier`.
+ *
+ * `-X` retire les attributs étendus — dont la quarantaine macOS, qui suivrait
+ * sinon les fichiers jusque chez la personne qui dézippe.
+ *
+ * @param {{ chantier: string, dossier: string, archive: string }} options
+ */
+export function creerArchive({ chantier, dossier, archive }) {
+  rmSync(archive, { force: true })
+  if (process.platform === 'win32') {
+    execFileSync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        `Compress-Archive -Path '${path.join(chantier, dossier)}' -DestinationPath '${archive}'`,
+      ],
+      { stdio: 'inherit' },
+    )
+  } else {
+    execFileSync('zip', ['-q', '-r', '-X', archive, dossier], { cwd: chantier, stdio: 'inherit' })
+  }
+}
+
+/**
+ * Entrées réellement présentes dans une archive, relues **depuis le fichier
+ * produit** — jamais depuis la liste qu'on croyait y avoir mis.
+ *
+ * @param {string} archive
+ * @returns {string[]} chemins POSIX, dossiers compris
+ */
+export function entreesDeLArchive(archive) {
+  const brut =
+    process.platform === 'win32'
+      ? execFileSync('powershell', [
+          '-NoProfile',
+          '-Command',
+          'Add-Type -A System.IO.Compression.FileSystem; ' +
+            `[IO.Compression.ZipFile]::OpenRead('${archive}').Entries | ForEach-Object { $_.FullName }`,
+        ])
+      : execFileSync('unzip', ['-Z1', archive])
+
+  return brut
+    .toString()
+    .split(/\r?\n/)
+    .map((e) => e.trim().replace(/\\/g, '/'))
+    .filter(Boolean)
+}
+
+/** Ce dont l'absence rendrait l'archive inutilisable, chemin exact. */
+export const ENTREES_ATTENDUES = [
+  'cra/LISEZMOI.txt',
+  'cra/demarrer.sh',
+  'cra/arreter.sh',
+  'cra/sauvegarder.sh',
+  'cra/creer-utilisateur.sh',
+  'cra/demarrer.cmd',
+  'cra/arreter.cmd',
+  'cra/sauvegarder.cmd',
+  'cra/creer-utilisateur.cmd',
+  'cra/app/server.js',
+  'cra/app/outils/lancer.mjs',
+  'cra/app/outils/arreter.mjs',
+  'cra/app/outils/sauvegarder.mjs',
+  'cra/app/outils/creer-utilisateur.mjs',
+]
+
+/** Ce dont l'absence rendrait l'archive inutilisable, par préfixe de chemin. */
+export function prefixesAttendus(dist) {
+  return [
+    ['cra/app/node_modules/@prisma/client/', 'le client Prisma'],
+    ['cra/app/node_modules/@node-rs/argon2', 'argon2 (creation d utilisateur)'],
+    ['cra/app/node_modules/.prisma/client/', 'le moteur Prisma natif'],
+    [`cra/app/${dist}/static/`, 'les fichiers statiques (CSS compris)'],
+    ['cra/app/prisma/migrations-sqlite/', 'les migrations SQLite'],
+  ]
+}
+
+/**
+ * Auto-contrôle de l'archive produite, sur ses entrées relues.
+ *
+ * Deux questions, dans cet ordre d'importance :
+ *
+ *  1. **Y a-t-il une entrée interdite ?** `donnees/` rendrait l'écrasement
+ *     accidentel possible ; un `.env` diffuserait `AUTH_SECRET` et la
+ *     `CREDENTIALS_KEY` qui déchiffre les jetons externes de qui construit.
+ *  2. **Manque-t-il quelque chose d'indispensable ?** Une archive amputée du
+ *     moteur natif ou des fichiers statiques démarre puis échoue chez la
+ *     personne, loin d'ici.
+ *
+ * @param {string[]} entrees
+ * @param {{ dist: string }} options
+ * @returns {{ interdits: string[], manquants: string[] }}
+ */
+export function controlerArchive(entrees, { dist }) {
+  const interdits = entrees.filter(
+    (e) => /(^|\/)donnees(\/|$)/.test(e) || /(^|\/)\.env(\.|$)/.test(e),
+  )
+
+  const manquants = ENTREES_ATTENDUES.filter((a) => !entrees.includes(a))
+  for (const [prefixe, quoi] of prefixesAttendus(dist)) {
+    if (!entrees.some((e) => e.startsWith(prefixe))) manquants.push(`${prefixe} (${quoi})`)
+  }
+
+  return { interdits, manquants }
 }

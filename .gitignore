@@ -20,3 +20,10 @@ coverage/
 
 # Bases jetables des executions de tests (vitest.globalSetup.ts)
 prisma/test-*.db*
+
+# Artefacts de l'empaquetage portable (scripts/empaqueter.mjs).
+# Les scripts d'entree distribution/*.sh et *.cmd, eux, sont bien versionnes.
+.next-dist/
+distribution/build/
+distribution/*.zip
+prisma/.schema-portable.prisma

@@ -12,7 +12,7 @@ Une seule base de code, quatre cibles d'installation :
 | VPS / serveur              | Docker Compose                 | Postgres        |
 | Cloud managé                | template de déploiement (à venir) | Postgres        |
 | Poste local                 | `npm run setup:local`          | SQLite (fichier) |
-| Poste local, double-clic    | Tauri — hors périmètre de ce lot | SQLite         |
+| Poste local, archive        | archive portable par plateforme (lot 5) | SQLite (fichier) |
 
 ## Le mécanisme de bascule SQLite / Postgres
 
@@ -152,6 +152,11 @@ retenir : `npx vitest run` (donc la CI et tout `npm test`) fait déjà
 échouer `src/db/schema-migration-sync.test.ts`, en nommant la colonne
 manquante, si une évolution de schéma part sans sa migration.
 
+> **Ce paragraphe ne parle que du jeu Postgres.** Depuis le lot 5, un second
+> jeu existe sous `prisma/migrations-sqlite/`, pour le mode portable, et il
+> doit suivre la même évolution. Voir « Deux jeux de migrations, pas un »,
+> dans la section « Archive portable ».
+
 **Reprise d'une base SQLite déjà peuplée.** `npm run db:sqlite` passe par
 `prisma db push`, qui n'exécute aucune migration : une colonne ajoutée y
 arrive avec sa seule valeur par défaut. Deux scripts rejouent, côté SQLite,
@@ -181,6 +186,101 @@ La base est le fichier `prisma/cra.db` — le sauvegarder, c'est sauvegarder
 toutes les données. Une copie de ce fichier ne donne accès à aucun agenda :
 les jetons Google y sont chiffrés, et la clé vit dans l'environnement, hors
 de la base (voir ci-dessous).
+
+## Archive portable (lot 5)
+
+Pour distribuer l'application à quelqu'un qui ne veut ni dépôt, ni Docker,
+ni `npm install`.
+
+```bash
+npm run empaqueter
+```
+
+Produit `distribution/cra-<version>-<plateforme>.zip`, **construit dans un
+`distDir` séparé** (`CRA_DIST_DIR`, `.next-dist` par défaut) pour ne jamais
+écraser le cache `.next` du serveur de développement. Le script **ne modifie
+pas `prisma/schema.prisma`** : il en dérive une copie temporaire
+`prisma/.schema-portable.prisma` sur le provider SQLite, le temps du
+`prisma generate`. Il remet aussi `tsconfig.json` et `next-env.d.ts` dans leur
+état d'origine, que `next build` réécrit pour y déclarer le `distDir` employé.
+
+Ce que reçoit la personne, une fois l'archive dézippée :
+
+```
+cra/
+  LISEZMOI.txt                      demarrer.sh   / demarrer.cmd
+  app/                              arreter.sh    / arreter.cmd
+  (donnees/ apparaît au 1er lancement)  sauvegarder.sh / sauvegarder.cmd
+                                    creer-utilisateur.sh / .cmd
+```
+
+**Une archive par plateforme, jamais d'archive universelle.** Les moteurs
+Prisma sont compilés par architecture ; `scripts/empaqueter.mjs` refuse de
+produire une archive dont le moteur embarqué ne correspond pas à la machine
+qui construit. Pour les quatre cibles (macOS Apple Silicon, macOS Intel,
+Windows x64, Linux x64), lancer `npm run empaqueter` **sur** chacune.
+
+Ce que le script garantit avant de rendre la main, en rouvrant l'archive
+produite :
+
+- aucune entrée `donnees/` — c'est ce qui rend l'écrasement accidentel
+  impossible, même en dézippant par-dessus une installation existante ;
+- aucun fichier `.env` — Next recopie le `.env` du dépôt dans la sortie
+  standalone, secret de développement compris ;
+- présence des scripts d'entrée, du client et du moteur Prisma, d'argon2,
+  des fichiers statiques et du jeu de migrations SQLite.
+
+`src/distribution/paquet.test.ts` ne se contente pas de vérifier le prédicat
+d'exclusion : il **produit un vrai `.zip`**, le relit avec `unzip`, le dézippe
+par-dessus une fausse installation et vérifie que la base n'a pas bougé.
+Rendre la purge inerte laisse les tests de prédicat verts et fait tomber ceux-là
+— c'est exactement la différence qui manquait au lot 0.
+
+### Le port, et pourquoi il compte pour Google
+
+Le démarrage **préfère 3000** et n'en change que s'il est occupé, en annonçant
+alors, prête à copier, l'URL de retour exacte à réenregistrer dans la console
+Google Cloud (`http://localhost:<port>/api/google/callback`) et à reporter dans
+`GOOGLE_REDIRECT_URI` de `donnees/cra.env`. Google exige une correspondance au
+caractère près : un port qui change en silence casserait la connexion, et
+l'erreur viendrait de Google, pas de l'application.
+
+`CRA_PORT` fait du port une **exigence** et non une préférence : s'il est
+occupé, le démarrage échoue en nommant le port plutôt que de basculer.
+
+### Deux jeux de migrations, pas un
+
+`prisma/migrations/` (PostgreSQL) et `prisma/migrations-sqlite/` (SQLite)
+coexistent, chacun avec son `migration_lock.toml`. Ils ne sont pas
+interchangeables : le SQL diffère, et Prisma refuse un jeu dont le
+`migration_lock.toml` annonce un autre provider.
+
+- **Postgres** (Docker) : `npx prisma migrate deploy`, dans l'entrée du
+  conteneur.
+- **SQLite** (archive portable) : l'archive ne contient pas le CLI Prisma.
+  `outils/lib/migrations.mjs` rejoue lui-même les fichiers de
+  `prisma/migrations-sqlite/` et tient son journal dans la table
+  `_cra_migrations` — pas `_prisma_migrations`.
+
+**Toute évolution de `prisma/schema.prisma` demande donc DEUX migrations**,
+générées hors ligne :
+
+```bash
+# Postgres (provider basculé en postgresql le temps de la génération)
+npx prisma migrate diff --from-migrations prisma/migrations \
+  --to-schema-datamodel prisma/schema.prisma --script \
+  > prisma/migrations/<AAAAMMJJHHMMSS>_<nom>/migration.sql
+
+# SQLite (provider basculé en sqlite le temps de la génération)
+npx prisma migrate diff --from-migrations prisma/migrations-sqlite \
+  --to-schema-datamodel prisma/schema.prisma --script \
+  > prisma/migrations-sqlite/<AAAAMMJJHHMMSS>_<nom>/migration.sql
+```
+
+`npx vitest run` échoue en nommant la colonne manquante si l'un des deux jeux
+prend du retard : `src/db/schema-migration-sync.test.ts` pour Postgres,
+`src/distribution/migrations-sqlite.test.ts` pour SQLite. Les deux garde-fous
+sont statiques ; l'oubli reste facile, la panne ne l'est pas.
 
 ## Google Calendar
 
@@ -310,3 +410,64 @@ elles conditionnent le mode local et l'empaquetage à venir.
   `src/db/schema-migration-sync.test.ts` (dans `npx vitest run`) empêche
   désormais qu'elle se dégrade à nouveau silencieusement — voir la note
   dans la section Docker Compose ci-dessus.
+
+### Lot 5 — ce qui a été exercé, et ce qui ne pouvait pas l'être
+
+**Exercé réellement**, sur l'archive `cra-1.0.0-macos-apple-silicon.zip`
+dézippée hors du dépôt, jamais depuis l'arbre de développement :
+
+- `donnees/` **absent** du listing juste après dézippage ; créé au premier
+  démarrage ;
+- démarrage, migrations appliquées, `PRAGMA journal_mode` = `wal` et
+  `PRAGMA synchronous` = `2` (FULL), relus sur une connexion neuve ;
+- `/login` en **200** — ce qui prouve du même coup `AUTH_TRUST_HOST` (sans
+  lui Auth.js répond `UntrustedHost`) et le chargement du moteur Prisma
+  natif ; `/saisie/2026-08` sans session en **307** ; la feuille de style
+  servie contient de vraies règles Tailwind compilées, donc les fichiers
+  statiques embarqués sont bien servis ;
+- `./creer-utilisateur.sh` puis connexion possible ; `donnees/cra.env` en
+  `-rw-------` ;
+- `./sauvegarder.sh` **pendant que l'application tourne**, copie relue avec le
+  client Prisma embarqué : même utilisateur présent ;
+- port 3000 occupé → démarrage sur **3001**, avec l'URL de retour Google
+  exacte affichée ;
+- `./arreter.sh` deux fois de suite : la seconde dit calmement
+  « L'application n'est pas démarrée. », code 0, aucun fichier PID résiduel ;
+- **`kill -9` du serveur** après une écriture validée : la ligne est retrouvée
+  intacte au redémarrage ;
+- **dézippage par-dessus l'installation** : empreinte SHA-256 de
+  `donnees/cra.db` inchangée, `donnees/cra.env` intact ;
+- **mise à jour avec migration en attente** sur une base créée par la version
+  précédente : copie `avant-migration-*.db` écrite d'abord (et vérifiée comme
+  portant bien l'état *antérieur*), migration journalisée dans
+  `_cra_migrations`, utilisateur et données conservés ;
+- refus propre d'un Node 18 simulé, d'un `node -v` illisible et d'un Node
+  absent du `PATH` — message et code 1, **aucune pile d'appels** ;
+- attribut `com.apple.quarantine` posé à la main sur le moteur Prisma, puis
+  levé par `./demarrer.sh`, le démarrage aboutissant.
+
+**Non vérifiable dans cet environnement :**
+
+| Point | Pourquoi | Vérification la plus proche, effectuée |
+|---|---|---|
+| Machine vierge, sans le dépôt ni aucune dépendance | Une seule machine ici, qui héberge le dépôt | Archive dézippée hors du dépôt et exécutée depuis ce dossier seul ; aucune résolution ne sort de `cra/app/node_modules` |
+| Archives macOS Intel, Windows x64, Linux x64 | Ni ces machines ni ces moteurs Prisma ici | `scripts/empaqueter.mjs` refuse toute archive dont le moteur ne correspond pas à la machine qui construit, et nomme l'archive d'après elle |
+| Exécution des scripts `.cmd` sous Windows | Pas de `cmd.exe` | Test de parité `.sh`/`.cmd` : même outil appelé, même seuil Node 20 **avant** l'appel, CRLF, `CRA_RACINE` |
+| Gatekeeper sur une archive réellement téléchargée | Pas de passage par un navigateur | Attribut `com.apple.quarantine` posé à la main, puis levé par `demarrer.sh` |
+| Docker et Postgres | Jamais exécutés ici, inchangés depuis le lot 0 | Le jeu Postgres et son garde-fou statique restent verts et n'ont pas été touchés |
+| Durabilité après coupure de courant réelle | Pas de coupure provocable | `kill -9` pendant l'exploitation, en WAL + `synchronous=FULL` |
+| Volume réel (des années de CRA) | Pas de base de cette taille | `VACUUM INTO` mesuré sur une base de recette (308 Ko) |
+| Connexion Google de bout en bout | Pas d'identifiants OAuth ici | L'URL de retour exacte est affichée au démarrage et vérifiée par test |
+
+**Limite connue, mesurée ici.** `outils/lib/port.mjs` sonde la disponibilité
+d'un port en écoutant sur `127.0.0.1` (IPv4) et `outils/lib/processus.mjs`
+teste la vivacité en s'y connectant. Un programme tiers écoutant sur le même
+port en **IPv6** (`*:3000` — ce que fait `npm run dev` de ce dépôt) est donc
+invisible aux deux : CRA démarre sur un port déjà pris par un autre, et
+`./arreter.sh` attend 10 secondes puis force l'arrêt parce que la sonde reçoit
+la réponse de l'autre programme. Mesuré : sur un port que rien d'autre ne
+tient, `./arreter.sh` rend la main **en 0 à 1 seconde** avec « Application
+arrêtée. » ; sur le 3000 tenu par un `next dev`, **11 secondes** et « arrêt
+forcé ». Aucune donnée n'est perdue dans les deux cas (le `kill -9` ci-dessus
+le prouve), mais le message inquiète pour rien. À corriger en sondant aussi
+`::1`, ou en s'appuyant sur le PID plutôt que sur le port.

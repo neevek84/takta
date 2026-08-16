@@ -76,7 +76,7 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 | **2** — Connecteur Dolibarr | oui | oui | 14 |
 | **3** — Validation client (PDF, signature) | oui | oui | 15 |
 | **4** — Journal de preuve, API, ordonnanceur | oui | oui | 15 |
-| **5** — Distribution portable | oui | oui | 10 |
+| **5** — Distribution portable | oui | **oui** | 10 |
 
 **Les dix plans sont écrits.** Il ne reste que de l'implémentation.
 
@@ -122,6 +122,9 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 - **`vitest.config.ts` est en `fileParallelism: false`** — base SQLite partagée à l'intérieur d'un processus. Ne pas modifier.
 - **Chaque exécution de vitest a désormais sa propre base**, nommée d'après son PID (`vitest.globalSetup.ts`). Deux conséquences : les agents peuvent tourner en parallèle, et les tests n'écrivent plus dans `prisma/dev.db` — ils y réécrivaient la ligne singleton `Settings`, donc le thème et les réglages réels.
 - **Ne jamais lancer `npx next build` pendant que le serveur de développement tourne** : cela écrase son cache et le casse. Remède : arrêter, `rm -rf .next`, relancer.
+- **L'empaquetage portable construit dans `CRA_DIST_DIR` (`.next-dist`), jamais dans `.next`** — c'est ce qui permet de construire sans écraser le cache du serveur de développement. `next.config.ts` lit cette variable ; sans elle, rien ne change. Vérifié : `npm run empaqueter` a tourné pendant qu'un `next dev` était vivant, sans le perturber.
+- **`next build` réécrit `tsconfig.json` et `next-env.d.ts`** pour y déclarer `<distDir>/types`. `scripts/empaqueter.mjs` les remet dans leur état d'origine ; le faire à la main autrement laisserait une entrée `.next-dist/types/**/*.ts` dans un fichier versionné.
+- **Un port n'est pas libre parce qu'il l'est en IPv4.** `npm run dev` écoute sur `*:3000` en IPv6 ; une sonde qui n'écoute que sur `127.0.0.1` le croit libre, et deux serveurs cohabitent alors sur « le port 3000 ».
 - **Ne jamais utiliser `git add -A` pendant que des agents travaillent** — chemins explicites uniquement. Cette erreur a balayé du code d'agent dans des commits de documentation **deux fois**.
 - **TypeScript est épinglé en `^5.9`** : Next 15 rejette TypeScript 7.
 - **`@theme` classique, jamais `@theme inline`** : ce dernier substitue les valeurs à la compilation et rend le thème paramétrable inopérant.
@@ -142,6 +145,9 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 - **La grille fait 1364 px sur 31 jours** depuis la cible tactile de 44 pt — défilement horizontal systématique sur téléphone. Le lot 1c y répond par la vue calendrier.
 - **Le balayage des couples de contraste ne couvre pas** : une encre d'état sur un fond hors des quatre fonds de texte, `link`/`onAccent`/`onDark` posés seuls, un fond porté par une variable.
 - **Docker et Postgres n'ont jamais été exécutés** dans cet environnement. Un garde-fou statique détecte désormais la dérive du schéma, mais le chemin complet reste à éprouver.
+- **Chaque évolution de schéma demande désormais deux migrations** — une Postgres sous `prisma/migrations/`, une SQLite sous `prisma/migrations-sqlite/`. Les deux garde-fous statiques (`src/db/schema-migration-sync.test.ts`, `src/distribution/migrations-sqlite.test.ts`) échouent si l'une prend du retard, mais l'oubli reste facile. Documenté dans le README, section « Deux jeux de migrations, pas un ».
+- **L'archive portable n'a été construite et éprouvée que pour macOS Apple Silicon.** Les trois autres plateformes demandent un passage sur la machine correspondante ; `scripts/empaqueter.mjs` refuse de produire une archive dont le moteur Prisma ne correspond pas.
+- **`arreter.sh` juge la vivacité par le port, pas par le PID.** Si un autre programme écoute sur le même port (typiquement le `next dev` du dépôt, en IPv6), l'arrêt attend 10 secondes puis force — 11 s et un message alarmant, pour rien. Mesuré : 0 à 1 seconde et « Application arrêtée. » sur un port libre de tout autre occupant. Aucune donnée n'est perdue (WAL + `synchronous=FULL`, prouvé par `kill -9`). Correctif : sonder aussi `::1`, ou vérifier le PID.
 - **Trois vulnérabilités npm** transitives via `next`, surfaces de construction.
 - **`manifest.webmanifest` et `icon.svg` portent les couleurs KreativPM en dur.** Ce sont des fichiers statiques servis tels quels, hors de portée du système de jetons : quelqu'un qui change le thème garde l'icône d'origine sur son écran d'accueil. Le `themeColor` du document, lui, suit bien le thème enregistré.
 
