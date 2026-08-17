@@ -1,11 +1,12 @@
 /**
  * Le coin d'une journée éclatée — une journée saisie en plusieurs créneaux.
  *
- * Partagé par les deux vues de `/saisie/[month]`, et pour la même raison
- * qu'`Aplat` l'est déjà : c'est le même fait, sur le même écran, et une
- * bascule de vue ne doit pas en montrer deux dessins. Le calendrier l'a reçu
- * le premier ; le tableau est resté au liseré seul, c'est-à-dire au défaut
- * corrigé ici.
+ * **Propre au calendrier.** Une version antérieure de ce commentaire affirmait
+ * qu'il s'agissait « du même fait » que le marqueur du tableau, et le tableau
+ * employait donc le même dessin : c'était faux. Le calendrier marque une
+ * journée saisie en **deux créneaux ou plus** ; le tableau marque une cellule
+ * qui totalise des créneaux **dès le premier**, et il a désormais son propre
+ * tracé — voir `CoinAgrege`, qui porte le même contrat de lisibilité.
  *
  * C'est un avertissement, et il doit se voir sur **n'importe quel** fond de
  * case : `surface`, `off`, `off-strong`, l'aplat de saisie, celui du

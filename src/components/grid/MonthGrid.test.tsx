@@ -1129,7 +1129,7 @@ describe('MonthGrid', () => {
    * Le liseré reste, comme renfort là où il se voit — jamais comme le seul
    * porteur de l'information.
    */
-  describe('le marqueur d une journée éclatée', () => {
+  describe('le marqueur d une cellule qui totalise les créneaux', () => {
     /** Mars 2026 avec un férié : le jeu d'essai commun n'en porte aucun. */
     const joursAvecFerie = buildMonthDays('2026-03', [1, 2, 3, 4, 5], ['2026-03-02'])
 
@@ -1155,7 +1155,7 @@ describe('MonthGrid', () => {
     }
 
     function marqueurDu(date: string): SVGElement | null {
-      return screen.queryByTestId(`eclatement-l1-${date}`) as SVGElement | null
+      return screen.queryByTestId(`agrege-l1-${date}`) as SVGElement | null
     }
 
     /**
@@ -1317,7 +1317,12 @@ describe('MonthGrid', () => {
       // `currentColor` et non un jeton : un marqueur qui porterait sa propre
       // couleur retomberait dans le défaut qu'il corrige — une teinte figée
       // confrontée à dix fonds dont elle ne sait rien.
-      expect(marqueur.querySelector('path')!.getAttribute('fill')).toBe('currentColor')
+      // `fill` OU `stroke` : le marqueur du tableau est tracé au trait, celui
+      // du calendrier est plein. Ce qui compte est identique dans les deux
+      // cas — aucune teinte propre, donc l'encre mesurée de la cellule.
+      const trace = marqueur.querySelector('path')!
+      expect(trace.getAttribute('fill') ?? trace.getAttribute('stroke')).toBe('currentColor')
+      expect(marqueur.getAttribute('class')).not.toMatch(/\b(?:text|fill|stroke)-/)
       expect(classes(marqueur).filter((c) => /^(text|fill|stroke)-/.test(c))).toEqual([])
     })
 
@@ -1414,5 +1419,84 @@ describe('MonthGrid', () => {
     const legende = screen.getByTestId('legende-segments')
     expect(legende.textContent).toContain('Réalisé')
     expect(legende.textContent).toContain('Prévisionnel')
+  })
+})
+
+describe('la cellule qui agrège des créneaux', () => {
+  afterEach(cleanup)
+
+  const BORNES_LOCALES = { startMinute: 540, endMinute: 780 }
+
+  it('ne se verrouille pas sur une saisie à zéro minute', () => {
+    // `readCellState` ne retient que les saisies `minutes > 0` : une saisie à
+    // zéro n'agrège rien, et la journée reste vide. `hasSlots`, lui, comptait
+    // toutes les saisies — la cellule se verrouillait donc, portait son
+    // marqueur et refusait la frappe, sur un jour que le calendrier affichait
+    // vide. Le même fait, deux lectures contradictoires.
+    renderGrid({
+      entries: [
+        { id: 'z1', lineId: 'l1', date: '2026-03-16', minutes: 0, kind: 'REALISE',
+          slotId: 'matin', ...BORNES_LOCALES, minutesParJour: 480 },
+      ],
+    })
+    const input = cell('Consultant ITSM', '2026-03-16')
+    expect(input.readOnly, 'une saisie à zéro verrouille encore la cellule').toBe(false)
+  })
+
+  it('dit dans son infobulle ce que sa condition vérifie vraiment', () => {
+    // L'infobulle annonçait « agrège **plusieurs** créneaux » alors que la
+    // condition se déclenche dès **un seul**. Un texte qui décrit un autre cas
+    // que celui qui l'a déclenché est pire qu'un texte absent : il envoie
+    // chercher une deuxième saisie qui n'existe pas.
+    renderGrid({
+      entries: [
+        { id: 'u1', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE',
+          slotId: 'matin', ...BORNES_LOCALES, minutesParJour: 480 },
+      ],
+    })
+    const input = cell('Consultant ITSM', '2026-03-16')
+    expect(input.readOnly).toBe(true)
+    expect(input.title).not.toMatch(/plusieurs/)
+    expect(input.title).not.toBe('')
+  })
+})
+
+describe('les deux vues ne marquent pas le même fait', () => {
+  afterEach(cleanup)
+
+  const BORNES_2 = { startMinute: 540, endMinute: 780 }
+  const UN_CRENEAU = [
+    { id: 'x1', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE' as const,
+      slotId: 'matin', ...BORNES_2, minutesParJour: 480 },
+  ]
+
+  it('donne au tableau un marqueur distinct de celui de la journée éclatée', () => {
+    // Les conditions diffèrent, et c'est juste : le calendrier marque une
+    // journée saisie en DEUX créneaux ou plus (« ouvrir le formulaire les
+    // remplacera toutes par une ») ; le tableau marque une cellule qui
+    // totalise des créneaux dès le PREMIER, et refuse la frappe (`readOnly`).
+    //
+    // Deux faits, donc deux dessins. Le même glyphe des deux côtés fait
+    // conclure au lecteur qui bascule de vue qu'il s'agit de la même chose,
+    // et l'envoie chercher une seconde saisie sur une cellule qui n'en a
+    // qu'une.
+    renderGrid({ entries: UN_CRENEAU })
+    const marqueur = document.querySelector('[data-testid^="agrege-"]')
+    expect(marqueur, 'la cellule qui totalise ne porte aucun marqueur').not.toBeNull()
+    expect(document.querySelector('[data-testid^="eclatement-"]')).toBeNull()
+  })
+
+  it('garde au tableau la même garantie de lisibilité que le calendrier', () => {
+    // Même contrat que `CoinEclate` : `currentColor`, donc l'encre de la
+    // cellule, qui est mesurée sur les onze fonds. Aucune teinte propre.
+    renderGrid({ entries: UN_CRENEAU })
+    const marqueur = document.querySelector('[data-testid^="agrege-"] path')!
+    expect(marqueur.getAttribute('fill') ?? marqueur.getAttribute('stroke')).toBe('currentColor')
+  })
+
+  it('pose le marqueur hors du flux : la cellule de 44 points ne bouge pas', () => {
+    renderGrid({ entries: UN_CRENEAU })
+    const marqueur = document.querySelector('[data-testid^="agrege-"]')!
+    expect(marqueur.getAttribute('class')).toContain('absolute')
   })
 })

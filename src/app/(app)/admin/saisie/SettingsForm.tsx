@@ -3,7 +3,7 @@
 import { useActionState, useState } from 'react'
 import { saveSettings, lancerReetalonnage, type SaveSettingsState } from './actions'
 import type { AppSettings } from '@/services/settings'
-import { ENGAGEMENT_SOURCES } from '@/services/settings'
+import { ENGAGEMENT_SOURCES } from '@/core/types'
 import { crossesMidnight, slotDurationMinutes, type Slot } from '@/core/time/slots'
 import { DISPLAY_UNITS } from '@/core/types'
 import { Card } from '@/components/ui/Card'

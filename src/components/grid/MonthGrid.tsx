@@ -20,7 +20,7 @@ import { Aplat } from '@/components/ui/Aplat'
 // `warning-edge` portait seul l'avertissement d'éclatement, et il ne s'écarte
 // que de 1,63 en L* de `prevu` en Encre clair — le préréglage par défaut — pour
 // un plancher de 4. Le coin, lui, est peint de l'encre de la cellule.
-import { CoinEclate } from '@/components/ui/CoinEclate'
+import { CoinAgrege } from '@/components/ui/CoinAgrege'
 // `SEGMENT_PREVU_BORDURE` et non un tireté réécrit ici : la légende, les
 // bandeaux d'engagement et cette cellule doivent porter **les mêmes classes**,
 // sinon l'un des trois dérive sans que rien ne le dise.
@@ -41,8 +41,11 @@ const AUCUNE_OCCUPATION: string[] = []
 /** Même raison que `AUCUNE_OCCUPATION` : un littéral neuf à chaque rendu. */
 const AUCUN_CRENEAU: Slot[] = []
 
+// « plusieurs » était faux : la condition se déclenche dès **un** créneau
+// nommé. Un texte qui décrit un autre cas que celui qui l'a déclenché envoie
+// chercher une saisie qui n'existe pas.
 const CELLULE_CRENEAUX =
-  'Journée saisie par créneaux : la cellule agrège plusieurs créneaux et ne se modifie pas ici.'
+  'Journée saisie par créneaux : la cellule totalise les créneaux du jour et se modifie créneau par créneau.'
 
 interface Cell {
   lineId: string
@@ -209,7 +212,10 @@ function buildCells(entries: MonthEntry[]): Map<string, Cell> {
       // De même pour les natures : `kindDeLaJournee` tranche, et elle tranche
       // pour les deux vues à la fois.
       kinds: [...(prev?.kinds ?? []), e.kind],
-      hasSlots: (prev?.hasSlots ?? false) || e.slotId !== '',
+      // `minutes > 0`, comme `readCellState` : une saisie à zéro n'agrège rien.
+      // Sans ce filtre, la cellule se verrouillait sur un jour que le
+      // calendrier montrait vide — le même fait lu de deux façons.
+      hasSlots: (prev?.hasSlots ?? false) || (e.slotId !== '' && e.minutes > 0),
     })
   }
 
@@ -231,7 +237,7 @@ function buildSlotCells(entries: MonthEntry[]): Map<string, Cell> {
       saisies: [{ minutes: e.minutes, minutesParJour: e.minutesParJour }],
       brutes: [e],
       kinds: [e.kind],
-      hasSlots: e.slotId !== '',
+      hasSlots: e.slotId !== '' && e.minutes > 0,
     })
   }
   return cells
@@ -482,7 +488,7 @@ export function MonthGrid({
                 const forme = formeDeLaCellule(cell, l, slots)
                 const previsionnel = etatSaisie(cell) === 'previsionnel'
                 // Une seule encre pour la cellule, et le champ la reprend :
-                // c'est elle que `CoinEclate` prend par `currentColor`, et deux
+                // c'est elle que `CoinAgrege` prend par `currentColor`, et deux
                 // encres divergentes feraient peindre le tracé d'une couleur
                 // que rien ne mesure.
                 const encre = encreCellule(forme.kind !== 'AUCUNE', previsionnel, parCreneaux)
@@ -522,7 +528,7 @@ export function MonthGrid({
                         reste, comme renfort là où il se voit — mais il ne porte
                         plus seul l'avertissement, ce qu'une teinte à 1,63 de
                         L* du prévisionnel ne pouvait pas faire. */}
-                    {parCreneaux && <CoinEclate cle={`${l.id}-${d.date}`} />}
+                    {parCreneaux && <CoinAgrege cle={`${l.id}-${d.date}`} />}
 
                     <input
                       aria-label={`${l.label} ${d.date}`}
