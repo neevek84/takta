@@ -118,19 +118,22 @@ describe('ThemeForm', () => {
       // KreativPM est un thème clair : le proposer dans l'emplacement sombre
       // ferait cliquer sur ce que le service refuse.
       expect(screen.getAllByRole('button', { name: /^KreativPM$/ })).toHaveLength(1)
-      expect(screen.getAllByRole('button', { name: /^Sombre$/ })).toHaveLength(1)
+      expect(screen.getAllByRole('button', { name: /^Neutre sombre$/ })).toHaveLength(1)
+      // Encre est livré des deux côtés, un préréglage par versant.
+      expect(screen.getAllByRole('button', { name: /^Encre clair$/ })).toHaveLength(1)
+      expect(screen.getAllByRole('button', { name: /^Encre sombre$/ })).toHaveLength(1)
     })
 
     it('remplit la palette claire depuis le préréglage KreativPM, sans toucher la sombre', () => {
       render(<ThemeForm config={DEFAULT_THEME_CONFIG} />)
       fireEvent.click(screen.getByRole('button', { name: /^KreativPM$/ }))
       expect(champ('clair', 'page').value).toBe(THEME_KREATIVPM.page)
-      expect(champ('sombre', 'page').value).toBe(THEME_SOMBRE.page)
+      expect(champ('sombre', 'page').value).toBe(DEFAULT_THEME_CONFIG.sombre.page)
     })
 
-    it('remplit la palette claire depuis le préréglage Clair', () => {
+    it('remplit la palette claire depuis le préréglage Neutre clair', () => {
       render(<ThemeForm config={MARQUE} />)
-      fireEvent.click(screen.getByRole('button', { name: /^Clair$/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Neutre clair$/ }))
       expect(champ('clair', 'page').value).toBe(THEME_CLAIR.page)
     })
   })
@@ -177,8 +180,10 @@ describe('ThemeForm', () => {
       fireEvent.click(boutonRetourDefaut())
 
       await waitFor(() => expect(restoreDefaultTheme).toHaveBeenCalledTimes(1))
-      await waitFor(() => expect(champ('clair', 'page').value).toBe(THEME_CLAIR.page))
-      expect(champ('sombre', 'page').value).toBe(THEME_SOMBRE.page)
+      await waitFor(() =>
+        expect(champ('clair', 'page').value).toBe(DEFAULT_THEME_CONFIG.clair.page),
+      )
+      expect(champ('sombre', 'page').value).toBe(DEFAULT_THEME_CONFIG.sombre.page)
       expect(modeChoisi()).toBe('systeme')
     })
 
@@ -197,7 +202,7 @@ describe('ThemeForm', () => {
       expect(bandeau.textContent).toContain('n’a pas été restauré')
       expect(bandeau.textContent).toContain('votre session')
       expect(champ('clair', 'page').value).toBe(THEME_KREATIVPM.page)
-      expect(champ('clair', 'page').value).not.toBe(THEME_CLAIR.page)
+      expect(champ('clair', 'page').value).not.toBe(DEFAULT_THEME_CONFIG.clair.page)
       expect(modeChoisi()).toBe('clair')
     })
 

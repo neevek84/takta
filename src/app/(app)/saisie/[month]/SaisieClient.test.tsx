@@ -797,3 +797,49 @@ describe('SaisieClient — occupation de l agenda', () => {
     expect(screen.queryByText(/agenda est déjà occupé/)).toBeNull()
   })
 })
+
+/**
+ * La réglette du mois, sous le calendrier.
+ *
+ * Le calendrier n'affichait aucun total : on saisissait douze jours sans jamais
+ * voir combien. Et l'engagement — la seule chose que cet outil fait et que
+ * Timizer ne fait pas — ne remontait jamais jusqu'à l'écran où l'on travaille.
+ */
+describe('SaisieClient — la réglette du mois', () => {
+  beforeEach(() => {
+    saveCell.mockReset()
+    appliquerCase.mockReset()
+    window.localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  it('pose la réglette sous le calendrier, en pleine largeur', () => {
+    renderClient({
+      engagementTotals: {
+        l1: [{ kind: 'REALISE', minutes: 480 * 18, minutesParJour: 480 }],
+        l2: [],
+      },
+    })
+
+    const reglette = screen.getByTestId('engagement-l1')
+    expect(reglette).toBeTruthy()
+    expect(screen.getByTestId('piste-engagement-l1').className).toContain('w-full')
+    expect(reglette.textContent).toContain('18 réalisés')
+  })
+
+  it('ne montre la réglette que pour la prestation affichée', () => {
+    // Le calendrier n'affiche qu'une ligne à la fois : y empiler l'engagement
+    // des autres dirait des chiffres qui ne concernent pas ce qu'on regarde.
+    renderClient()
+    expect(screen.queryByTestId('engagement-l2')).toBeNull()
+  })
+
+  it('laisse au tableau sa barre compacte', () => {
+    // La vue tableau ne bouge pas : `pleineLargeur` y reste à `false`.
+    renderClient()
+    fireEvent.click(screen.getByRole('button', { name: 'Tableau multi-CRA' }))
+
+    expect(screen.getByTestId('piste-engagement-l1').className).toContain('w-40')
+    expect(screen.getByTestId('piste-engagement-l1').className).not.toContain('w-full')
+  })
+})

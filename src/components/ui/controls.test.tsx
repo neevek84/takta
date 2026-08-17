@@ -1,12 +1,51 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { cn } from '@/lib/cn'
 import { Button } from './Button'
 import { Field } from './Field'
 import { Select } from './Select'
 import { Checkbox } from './Checkbox'
 
 afterEach(cleanup)
+
+describe('cn', () => {
+  it('résout un conflit d utilitaire standard au lieu de le laisser à l ordre CSS', () => {
+    expect(cn('px-4', 'px-2')).toBe('px-2')
+    expect(cn('rounded-sm', 'rounded-none')).toBe('rounded-none')
+  })
+
+  // La spec affirme que `tailwind-merge` « laisse intacts les jetons du
+  // projet ». Sans ces assertions, c'est une hypothèse : la vérification porte
+  // donc sur des jetons réellement employés dans `src/`, pas sur des exemples.
+  it('laisse intacts les jetons réels du projet, qu il ne connaît pas', () => {
+    // Les trois classes de la variante `primary` de Button.
+    expect(cn('bg-accent', 'text-on-accent', 'border-accent-dark')).toBe(
+      'bg-accent text-on-accent border-accent-dark',
+    )
+    // Une teinte catégorielle et trois utilitaires déclarés dans `globals.css`.
+    expect(cn('bg-cat-a', 'touch-target', 'clip-half-am', 'pattern-dots')).toBe(
+      'bg-cat-a touch-target clip-half-am pattern-dots',
+    )
+    // La case du jour, dans `MonthCalendar` : une épaisseur standard et un
+    // jeton de teinte partagent le préfixe `border-` sans se recouvrir.
+    expect(cn('border-2', 'border-ink')).toBe('border-2 border-ink')
+  })
+
+  it('ne prend pas une teinte de jeton pour une taille de texte', () => {
+    // Le vrai risque de la fusion : `text-ink` est une **couleur**, pas une
+    // taille. S'il était rangé avec `text-sm`, chaque `DataTable` perdrait sa
+    // densité sans qu'aucune couleur ne change — une régression muette.
+    expect(cn('text-sm', 'text-ink')).toBe('text-sm text-ink')
+    expect(cn('text-xs', 'text-muted', 'tabular-nums')).toBe('text-xs text-muted tabular-nums')
+  })
+
+  it('départage deux jetons qui posent la même propriété', () => {
+    // Le cas de `Field` : la bordure d'erreur doit l'emporter sur la bordure
+    // ordinaire, quel que soit l'ordre d'insertion des règles CSS.
+    expect(cn('border border-rule', 'border-danger-edge')).toBe('border border-danger-edge')
+  })
+})
 
 describe('Button', () => {
   it('rend son libellé et réagit au clic', () => {
@@ -44,6 +83,25 @@ describe('Button', () => {
     expect(bouton.textContent).toContain('…')
   })
 
+  it('accompagne son survol d une transition brève', () => {
+    // Un survol qui saute d'une teinte à l'autre se lit comme un défaut
+    // d'affichage. 150 ms suffit à le rendre continu sans le rendre lent ;
+    // `prefers-reduced-motion` le neutralise pour qui le demande.
+    render(<Button variant="primary">Enregistrer</Button>)
+    const bouton = screen.getByRole('button')
+    expect(bouton.className).toContain('transition-')
+    expect(bouton.className).toContain('duration-150')
+  })
+
+  it('laisse l appelant corriger un utilitaire sans dépendre de l ordre CSS', () => {
+    // La raison d'être de `cn()` : `px-2` passé par l'appelant doit chasser le
+    // `px-4` du bouton, et non cohabiter avec lui.
+    render(<Button className="px-2">Étroit</Button>)
+    const classes = screen.getByRole('button').className
+    expect(classes).toContain('px-2')
+    expect(classes).not.toContain('px-4')
+  })
+
   it('reste cliquable hors chargement', () => {
     render(<Button>Enregistrer</Button>)
     expect(screen.getByRole('button').hasAttribute('disabled')).toBe(false)
@@ -77,6 +135,20 @@ describe('Field', () => {
     render(<Field label="Durée" name="duree" hint="Vide = hérité" />)
     expect(screen.getByText('Vide = hérité')).toBeDefined()
     expect(screen.getByLabelText('Durée').getAttribute('aria-invalid')).toBeNull()
+  })
+
+  it('adoucit le changement de bordure au lieu de le faire sauter', () => {
+    render(<Field label="Seuil" name="seuil" />)
+    const classes = screen.getByLabelText('Seuil').className
+    expect(classes).toContain('transition-colors')
+    expect(classes).toContain('duration-150')
+  })
+
+  it('laisse la bordure d erreur l emporter sur la bordure ordinaire', () => {
+    render(<Field label="Seuil" name="seuil" error="Le seuil doit être positif." />)
+    const classes = screen.getByLabelText('Seuil').className
+    expect(classes).toContain('border-danger-edge')
+    expect(classes).not.toContain('border-rule')
   })
 
   it('donne des identifiants distincts à deux champs de même libellé', () => {

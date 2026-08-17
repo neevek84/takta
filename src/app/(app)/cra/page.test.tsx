@@ -187,10 +187,12 @@ describe('page CRA', () => {
     expect(screen.queryByRole('button', { name: /facture/i })).toBeNull()
   })
 
-  it('donne au statut un glyphe en plus de sa teinte', async () => {
+  it('donne au statut une icône en plus de sa teinte', async () => {
     await rendre({ cras: [unCra('REFUSE')] })
     const badge = screen.getByTestId('cra-statut')
-    expect(badge.querySelector('[aria-hidden="true"]')!.textContent).not.toBe('')
+    const icone = badge.querySelector('[aria-hidden="true"]')
+    expect(icone).not.toBeNull()
+    expect(icone!.getAttribute('data-icone')).toBe('danger')
     expect(badge.textContent).toContain('Refusé')
   })
 })

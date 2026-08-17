@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { readCellState } from '@/core/saisie/cell-state'
 import type { CellEntry } from '@/core/saisie/cell-state'
-import { colorForLine } from '@/core/saisie/colors'
+import { colorForLine, PREVU_COLOR } from '@/core/saisie/colors'
 import { formeDeLaCase } from '@/core/saisie/forme'
 import type { Forme } from '@/core/saisie/forme'
 import { kindDeLaJournee } from '@/core/saisie/kind'
@@ -16,7 +16,15 @@ import type { CapacityMode, TimeEntryKind } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
 import { Aplat } from '@/components/ui/Aplat'
-import { SegmentLegend } from '@/components/ui/SegmentLegend'
+// Le même tracé que le calendrier, pris au même endroit : le liseré
+// `warning-edge` portait seul l'avertissement d'éclatement, et il ne s'écarte
+// que de 1,63 en L* de `prevu` en Encre clair — le préréglage par défaut — pour
+// un plancher de 4. Le coin, lui, est peint de l'encre de la cellule.
+import { CoinAgrege } from '@/components/ui/CoinAgrege'
+// `SEGMENT_PREVU_BORDURE` et non un tireté réécrit ici : la légende, les
+// bandeaux d'engagement et cette cellule doivent porter **les mêmes classes**,
+// sinon l'un des trois dérive sans que rien ne le dise.
+import { SegmentLegend, SEGMENT_PREVU_BORDURE } from '@/components/ui/SegmentLegend'
 import { EngagementBar } from './EngagementBar'
 import { TotalsRow } from './TotalsRow'
 import { useDragSelect } from './useDragSelect'
@@ -33,8 +41,11 @@ const AUCUNE_OCCUPATION: string[] = []
 /** Même raison que `AUCUNE_OCCUPATION` : un littéral neuf à chaque rendu. */
 const AUCUN_CRENEAU: Slot[] = []
 
+// « plusieurs » était faux : la condition se déclenche dès **un** créneau
+// nommé. Un texte qui décrit un autre cas que celui qui l'a déclenché envoie
+// chercher une saisie qui n'existe pas.
 const CELLULE_CRENEAUX =
-  'Journée saisie par créneaux : la cellule agrège plusieurs créneaux et ne se modifie pas ici.'
+  'Journée saisie par créneaux : la cellule totalise les créneaux du jour et se modifie créneau par créneau.'
 
 interface Cell {
   lineId: string
@@ -70,11 +81,18 @@ function etatJour(d: MonthDay): EtatJour {
   return d.isWorking ? 'ouvre' : 'weekend'
 }
 
-// Fond ET motif : la teinte porte la lecture rapide, le motif porte
-// l'information pour qui ne la distingue pas.
+// Fond ET motif — mais le motif ne sert plus qu'au férié. Le dithering du
+// week-end était le signal d'ancienneté le plus fort du dessin, et il couvrait
+// huit jours par mois. Le contrat non chromatique tient sans lui : l'écart de
+// clarté entre `surface`, `off` et `off-strong` (100 / 91,2 / 85,4 en L*)
+// porte l'information, et `MIN_LIGHTNESS_GAP` le vérifie déjà — le nom
+// accessible du jour la porte pour qui ne voit ni l'un ni l'autre.
+//
+// Le férié garde le sien : dix jours par an, une information plus forte, et un
+// marqueur si rare ne fatigue personne.
 const FOND_JOUR: Record<EtatJour, string> = {
   ouvre: 'bg-surface',
-  weekend: 'bg-off pattern-stripes',
+  weekend: 'bg-off',
   ferie: 'bg-off-strong pattern-dots',
 }
 
@@ -160,8 +178,8 @@ function formeDeLaCellule(
  * les fonds de la palette catégorielle (`TEXT_PAIRS`, `core/theme/tokens.ts`).
  * `muted` — que le prévisionnel posait — et `warning-ink` — que la journée par
  * créneaux pose — tombent sous 4,5:1 sur les teintes les plus claires de cette
- * palette. Le prévisionnel et les créneaux ne perdent rien : leurs hachures,
- * leur italique et leur liseré se lisent en vision monochrome, ce qu'une
+ * palette. Le prévisionnel et les créneaux ne perdent rien : le contour
+ * tireté, l'italique et le liseré se lisent en vision monochrome, ce qu'une
  * nuance d'encre n'a jamais fait.
  */
 function encreCellule(remplie: boolean, previsionnel: boolean, parCreneaux: boolean): string {
@@ -194,7 +212,10 @@ function buildCells(entries: MonthEntry[]): Map<string, Cell> {
       // De même pour les natures : `kindDeLaJournee` tranche, et elle tranche
       // pour les deux vues à la fois.
       kinds: [...(prev?.kinds ?? []), e.kind],
-      hasSlots: (prev?.hasSlots ?? false) || e.slotId !== '',
+      // `minutes > 0`, comme `readCellState` : une saisie à zéro n'agrège rien.
+      // Sans ce filtre, la cellule se verrouillait sur un jour que le
+      // calendrier montrait vide — le même fait lu de deux façons.
+      hasSlots: (prev?.hasSlots ?? false) || (e.slotId !== '' && e.minutes > 0),
     })
   }
 
@@ -216,7 +237,7 @@ function buildSlotCells(entries: MonthEntry[]): Map<string, Cell> {
       saisies: [{ minutes: e.minutes, minutesParJour: e.minutesParJour }],
       brutes: [e],
       kinds: [e.kind],
-      hasSlots: e.slotId !== '',
+      hasSlots: e.slotId !== '' && e.minutes > 0,
     })
   }
   return cells
@@ -466,6 +487,11 @@ export function MonthGrid({
                 const parCreneaux = slotDe(l.id) === '' && cells.get(key)?.hasSlots === true
                 const forme = formeDeLaCellule(cell, l, slots)
                 const previsionnel = etatSaisie(cell) === 'previsionnel'
+                // Une seule encre pour la cellule, et le champ la reprend :
+                // c'est elle que `CoinAgrege` prend par `currentColor`, et deux
+                // encres divergentes feraient peindre le tracé d'une couleur
+                // que rien ne mesure.
+                const encre = encreCellule(forme.kind !== 'AUCUNE', previsionnel, parCreneaux)
                 return (
                   <td
                     key={d.date}
@@ -473,14 +499,37 @@ export function MonthGrid({
                     onMouseDown={() => drag.handlers.onMouseDown(l.id, d.date)}
                     onMouseEnter={() => drag.handlers.onMouseEnter(l.id, d.date)}
                     onMouseUp={drag.handlers.onMouseUp}
-                    // `relative` : l'aplat est posé en absolu dans la cellule,
-                    // et n'ajoute donc aucune largeur — le budget des sept
-                    // colonnes à 375 points n'en bouge pas.
-                    className={`relative ${FOND_JOUR[etatJour(d)]} ${
+                    // `relative` : l'aplat et le coin d'éclatement sont posés en
+                    // absolu dans la cellule, et n'ajoutent donc aucune largeur
+                    // — le budget des sept colonnes à 375 points n'en bouge pas.
+                    //
+                    // L'encre est portée ici et non seulement par le champ : la
+                    // cellule est la case, et le tracé d'éclatement s'y peint en
+                    // `currentColor`.
+                    className={`relative ${FOND_JOUR[etatJour(d)]} ${encre} ${
                       drag.isSelected(l.id, d.date) ? 'ring-2 ring-inset ring-focus' : ''
                     }`}
                   >
-                    <Aplat cle={`${l.id}-${d.date}`} forme={forme} couleur={colorForLine(l.id)} />
+                    {/* La même règle que le calendrier, et prise au même
+                        endroit : le passé est froid, le futur est chaud. Un
+                        jour prévisionnel prend `PREVU_COLOR` au lieu de la
+                        teinte de sa prestation — sans quoi basculer entre les
+                        deux vues du même écran montrerait deux apparences du
+                        même fait. */}
+                    <Aplat
+                      cle={`${l.id}-${d.date}`}
+                      forme={forme}
+                      couleur={previsionnel ? PREVU_COLOR : colorForLine(l.id)}
+                    />
+
+                    {/* Après l'aplat, jamais avant : sans z-index, c'est
+                        l'ordre du document qui décide, et le coin doit se poser
+                        par-dessus la teinte qu'il traverse. Le liseré du champ
+                        reste, comme renfort là où il se voit — mais il ne porte
+                        plus seul l'avertissement, ce qu'une teinte à 1,63 de
+                        L* du prévisionnel ne pouvait pas faire. */}
+                    {parCreneaux && <CoinAgrege cle={`${l.id}-${d.date}`} />}
+
                     <input
                       aria-label={`${l.label} ${d.date}`}
                       data-saisie={etatSaisie(cell)}
@@ -512,11 +561,16 @@ export function MonthGrid({
                       // `relative` : le champ passe **au-dessus** de l'aplat,
                       // qui est le seul nœud positionné en absolu de la
                       // cellule. Sans cela, l'aplat recouvrirait le chiffre.
-                      className={`touch-target relative w-11 border-0 bg-transparent text-center text-xs ${encreCellule(
-                        forme.kind !== 'AUCUNE',
-                        previsionnel,
-                        parCreneaux,
-                      )} ${previsionnel ? 'pattern-hatch italic' : ''} ${
+                      // Le contour tireté remplace la hachure, comme au
+                      // calendrier : deux aplats opaques ne se distinguent pas
+                      // en vision monochrome, et le tireté porte l'état sans
+                      // la teinte. Il se pose sur le champ et non sur la
+                      // cellule — le champ la recouvre exactement, et la
+                      // bordure reste alors *dans* les 44 points (`box-sizing:
+                      // border-box`), sans rien coûter au budget des colonnes.
+                      className={`touch-target relative w-11 bg-transparent text-center text-xs ${encre} ${
+                        previsionnel ? `${SEGMENT_PREVU_BORDURE} italic` : 'border-0'
+                      } ${
                         parCreneaux ? 'ring-1 ring-inset ring-warning-edge' : ''
                       }`}
                     />

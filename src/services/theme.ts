@@ -5,7 +5,6 @@ import {
   DEFAULT_THEME,
   DEFAULT_THEME_CONFIG,
   THEME_MODES,
-  THEME_SOMBRE,
   THEME_TOKEN_KEYS,
   TOKEN_LABELS,
   describeContrastIssue,
@@ -179,7 +178,11 @@ export async function getThemeConfig(): Promise<ThemeConfig> {
     return {
       mode: DEFAULT_THEME_CONFIG.mode,
       clair: repareTheme(stocke, DEFAULT_THEME),
-      sombre: THEME_SOMBRE,
+      // Le repli du sombre suit le défaut livré, comme celui du clair. Le
+      // figer sur une palette nommée produisait un panachage silencieux le
+      // jour où le défaut change de famille : Encre clair de jour, neutre
+      // bleuté de nuit.
+      sombre: DEFAULT_THEME_CONFIG.sombre,
     }
   }
 
@@ -187,7 +190,7 @@ export async function getThemeConfig(): Promise<ThemeConfig> {
   return {
     mode,
     clair: repareTheme(stocke.clair, DEFAULT_THEME),
-    sombre: repareTheme(stocke.sombre, THEME_SOMBRE),
+    sombre: repareTheme(stocke.sombre, DEFAULT_THEME_CONFIG.sombre),
   }
 }
 

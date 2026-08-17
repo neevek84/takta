@@ -1,3 +1,4 @@
+import { cn } from '@/lib/cn'
 import { signatureDeForme } from '@/core/saisie/forme'
 import type { Forme } from '@/core/saisie/forme'
 import type { LineColor } from '@/core/saisie/colors'
@@ -43,12 +44,19 @@ export function Aplat({
   cle,
   forme,
   couleur,
+  className,
 }: {
   /** ce qui identifie la case : la date au calendrier, ligne et date au tableau */
   cle: string
   forme: Forme
   /** teinte de la prestation, jamais un jeton porteur de sens */
   couleur: LineColor
+  /**
+   * Ce que l'appelant ajoute au dessin de l'aplat — le calendrier s'en sert
+   * pour souder les jours d'une même plage : posé en absolu, un débord négatif
+   * couvre la gouttière sans rien coûter à la largeur de la case.
+   */
+  className?: string
 }) {
   if (forme.kind === 'AUCUNE') return null
   const signature = signatureDeForme(forme)
@@ -57,9 +65,17 @@ export function Aplat({
       aria-hidden="true"
       data-testid={`remplissage-${cle}`}
       data-forme={signature}
-      className={`pointer-events-none absolute inset-x-0 bottom-0 ${couleur.bg} ${
-        DECOUPE[signature] ?? ''
-      }`}
+      className={cn(
+        'pointer-events-none absolute inset-x-0 bottom-0',
+        // Le voile se pose sur la teinte quelle qu'elle soit — accent,
+        // prévisionnel ou catégorielle. Une `background-image` et une
+        // `background-color` ne se recouvrent pas : `tailwind-merge` ne les
+        // fusionne donc pas, et la teinte survit à la composition.
+        'aplat-relief',
+        couleur.bg,
+        DECOUPE[signature],
+        className,
+      )}
       style={{ height: hauteur(forme) }}
     />
   )

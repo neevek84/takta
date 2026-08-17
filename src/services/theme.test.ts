@@ -105,9 +105,9 @@ describe('lecture du thème', () => {
     expect(config.sombre.page).toBe('#050505')
     // Le trou du sombre se comble avec du sombre : le combler avec l'encre
     // claire produirait une palette panachée, illisible sans être invalide.
-    expect(config.clair.ink).toBe(THEME_CLAIR.ink)
-    expect(config.sombre.ink).toBe(THEME_SOMBRE.ink)
-    expect(config.sombre.ink).not.toBe(THEME_CLAIR.ink)
+    expect(config.clair.ink).toBe(DEFAULT_THEME_CONFIG.clair.ink)
+    expect(config.sombre.ink).toBe(DEFAULT_THEME_CONFIG.sombre.ink)
+    expect(config.sombre.ink).not.toBe(DEFAULT_THEME_CONFIG.clair.ink)
   })
 })
 
@@ -122,7 +122,7 @@ describe('reprise du format du lot 1e', () => {
 
     const config = await getThemeConfig()
     expect(config.clair).toEqual(THEME_KREATIVPM)
-    expect(config.sombre).toEqual(THEME_SOMBRE)
+    expect(config.sombre).toEqual(DEFAULT_THEME_CONFIG.sombre)
     // Le porteur qui avait enregistré sa marque la retrouve de jour, et reçoit
     // un sombre construit de nuit : c'est ce qu'il a demandé.
     expect(config.mode).toBe('systeme')

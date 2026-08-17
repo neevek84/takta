@@ -7,6 +7,11 @@ import path from 'node:path'
 const { requireUser, signOut } = vi.hoisted(() => ({ requireUser: vi.fn(), signOut: vi.fn() }))
 vi.mock('@/auth', () => ({ requireUser, signOut }))
 
+// Depuis le lot 1g, le layout pose un rail client qui lit la route courante
+// pour marquer la page active. Hors de Next, le contexte de routeur n'existe
+// pas et `usePathname()` rend `null` : on le fournit ici.
+vi.mock('next/navigation', () => ({ usePathname: () => '/saisie/2026-08' }))
+
 import AppLayout from './layout'
 
 beforeEach(() => {
@@ -56,12 +61,32 @@ describe('navigation de l application', () => {
 
     expect(ecrans.length).toBeGreaterThan(5)
 
+    // `hidden: false` est écrit **explicitement** : c'est le défaut de
+    // `*ByRole`, et c'est justement ce qui fait la valeur de ce contrôle.
+    // Le contrôle vérifiait auparavant la simple présence dans le document,
+    // et le tiroir se repliait par une classe `hidden` qu'aucune feuille de
+    // style ne portait en test : sept écrans pouvaient devenir invisibles en
+    // navigateur — `display:none` les retire de l'arbre d'accessibilité et de
+    // l'ordre de tabulation — sans que ce test bronche. Le repli passe
+    // désormais par l'attribut `hidden`, que l'environnement honore : replier
+    // le tiroir par défaut fait tomber ce garde-fou, comme il le doit.
     const liens = screen
-      .getAllByRole('link')
+      .getAllByRole('link', { hidden: false })
       .map((lien) => lien.getAttribute('href'))
     for (const ecran of ecrans) {
       expect(liens, `aucun lien ne mène à ${ecran}`).toContain(ecran)
     }
+  })
+
+  it('pose le rail à deux groupes, et lui seul', async () => {
+    // La barre horizontale alignait onze entrées à plat et débordait. Le
+    // layout ne rend plus qu'un rail, qui groupe le travail et les réglages :
+    // si ce rail disparaissait du layout, les cinq contrôles de ce fichier
+    // tomberaient ensemble, mais aucun ne dirait pourquoi.
+    render(await AppLayout({ children: null }))
+
+    expect(screen.getByRole('navigation', { name: 'Travail' })).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: 'Réglages' })).toBeTruthy()
   })
 
   it('mène à l écran de connexion et de rattachement Dolibarr', async () => {

@@ -3,9 +3,11 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { buildWeeks } from '@/core/month/weeks'
 import { buildCellStates } from '@/core/saisie/cell-state'
-import { colorForLine } from '@/core/saisie/colors'
+import { colorForLine, couleurDAplat, PREVU_COLOR } from '@/core/saisie/colors'
 import type { LineColor } from '@/core/saisie/colors'
 import { formeDeLaCase } from '@/core/saisie/forme'
+import { positionDansLaPlage } from '@/core/saisie/plage'
+import type { Position } from '@/core/saisie/plage'
 import { kindDeLaJournee } from '@/core/saisie/kind'
 import { OCCUPATION_TITRE } from '@/core/saisie/occupation'
 import { libelleDemiJournee, libelleDemiJourneeDetaille } from '@/core/saisie/slot-labels'
@@ -17,7 +19,13 @@ import type { MonthDay } from '@/core/month/build'
 import type { Slot } from '@/core/time/slots'
 import type { TimeEntryKind } from '@/core/types'
 import { Aplat } from '@/components/ui/Aplat'
+// Le tracé de la journée éclatée, partagé avec la vue tableau : c'est le même
+// fait sur le même écran, et une bascule de vue ne doit pas en montrer deux
+// dessins. Même raison qu'`Aplat`, voisin de ligne.
+import { CoinEclate } from '@/components/ui/CoinEclate'
 import { Button } from '@/components/ui/Button'
+import { IconeOccupation, IconePrevisionnel } from '@/components/ui/icons'
+import { cn } from '@/lib/cn'
 import { useDragSelect } from '@/components/grid/useDragSelect'
 import type { LineForGrid } from '@/services/missions'
 import type { MonthEntry } from '@/services/time-entries'
@@ -33,13 +41,6 @@ const AUCUNE_SAISIE: MinutesAuFacteur[] = []
  * en dérive l'ensemble des jours occupés.
  */
 const AUCUNE_OCCUPATION: string[] = []
-
-/**
- * Le marqueur d'occupation, visible sans distinguer les teintes — c'est le
- * même parti que les glyphes des bandeaux. Masqué aux lecteurs d'écran : le
- * nom accessible de la case porte déjà l'information en toutes lettres.
- */
-const MARQUEUR_OCCUPATION = '◆'
 
 const EN_TETES = [
   { dayOfWeek: 1, court: 'L', long: 'Lun' },
@@ -72,13 +73,52 @@ function etatJour(d: MonthDay): EtatJour {
   return d.isWorking ? 'ouvre' : 'weekend'
 }
 
-// Fond ET motif, comme dans la grille : la teinte porte la lecture rapide, le
-// motif porte l'information pour qui ne la distingue pas. Aucune couleur en
-// dur — ce sont les jetons `off` / `off-strong` / `surface` du thème.
+// Fond ET motif — mais le motif ne sert plus qu'au férié. Le dithering du
+// week-end était le signal d'ancienneté le plus fort du dessin, et il couvrait
+// huit jours par mois. Le contrat non chromatique tient sans lui : l'écart de
+// clarté entre `surface`, `off` et `off-strong` (100 / 91,2 / 85,4 en L*)
+// porte l'information, et `MIN_LIGHTNESS_GAP` le vérifie déjà — le nom
+// accessible du jour la porte pour qui ne voit ni l'un ni l'autre.
+//
+// Le férié garde le sien : dix jours par an, une information plus forte, et un
+// marqueur si rare ne fatigue personne.
 const FOND_JOUR: Record<EtatJour, string> = {
   ouvre: 'bg-surface',
-  weekend: 'bg-off pattern-stripes',
+  weekend: 'bg-off',
   ferie: 'bg-off-strong pattern-dots',
+}
+
+/**
+ * Ce que la position dans une plage change au dessin de la case.
+ *
+ * Aucune marge, aucune gouttière touchée, aucune bordure retirée : la boîte
+ * est **identique** dans les quatre cas. À 375 points, la colonne vaut 45,0
+ * pour une cible de 44 — un seul point de marge —, et le test qui le mesure ne
+ * compte que la gouttière `gap-*` : il ne verrait pas une marge ajoutée ici.
+ *
+ * Les filets intérieurs deviennent donc `transparent`, jamais `0` : une
+ * bordure transparente occupe toujours sa largeur. Seule une case isolée
+ * découpe son aplat — les autres le laissent déborder pour souder la plage.
+ */
+const PLAGE_CLASSES: Record<Position, string> = {
+  SEULE: 'overflow-hidden rounded-sm',
+  DEBUT: 'rounded-l-sm rounded-r-none border-r-transparent',
+  MILIEU: 'rounded-none border-x-transparent',
+  FIN: 'rounded-r-sm rounded-l-none border-l-transparent',
+}
+
+/**
+ * Le débord de l'aplat, qui soude visuellement deux cases voisines.
+ *
+ * L'aplat est posé en absolu : un débord négatif couvre la gouttière et
+ * n'ajoute **aucune largeur** à la case. Les bouts reprennent le rayon que la
+ * case ne peut plus leur donner, puisqu'elle ne les découpe plus.
+ */
+const PLAGE_APLAT: Record<Position, string> = {
+  SEULE: '',
+  DEBUT: 'rounded-l-sm -mr-0.5',
+  MILIEU: '-mx-0.5',
+  FIN: 'rounded-r-sm -ml-0.5',
 }
 
 const TITRE_JOUR: Record<EtatJour, string | undefined> = {
@@ -92,30 +132,22 @@ function libelleSlot(slotId: string, slots: readonly Slot[]): string {
 }
 
 /**
- * L'horloge du prévisionnel.
+ * L'horloge du prévisionnel et le losange de l'occupation.
  *
- * Les hachures qu'elle remplace étaient illisibles — constaté à l'usage. Le
- * prévisionnel garde donc **exactement le même remplissage que le réalisé**, et
- * c'est ce tracé qui les sépare : il se voit en monochrome, ce que la règle du
- * projet exige, là où une teinte seule ne suffirait pas.
+ * Les hachures que l'horloge remplace étaient illisibles — constaté à l'usage.
+ * Le prévisionnel garde donc **exactement le même remplissage que le réalisé**,
+ * et c'est ce tracé qui les sépare : il se voit en monochrome, ce que la règle
+ * du projet exige, là où une teinte seule ne suffirait pas.
+ *
+ * Le losange, lui, était encore le caractère `◆` de la police système. Les deux
+ * viennent désormais du même jeu de tracés, à la même taille et au même trait.
  */
 function Horloge({ date }: { date?: string }) {
   return (
-    <svg
-      aria-hidden="true"
-      data-testid={date === undefined ? undefined : `previsionnel-${date}`}
-      width="10"
-      height="10"
-      viewBox="0 0 12 12"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
+    <IconePrevisionnel
+      testId={date === undefined ? undefined : `previsionnel-${date}`}
       className="shrink-0"
-    >
-      <circle cx="6" cy="6" r="4.6" />
-      <path d="M6 3.2V6.2L8 7.6" />
-    </svg>
+    />
   )
 }
 
@@ -462,7 +494,35 @@ export function MonthCalendar({
     [etatDe, onFormulaire, onApply, options],
   )
 
-  const couleur = colorForLine(line.id)
+  // La teinte de la prestation saisie suit la portée affichée : en « Cette
+  // prestation », une couleur catégorielle ne distinguerait rien et se lirait
+  // pourtant comme une information. Les libellés des **autres** prestations
+  // gardent `colorForLine` : ils ne sont rendus qu'en « Toutes les
+  // prestations », où la teinte porte enfin une distinction.
+  const couleur = couleurDAplat(line.id, toutLeMois)
+
+  /**
+   * Les clés de fusion, **dans l'ordre de la grille** et non du mois.
+   *
+   * `semaines.flat()` porte sept cases par ligne, cases hors mois comprises :
+   * c'est ce qui permet à `positionDansLaPlage` de reconnaître une fin de
+   * ligne par un simple `index / 7`. Les dériver de `days` serait faux dès
+   * qu'un mois ne commence pas un lundi — c'est-à-dire presque toujours.
+   *
+   * `null` dès que la case ne fusionne pas : une plage ne réunit que des
+   * journées entières de même nature, sur des jours ouvrés. Une demi-journée
+   * n'est pas le même fait que le jour d'à côté — elle garde ses quatre
+   * filets, son rayon et ses marges.
+   */
+  const clesDePlage = useMemo(
+    () =>
+      semaines.flat().map((jour) => {
+        if (jour === null || etatJour(jour) !== 'ouvre') return null
+        if (etatDe(jour.date).kind !== 'JOURNEE') return null
+        return previsionnelles.has(jour.date) ? 'PREVU' : 'REALISE'
+      }),
+    [semaines, etatDe, previsionnelles],
+  )
 
   return (
     <div>
@@ -494,7 +554,10 @@ export function MonthCalendar({
         <span className="inline-flex items-center gap-1">
           <Pastille couleur={couleur} decoupe="clip-half-pm" />½ PM
         </span>
+        {/* Le prévisionnel a désormais sa teinte : la légende la montre, sinon
+            elle nommerait une chose sans la donner à voir. L'horloge reste. */}
         <span className="inline-flex items-center gap-1">
+          <Pastille couleur={PREVU_COLOR} tirete />
           <Horloge />
           Prévisionnel
         </span>
@@ -546,6 +609,7 @@ export function MonthCalendar({
                 aujourdhui={jour.date === aujourdhui}
                 autres={autresParDate.get(jour.date) ?? []}
                 selected={drag.isSelected(line.id, jour.date)}
+                position={positionDansLaPlage(i * 7 + j, clesDePlage)}
                 slots={slots}
                 line={line}
                 couleur={couleur}
@@ -607,13 +671,25 @@ export function MonthCalendar({
  * la même superposition que dans la grille, sans quoi la légende montrerait un
  * triangle flottant plutôt que la moitié d'une case.
  */
-function Pastille({ couleur, decoupe }: { couleur: LineColor; decoupe?: string }) {
+function Pastille({
+  couleur,
+  decoupe,
+  tirete = false,
+}: {
+  couleur: LineColor
+  decoupe?: string
+  /** le contour tireté du prévisionnel, comme sur la case */
+  tirete?: boolean
+}) {
   return (
     <span
       aria-hidden="true"
-      className="relative inline-block h-4 w-4 overflow-hidden rounded-sm border border-rule bg-surface"
+      className={cn(
+        'relative inline-block h-4 w-4 overflow-hidden rounded-sm border border-rule bg-surface',
+        tirete && 'border-dashed',
+      )}
     >
-      <span className={`absolute inset-0 ${couleur.bg} ${decoupe ?? ''}`} />
+      <span className={cn('absolute inset-0', couleur.bg, decoupe)} />
     </span>
   )
 }
@@ -627,6 +703,7 @@ function Case({
   aujourdhui,
   autres,
   selected,
+  position,
   slots,
   line,
   couleur,
@@ -650,6 +727,8 @@ function Case({
   /** autres prestations occupant ce jour, en lecture seule */
   autres: LineForGrid[]
   selected: boolean
+  /** place du jour dans sa suite de jours contigus au même état */
+  position: Position
   slots: Slot[]
   line: LineForGrid
   /** teinte de la prestation saisie, celle de l'aplat */
@@ -684,6 +763,12 @@ function Case({
   const forme = formeDeLaCase(etat, saisies, slots)
   const remplie = forme.kind !== 'AUCUNE'
 
+  // Le passé est froid, le futur est chaud : le prévisionnel prend sa teinte
+  // au lieu d'emprunter celle de la prestation. Le tireté de la case porte la
+  // même information sans la couleur, et l'horloge reste — elle nomme l'état
+  // dans l'infobulle et dans le nom accessible.
+  const couleurDeLaCase = previsionnel ? PREVU_COLOR : couleur
+
   return (
     // Sans gouttière : les libellés des autres prestations se posent sous la
     // case, et une gouttière ici les mettait à égale distance de leur propre
@@ -699,6 +784,7 @@ function Case({
         data-jour={jourDit}
         data-busy={occupe ? 'true' : undefined}
         data-aujourdhui={aujourdhui ? 'true' : undefined}
+        data-plage={position}
         aria-label={`${line.label} le ${jour.date} — ${detail}`}
         title={detail}
         onPointerDown={(ev) => {
@@ -763,24 +849,60 @@ function Case({
         // teinte — et il se distingue quel que soit le contenu de la case,
         // parce que c'est là que passe la frontière entre réalisé et
         // prévisionnel.
-        className={`touch-target relative flex flex-col items-center justify-center overflow-hidden rounded-sm text-sm ${
-          FOND_JOUR[jourDit]
-        } ${aujourdhui ? 'border-2 border-ink' : 'border border-rule'} ${
-          etat.kind === 'LIBRE' && etat.eclatee ? 'ring-1 ring-inset ring-warning-edge' : ''
-        } ${remplie ? 'text-ink' : 'text-muted'} ${previsionnel ? 'italic' : ''} ${
-          selected ? 'ring-2 ring-inset ring-focus' : ''
-        }`}
+        // Ni le rayon ni le débordement ne sont posés ici : `PLAGE_CLASSES` les
+        // porte, et vient en dernier pour l'emporter sur les filets déclarés
+        // au-dessus. Les poser deux fois laisserait l'ordre d'insertion CSS
+        // trancher — précisément ce que `cn()` existe pour empêcher.
+        className={cn(
+          'touch-target relative flex aspect-square flex-col items-center justify-center text-sm tabular-nums',
+          FOND_JOUR[jourDit],
+          aujourdhui ? 'border-2 border-ink' : 'border border-rule',
+          // Le tireté dit le prévisionnel sans la teinte : deux aplats opaques
+          // ne se distingueraient pas en vision monochrome.
+          //
+          // La teinte du filet accompagne le tireté, et c'est `prevuEdge` — la
+          // même que le tableau, la légende et la barre d'engagement posent par
+          // `SEGMENT_PREVU_BORDURE`. Le calendrier gardait ici son filet neutre :
+          // les deux vues du *même* écran peignaient donc le même fait de deux
+          // couleurs, ce que ce lot existe pour supprimer.
+          //
+          // Sauf aujourd'hui : le trait épais d'encre est le repère qui sépare
+          // le réalisé du prévisionnel, et rien ne doit le repeindre. Un jour
+          // courant prévisionnel garde donc son encre, et le tireté suffit.
+          previsionnel && (aujourdhui ? 'border-dashed' : 'border-dashed border-prevu-edge'),
+          // Anneau **intérieur** et non `ring-*` : `ring-1 ring-warning-edge`
+          // et le `ring-2 ring-focus` de la sélection tombent dans les mêmes
+          // groupes `ring-w` et `ring-color`, et `cn()` ne garde alors que le
+          // dernier — l'avertissement disparaissait à l'instant précis où la
+          // case est sélectionnée pour être corrigée. `inset-ring-*` compose
+          // dans `--tw-inset-ring-shadow`, une couche distincte de
+          // `--tw-ring-shadow` : les deux marqueurs se voient ensemble, le
+          // liseré d'éclatement par-dessus la bague de sélection.
+          etat.kind === 'LIBRE' && etat.eclatee && 'inset-ring-1 inset-ring-warning-edge',
+          remplie ? 'text-ink' : 'text-muted',
+          previsionnel && 'italic',
+          selected && 'ring-2 ring-inset ring-focus',
+          PLAGE_CLASSES[position],
+        )}
       >
-        <Aplat cle={jour.date} forme={forme} couleur={couleur} />
+        <Aplat
+          cle={jour.date}
+          forme={forme}
+          couleur={couleurDeLaCase}
+          className={PLAGE_APLAT[position]}
+        />
+
+        {/* Après l'aplat, jamais avant : sans z-index, c'est l'ordre du
+            document qui décide, et le coin doit se poser par-dessus la teinte
+            qu'il traverse. */}
+        {etat.kind === 'LIBRE' && etat.eclatee && <CoinEclate cle={jour.date} />}
 
         {/* `relative` : le contenu passe au-dessus de l'aplat, qui est le seul
             nœud positionné en absolu de la case. */}
         <span className="relative flex items-center gap-0.5 text-xs leading-none">
           {Number(jour.date.slice(8))}
           {occupe && (
-            <span aria-hidden="true" data-testid={`occupation-${jour.date}`}>
-              {MARQUEUR_OCCUPATION}
-            </span>
+            <IconeOccupation testId={`occupation-${jour.date}`} className="shrink-0" />
           )}
           {/* Le prévisionnel garde le remplissage du réalisé : c'est cette
               horloge, et elle seule, qui les sépare. */}

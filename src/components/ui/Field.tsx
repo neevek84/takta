@@ -2,6 +2,8 @@
 
 import { useId, type InputHTMLAttributes } from 'react'
 
+import { cn } from '@/lib/cn'
+
 export function Field({
   label,
   error,
@@ -27,9 +29,15 @@ export function Field({
         id={id}
         aria-invalid={error === undefined ? undefined : true}
         aria-describedby={error !== undefined ? errorId : hint !== undefined ? hintId : undefined}
-        className={`touch-target rounded-md border bg-surface px-3 text-ink ${
-          error === undefined ? 'border-rule' : 'border-danger-edge'
-        } ${className}`}
+        className={cn(
+          'touch-target rounded-md border bg-surface px-3 text-ink',
+          'transition-colors duration-150',
+          'border-rule',
+          // `cn()` fait tomber `border-rule` : la bordure d'erreur l'emporte
+          // par la composition, plus par l'ordre d'insertion des règles CSS.
+          error !== undefined && 'border-danger-edge',
+          className,
+        )}
       />
       {hint !== undefined && error === undefined && (
         <span id={hintId} className="text-xs text-muted">

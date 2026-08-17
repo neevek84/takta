@@ -56,6 +56,8 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 **Branche `main`** — 1 253 tests, `tsc` à 0, `next build` vert, 15 routes.
 
+**Branche `lot-1g-identite-encre`** — **2 755 tests**, `tsc` à 0. Le lot 1g y est complet et prêt à fusionner ; voir plus bas.
+
 | Lot | Contenu | État |
 |---|---|---|
 | 0 | Socle : auth, missions, grille, capacité, CRA, déploiement | fusionné |
@@ -80,12 +82,34 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 
 **Les dix plans sont écrits.** Il ne reste que de l'implémentation.
 
+### Lot 1g — identité « Encre », sur `lot-1g-identite-encre`
+
+Spec et plan : `specs/2026-08-16-lot-1g-identite-encre-design.md`, `plans/2026-08-16-lot-1g-identite-encre.md`. Document visuel : https://claude.ai/code/artifact/299838ac-740b-4d02-880a-02ae930aa35e
+
+**Complet, 2 755 tests verts, `tsc` à 0.** Six commits. Ce qu'il livre : les jetons passent de 44 à 48 (`prevu`, `prevuInk`, `prevuEdge`, `saisie`), deux préréglages « Encre » deviennent le défaut, la palette catégorielle est reconstruite à chroma uniforme, l'échelle typographique monte et la graisse redescend, la matière apparaît (rayons 6/10/14, ombres en trois couches, transitions 150 ms), le calendrier passe en cases carrées à plages fusionnées, les week-ends perdent leurs hachures, la navigation devient un rail à deux groupes, et la réglette d'engagement se pose sous le calendrier.
+
+**Trois dépendances entrent** : `lucide-react`, `clsx`, `tailwind-merge`. `shadcn/ui` a été écarté — il embarque son propre système de jetons, qui ferait tomber `design-system.test.ts`.
+
+**À faire au déploiement — sans quoi le lot est invisible :**
+
+```bash
+npm run theme:reprise
+```
+
+Le thème est persisté depuis le lot 1e : une palette enregistrée l'emporte sur le défaut. Sans cette commande, une installation existante garde le châssis d'avant sous les aplats du lot — un hybride qui n'est ni l'ancien thème ni le nouveau. Le script ne remplace **que** les palettes que personne n'a choisies : les deux générations de défaut neutre (lot 1e et lot 1f). KreativPM, ou toute palette dont un seul jeton diffère, est laissée intacte. Idempotent.
+
+**Trois points ouverts, à arbitrer :**
+
+- Le tableau marque d'un coin toute cellule qui agrège un créneau, même unique ; le calendrier réserve le sien aux journées à deux créneaux ou plus. Écart de sens réel — le déplacer changerait aussi la condition du `readOnly`.
+- Un cas dégénéré sans couverture : une saisie à 0 minute portant un créneau.
+- Rien n'a été vu à l'écran **sous la palette Encre** avant la reprise ; depuis, l'écran de saisie l'a été, pas les autres.
+
 **Dépendance croisée à ne pas oublier, lot 1b → lot 5** : `chargerOuCreerEnv` du lot 5 ne génère qu'`AUTH_SECRET` au premier démarrage. Il doit aussi générer **`CREDENTIALS_KEY`** dans le dossier de données — sans quoi l'archive portable diffuse la clé de développement, et le chiffrement des jetons Google ne protège plus rien. **Il n'existe aucune rotation de clé** : la changer déconnecte tout le monde en silence.
 
 **Deux points du lot 1c à soumettre au porteur du produit :**
 
-- **La palette catégorielle** — les six teintes qui distinguent les prestations sont plus saturées que les fonds d'état. C'était nécessaire pour tenir l'écart de distinguabilité dans une fenêtre chaude, mais cela se juge à l'œil.
-- **Le glissement au doigt n'est pas prouvé.** `releasePointerCapture` n'est couvert par aucun test : `happy-dom` n'implémente pas la capture implicite, et la mutation survit. Sans cette ligne, le glissement tactile est inopérant sur un appareil réel. **À essayer sur un téléphone.**
+- ~~**La palette catégorielle**~~ — **tranché au lot 1g.** Le porteur a jugé, et le diagnostic « plus saturées » était incomplet : mesuré teinte par teinte, le chroma valait 25 · 50 · 81 · 42 · 28 · 40, soit un écart de 3,2× entre `catA` et `catC`. Le défaut n'était pas l'excès mais l'inégalité — six teintes qui n'appartenaient pas à la même famille. Elles sont reconstruites à C\* 39 **uniforme**.
+- **Le glissement au doigt reste à essayer sur un téléphone**, mais sa moitié vérifiable est levée depuis le lot 1g : `releasePointerCapture` **est couvert**, et la mutation tombe. La raison invoquée ici était fausse — `happy-dom` implémente bien `set`/`has`/`releasePointerCapture` avec leur état réel ; ce qu'il n'implémente pas, c'est la capture **implicite** posée par le navigateur au `pointerdown`. Le test la pose à la place du navigateur, avec la vraie API et sans aucun double. Ce qu'aucun test ne peut prouver reste entier : que le geste fonctionne sur un appareil.
 
 **Ordre retenu** : 1c → 1b → 2 → 3 → 4 → 5.
 
@@ -118,6 +142,8 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 ## 7. Pièges d'environnement, durement acquis
 
 - **`jsdom` ne fonctionne pas ici** (Node 22.11 < 22.12). Tests de composants : `// @vitest-environment happy-dom` en **première ligne**, et `afterEach(cleanup)` **explicite**.
+- **`happy-dom` implémente la capture de pointeur** (`set`/`has`/`releasePointerCapture`) avec son état. Seule la capture *implicite* du `pointerdown` lui manque : un test qui en a besoin la pose lui-même, sans stub.
+- **Le thème est persisté** : changer `DEFAULT_THEME_CONFIG` ne change **rien** pour une installation existante, une palette enregistrée l'emportant toujours. Tout lot qui touche au défaut doit livrer sa reprise — voir `npm run theme:reprise`.
 - **`environmentMatchGlobs` n'existe plus en Vitest 4.**
 - **`vitest.config.ts` est en `fileParallelism: false`** — base SQLite partagée à l'intérieur d'un processus. Ne pas modifier.
 - **Chaque exécution de vitest a désormais sa propre base**, nommée d'après son PID (`vitest.globalSetup.ts`). Deux conséquences : les agents peuvent tourner en parallèle, et les tests n'écrivent plus dans `prisma/dev.db` — ils y réécrivaient la ligne singleton `Settings`, donc le thème et les réglages réels.
@@ -175,7 +201,7 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 
 ## 10. Ce que le porteur a demandé en dernier
 
-- Affiner le design plus tard, vers quelque chose de plus proche de Timizer.
+- ~~Affiner le design plus tard, vers quelque chose de plus proche de Timizer.~~ **Fait au lot 1g** : rail groupé, plages contiguës fusionnées et week-ends sans motif viennent de Timizer ; la loi « le passé est froid, le futur est chaud », la réglette d'engagement et les demi-journées sont propres à CRA.
 - **Enchaîner tous les lots**, revue le lendemain matin.
 
 Toute décision prise sans arbitrage pendant cette période est consignée dans les journaux d'exécution sous `.superpowers/sdd/<plan>/progress.md`, et dans les sections « Décisions prises sans arbitrage du porteur » des specs.

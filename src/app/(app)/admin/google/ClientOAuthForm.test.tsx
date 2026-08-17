@@ -111,7 +111,7 @@ describe('les retours du formulaire', () => {
     rendre()
 
     const bandeau = screen.getByRole('alert')
-    expect(bandeau.textContent).toContain('✕')
+    expect(bandeau.querySelector('svg[data-icone="danger"]')).not.toBeNull()
     expect(bandeau.textContent).toContain("L'identifiant du client OAuth est requis.")
     expect(screen.queryByRole('status')).toBeNull()
   })

@@ -12,7 +12,7 @@ export function PageShell({
   return (
     <main className="mx-auto max-w-5xl p-6">
       <div className="mb-6 flex flex-wrap items-center gap-3">
-        <h1 className="text-xl">{title}</h1>
+        <h1 className="text-2xl">{title}</h1>
         {actions}
       </div>
       {children}

@@ -9,6 +9,7 @@ import {
 import { getBusyDays } from '@/services/availability'
 import { buildMonthDays } from '@/core/month/build'
 import { MonthNav } from '@/components/MonthNav'
+import { PageShell } from '@/components/ui/PageShell'
 import { PastForecastNotice } from './PastForecastNotice'
 import { SaisieClient } from './SaisieClient'
 
@@ -38,8 +39,7 @@ export default async function SaisiePage({ params }: { params: Promise<{ month: 
   const pastForecast = await getPastForecastWithLockStatus(user.id, month, today)
 
   return (
-    <main className="p-6">
-      <h1 className="mb-4 text-xl font-semibold">Saisie</h1>
+    <PageShell title="Saisie">
       <MonthNav month={month} />
       <PastForecastNotice
         month={month}
@@ -73,6 +73,6 @@ export default async function SaisiePage({ params }: { params: Promise<{ month: 
         // ailleurs l'un que l'autre.
         aujourdhui={today}
       />
-    </main>
+    </PageShell>
   )
 }

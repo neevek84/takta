@@ -60,3 +60,61 @@ function hash(texte: string): number {
 export function colorForLine(lineId: string): LineColor {
   return LINE_COLORS[hash(lineId) % LINE_COLORS.length]!
 }
+
+/**
+ * L'aplat de la prestation saisie quand elle est seule à l'écran.
+ *
+ * Une couleur catégorielle ne distingue rien s'il n'y a qu'une catégorie :
+ * `MonthCalendar` appelait pourtant `colorForLine(line.id)` sans condition, et
+ * la seule prestation affichée recevait une teinte tirée au hachage. C'est la
+ * cause du « tout est saumon » constaté à l'écran, et c'est aussi pourquoi
+ * l'unique couleur de l'application se trouvait affectée à l'information qui,
+ * par construction, ne juge rien.
+ *
+ * Ce n'est pas une septième catégorie : l'aplat dit « saisi », jamais
+ * « celle-ci », et il n'entre donc pas dans `LINE_COLORS`.
+ *
+ * Ce n'est pas non plus `bg-accent`, et c'est le correctif de ce lot : le
+ * chiffre du jour reste en `text-ink` **au-dessus** de l'aplat — il doit tenir
+ * sur le fond du jour quand une demi-journée ne couvre que la moitié de la
+ * case —, et l'accent pleine force ne lui laissait que 1,66 à 4,41:1 sur
+ * quatre préréglages. `saisie` est le jeton d'aplat correspondant, tenu à
+ * 4,5:1 sous `ink` dans les deux versants comme les six teintes catégorielles.
+ * Son encre propre n'est donc jamais rendue : c'est `ink` qui est peint.
+ */
+export const SAISIE_COLOR: LineColor = {
+  bg: 'bg-saisie',
+  text: 'text-ink',
+  border: 'border-accent-dark',
+}
+
+/**
+ * La teinte d'un aplat, selon que l'écran montre une prestation ou toutes.
+ *
+ * `toutLeMois` est la portée choisie par la personne : en « Cette prestation »
+ * la teinte ne distinguerait rien, en « Toutes les prestations » elle porte
+ * enfin une information.
+ */
+export function couleurDAplat(lineId: string, toutLeMois: boolean): LineColor {
+  return toutLeMois ? colorForLine(lineId) : SAISIE_COLOR
+}
+
+/**
+ * L'aplat d'un jour prévisionnel.
+ *
+ * Le passé est froid, le futur est chaud : le réalisé est acquis et refroidi,
+ * le prévisionnel est encore en mouvement. Le lot 1f lui donnait le
+ * remplissage exact du réalisé — il ne s'en distinguait que par une horloge —
+ * et la barre d'engagement le dessinait en accent délavé, c'est-à-dire terne
+ * par construction. Ce n'est pas un réalisé moindre : c'est un autre état.
+ *
+ * Le contour tireté porte la même information sans la teinte.
+ */
+export const PREVU_COLOR: LineColor = {
+  bg: 'bg-prevu',
+  // Comme `SAISIE_COLOR` : le chiffre de la case est peint en `text-ink`, pas
+  // avec cette encre-ci — elle n'a de sens que là où le prévisionnel porte son
+  // propre texte, ce qu'aucun rendu ne fait aujourd'hui.
+  text: 'text-prevu-ink',
+  border: 'border-prevu-edge',
+}

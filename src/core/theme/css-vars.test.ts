@@ -4,6 +4,8 @@ import {
   THEME_KREATIVPM,
   THEME_CLAIR,
   THEME_SOMBRE,
+  THEME_ENCRE_CLAIR,
+  THEME_ENCRE_SOMBRE,
   THEME_TOKEN_KEYS,
   DEFAULT_THEME_CONFIG,
   type ThemeConfig,
@@ -53,14 +55,14 @@ describe('themeStylesheet', () => {
     // Le clair par défaut, le sombre sous la requête média : c'est ce qui rend
     // la préférence du système effective sans une ligne de JavaScript, donc
     // sans le scintillement d'un thème appliqué après le premier rendu.
-    expect(css).toContain(`--color-page:${THEME_CLAIR.page};`)
+    expect(css).toContain(`--color-page:${THEME_ENCRE_CLAIR.page};`)
     expect(css).toContain('@media (prefers-color-scheme:dark)')
     const sousMedia = css.slice(css.indexOf('@media'))
-    expect(sousMedia).toContain(`--color-page:${THEME_SOMBRE.page};`)
-    expect(css.slice(0, css.indexOf('@media'))).not.toContain(THEME_SOMBRE.page)
+    expect(sousMedia).toContain(`--color-page:${THEME_ENCRE_SOMBRE.page};`)
+    expect(css.slice(0, css.indexOf('@media'))).not.toContain(THEME_ENCRE_SOMBRE.page)
   })
 
-  it('déclare les 44 jetons de chaque palette', () => {
+  it('déclare les 48 jetons de chaque palette', () => {
     const css = themeStylesheet(DEFAULT_THEME_CONFIG)
     for (const key of THEME_TOKEN_KEYS) {
       expect(css.split(`${cssVarName(key)}:`).length - 1, key).toBe(2)
@@ -70,13 +72,13 @@ describe('themeStylesheet', () => {
   it('n’émet qu’une palette, et aucune requête média, sur un choix explicite', () => {
     const clair = themeStylesheet(CLAIR_SEUL)
     expect(clair).not.toContain('@media')
-    expect(clair).toContain(`--color-page:${THEME_CLAIR.page};`)
-    expect(clair).not.toContain(THEME_SOMBRE.page)
+    expect(clair).toContain(`--color-page:${THEME_ENCRE_CLAIR.page};`)
+    expect(clair).not.toContain(THEME_ENCRE_SOMBRE.page)
 
     const sombre = themeStylesheet(SOMBRE_SEUL)
     expect(sombre).not.toContain('@media')
-    expect(sombre).toContain(`--color-page:${THEME_SOMBRE.page};`)
-    expect(sombre).not.toContain(THEME_CLAIR.page)
+    expect(sombre).toContain(`--color-page:${THEME_ENCRE_SOMBRE.page};`)
+    expect(sombre).not.toContain(THEME_ENCRE_CLAIR.page)
   })
 
   it('accorde color-scheme au mode, pour ce que la page ne peint pas', () => {

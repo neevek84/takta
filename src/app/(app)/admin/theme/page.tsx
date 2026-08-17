@@ -1,5 +1,6 @@
 import { requireUser } from '@/auth'
 import { getThemeConfig, validateThemeConfig } from '@/services/theme'
+import { PageShell } from '@/components/ui/PageShell'
 import { ThemeForm } from './ThemeForm'
 
 export default async function AdminThemePage() {
@@ -20,8 +21,7 @@ export default async function AdminThemePage() {
   const verdict = validateThemeConfig(config)
 
   return (
-    <main className="mx-auto max-w-3xl p-6">
-      <h1 className="mb-2 text-xl">Administration · Thème</h1>
+    <PageShell title="Administration · Thème">
       <p className="mb-6 text-sm text-muted">
         Les deux palettes sont vérifiées au moment d’enregistrer. Une palette dont un couple de
         texte descend sous 4,5:1 — ou dont un couple non textuel (anneau de focus, accent foncé)
@@ -50,6 +50,6 @@ export default async function AdminThemePage() {
       )}
 
       <ThemeForm config={config} />
-    </main>
+    </PageShell>
   )
 }

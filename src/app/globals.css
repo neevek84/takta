@@ -5,62 +5,78 @@
    rendu dans un `<style>` hors couche (`themeStylesheet`, lot 1f), qui
    l'emporte sur les valeurs d'`@layer theme` produites ici. Ces valeurs-là ne
    servent qu'au cas où la base est injoignable, et n'ont donc à porter qu'un
-   seul thème : le clair, qui est le défaut.
+   seul thème : Encre clair, qui est le défaut depuis le lot 1g.
    Bloc `@theme` classique, jamais en mode « inline » : les utilitaires
    doivent référencer `var(--color-…)` pour que le thème enregistré les change
    sans reconstruction. Voir la décision en tête du plan 1e. */
 @theme {
-  --color-page: #f6f6f5;
+  --color-page: #eaf2ef;
   --color-surface: #ffffff;
-  --color-off: #e9e9e8;
-  --color-off-strong: #d8d8d7;
+  --color-off: #dbe8e3;
+  --color-off-strong: #c8dad4;
 
-  --color-ink: #1f2321;
-  --color-ink-deep: #161917;
-  --color-muted: #555956;
-  --color-on-accent: #ffffff;
-  --color-on-dark: #f6f6f5;
+  --color-ink: #12211d;
+  --color-ink-deep: #0a1512;
+  --color-muted: #485853;
+  /* Une encre teal très sombre, jamais du blanc : l'accent d'Encre est vif et
+     clair, et le blanc n'y tiendrait pas 4,5:1. */
+  --color-on-accent: #031c18;
+  --color-on-dark: #eaf2ef;
 
-  --color-accent: #3f4744;
-  --color-accent-dark: #2c3230;
-  --color-link: #2f4a45;
-  --color-rule: #cdcecd;
-  --color-focus: #3f4744;
+  --color-accent: #0e9480;
+  --color-accent-dark: #0b7566;
+  --color-link: #0a6355;
+  --color-rule: #aec5bd;
+  --color-focus: #0b7566;
+  /* L'aplat d'une case saisie — la teinte de l'accent ramenée à la clarté d'un
+     aplat. Le chiffre du jour se pose dessus en `--color-ink` : l'accent
+     pleine force ne lui laissait que 4,41:1 ici, et 1,71:1 sur le versant
+     sombre. Voir `saisie` dans `src/core/theme/tokens.ts`. */
+  --color-saisie: #51c9b2;
 
-  --color-success: #e7efe7;
-  --color-success-ink: #2f4a33;
-  --color-success-edge: #b7cdb9;
-  --color-warning: #f3eee2;
-  --color-warning-ink: #5e4c22;
-  --color-warning-edge: #d8c89e;
-  --color-danger: #f3e7e5;
-  --color-danger-ink: #7a2e24;
-  --color-danger-edge: #dcb2ac;
-  --color-info: #eaedef;
-  --color-info-ink: #33414a;
-  --color-info-edge: #c3ccd2;
+  --color-success: #dff0e2;
+  --color-success-ink: #1e5232;
+  --color-success-edge: #98c9a8;
+  --color-warning: #fbecd0;
+  --color-warning-ink: #6b4708;
+  --color-warning-edge: #e5bf72;
+  --color-danger: #fbe3dc;
+  --color-danger-ink: #7f2c17;
+  --color-danger-edge: #e8a894;
+  --color-info: #dfebef;
+  --color-info-ink: #24454f;
+  --color-info-edge: #aac6ce;
+
+  /* Le prévisionnel a sa teinte, pas une opacité de l'accent. La bordure est
+     nettement plus sombre que le fond : c'est un marqueur non chromatique, et
+     il doit tenir 3:1 jusque sur le fond des fériés. */
+  --color-prevu: #f2b544;
+  --color-prevu-ink: #4a2f05;
+  --color-prevu-edge: #7c5500;
 
   /* Palette catégorielle : distingue des prestations entre elles, sans porter
      aucun jugement. Étalonnée au lot 1f pour se distinguer aussi des fonds qui
-     la portent — voir `src/core/theme/tokens.ts` et `src/core/saisie/colors.ts`. */
-  --color-cat-a: #eaada3;
-  --color-cat-a-ink: #5a1f16;
-  --color-cat-a-edge: #df9287;
-  --color-cat-b: #d9b95e;
-  --color-cat-b-ink: #3e310f;
-  --color-cat-b-edge: #c8a035;
-  --color-cat-c: #77d13c;
-  --color-cat-c-ink: #1f380e;
-  --color-cat-c-edge: #68b931;
-  --color-cat-d: #35d0c5;
-  --color-cat-d-ink: #0e3836;
-  --color-cat-d-edge: #31b8af;
-  --color-cat-e: #b0b9ed;
-  --color-cat-e-ink: #1e2a77;
-  --color-cat-e-edge: #98a2e3;
-  --color-cat-f: #eaa5e1;
-  --color-cat-f-ink: #591650;
-  --color-cat-f-edge: #df88d4;
+     la portent. Reconstruite au lot 1g au **même chroma pour les six** : c'est
+     l'égalité, pas le niveau, qui en fait une famille. Voir
+     `src/core/theme/tokens.ts` et `src/core/saisie/colors.ts`. */
+  --color-cat-a: #fc9b9f;
+  --color-cat-a-ink: #502d2f;
+  --color-cat-a-edge: #e98c90;
+  --color-cat-b: #d8b06f;
+  --color-cat-b-ink: #43351d;
+  --color-cat-b-edge: #c6a062;
+  --color-cat-c: #8cc487;
+  --color-cat-c-ink: #283c26;
+  --color-cat-c-edge: #7eb378;
+  --color-cat-d: #2cc9cd;
+  --color-cat-d-ink: #033e3f;
+  --color-cat-d-edge: #12b8bc;
+  --color-cat-e: #6dbdfc;
+  --color-cat-e-ink: #1c3950;
+  --color-cat-e-edge: #5eade9;
+  --color-cat-f: #d7a4e4;
+  --color-cat-f-ink: #433048;
+  --color-cat-f-edge: #c695d2;
 
   /* Polices embarquées, exposées par next/font/local dans le layout racine. */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
@@ -83,12 +99,25 @@
 
   --spacing: 0.25rem;
 
-  --radius-sm: 3px;
-  --radius-md: 5px;
-  --radius-lg: 8px;
+  /* Des rayons timides et une ombre indétectable produisent un plan, pas une
+     interface : à 3 px, l'arrondi se lit comme un angle droit imparfait. */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
 
-  --shadow-card: 0 1px 2px color-mix(in srgb, var(--color-ink) 10%, transparent);
-  --shadow-float: 0 6px 16px color-mix(in srgb, var(--color-ink) 18%, transparent);
+  /* L'ombre est en trois couches — contact, diffusion, ambiante. Une couche
+     unique à 10 % ne se voit pas ; c'est leur superposition qui décolle la
+     surface de la page. `color-mix` sur l'encre les garde thématisées : une
+     ombre noire en dur serait un trou dans le thème sombre. */
+  --shadow-card:
+    0 1px 2px color-mix(in srgb, var(--color-ink) 10%, transparent),
+    0 6px 18px color-mix(in srgb, var(--color-ink) 8%, transparent),
+    0 18px 40px color-mix(in srgb, var(--color-ink) 5%, transparent);
+  /* L'état survolé d'une carte ou d'un bouton : plus haut, donc plus diffus. */
+  --shadow-lift:
+    0 2px 6px color-mix(in srgb, var(--color-ink) 12%, transparent),
+    0 14px 34px color-mix(in srgb, var(--color-ink) 10%, transparent);
+  --shadow-float: 0 12px 32px color-mix(in srgb, var(--color-ink) 22%, transparent);
 }
 
 @layer base {
@@ -100,7 +129,11 @@
 
   h1, h2, h3 {
     font-family: var(--font-display);
-    font-weight: 800;
+    /* 800 compensait une taille trop petite en criant : un titre à ×1,29 du
+       corps n'est pas un titre, c'est une étiquette en gras. La taille porte
+       désormais la hiérarchie, la graisse peut donc redescendre. */
+    font-weight: 700;
+    letter-spacing: -0.02em;
   }
 
   /* Un focus visible partout, déclaré une fois. Le retirer pour l'esthétique
@@ -109,6 +142,20 @@
   :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
+  }
+
+  /* Le mouvement sert la lecture ; il ne s'impose à personne. Le lot 1f n'avait
+     pas à s'en soucier — il n'y avait aucune transition dans `src/`. Dès qu'il
+     y en a, leur absence de garde-fou devient une régression d'accessibilité.
+     Une durée quasi nulle plutôt que `none` : l'événement `transitionend`,
+     qu'un composant peut attendre, continue d'être émis. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
@@ -128,6 +175,24 @@
     transparent 1px
   );
   background-size: 5px 5px;
+}
+
+/* L'épaisseur de l'aplat : un voile de 8 % du haut vers le bas. Assez pour que
+   la case cesse d'être un rectangle mort, pas assez pour évoquer un bouton de
+   2008. Il se pose **sur** la teinte — une `background-image` par-dessus une
+   `background-color` —, quelle que soit cette teinte : accent, prévisionnel ou
+   catégorielle. `LineColor` n'a donc aucun champ à gagner.
+
+   Déclaré en utilitaire et non en `from-white/8` : `from-white` est une couleur
+   de la palette Tailwind, que `design-system.test.ts` refuse hors de cette
+   feuille — à raison, c'est justement la teinte qu'aucun préréglage ne peut
+   suivre. */
+@utility aplat-relief {
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, white 8%, transparent),
+    transparent
+  );
 }
 
 @utility pattern-hatch {

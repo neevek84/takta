@@ -7,7 +7,7 @@ import {
 } from './contrast'
 
 /**
- * Les 44 jetons de couleur du système — 26 de base plus les 18 de la palette
+ * Les 48 jetons de couleur du système — 30 de base plus les 18 de la palette
  * catégorielle (six teintes, chacune fond/encre/bordure). Toutes les autres
  * échelles — espacement, rayons, ombres, typographie — sont figées dans
  * `globals.css` : la spec rend les couleurs paramétrables, rien d'autre.
@@ -59,6 +59,45 @@ export interface ThemeTokens {
   infoEdge: string
 
   /**
+   * L'aplat d'une case saisie, quand une seule prestation est à l'écran.
+   *
+   * Ce n'est pas `accent`, et il a fallu une revue pour le voir : le chiffre
+   * du jour reste en `ink` **par-dessus** l'aplat, parce qu'une demi-journée
+   * ne couvre que la moitié de la case et que ce chiffre doit donc aussi tenir
+   * sur le fond du jour. Poser l'accent pleine force sous une encre de corps
+   * rendait quatre préréglages sur cinq sous 4,5:1, dont trois sous 2,1:1.
+   *
+   * Le jeton suit donc la règle de la palette catégorielle plutôt que celle
+   * des boutons : une teinte d'aplat, claire sur les versants clairs (L\*≈74)
+   * et sombre sur les versants sombres (L\*≈38), où `ink` tient de 5,7 à
+   * 8,2:1 par construction. La teinte reste celle de l'accent du préréglage —
+   * c'est ce qui la rattache à l'identité sans la rendre illisible.
+   */
+  saisie: string
+
+  /**
+   * Le prévisionnel n'est pas un accent délavé : c'est un autre état, et il a
+   * sa teinte. Le lot 1f le dessinait en `bg-accent/45`, une opacité que le
+   * contrôle de contraste ne voit pas — angle mort qu'il documentait lui-même.
+   * Une teinte opaque entre dans le contrôle ; une opacité n'y entre pas.
+   *
+   * Comme `saisie`, c'est un **aplat** : il porte le chiffre du jour en `ink`,
+   * et sa clarté est donc contrainte des deux côtés — ambre clair en clair,
+   * ambre sombre en sombre. L'ambre vif des deux versants sombres ne tenait
+   * que 1,74 et 1,77:1 sous l'encre.
+   */
+  prevu: string
+  prevuInk: string
+  /**
+   * Jamais remplie au survol, contrairement à `dangerEdge` : sur les palettes
+   * claires, `prevuInk` n'y tiendrait que 2,74:1. Le contrat retenu est celui
+   * de la bordure — 3:1 sur **les quatre** fonds de cellule, et pas seulement
+   * sur le blanc : une case prévisionnelle se dessine aussi sur un week-end et
+   * sur un férié.
+   */
+  prevuEdge: string
+
+  /**
    * Palette catégorielle : six teintes qui ne portent aucun jugement, à la
    * différence de `success`/`warning`/`danger`/`info`. Leur seul rôle est de
    * distinguer des choses entre elles — aujourd'hui les prestations affichées
@@ -89,11 +128,12 @@ export interface ThemeTokens {
 export const THEME_TOKEN_KEYS: readonly (keyof ThemeTokens)[] = [
   'page', 'surface', 'off', 'offStrong',
   'ink', 'inkDeep', 'muted', 'onAccent', 'onDark',
-  'accent', 'accentDark', 'link', 'rule', 'focus',
+  'accent', 'accentDark', 'link', 'rule', 'focus', 'saisie',
   'success', 'successInk', 'successEdge',
   'warning', 'warningInk', 'warningEdge',
   'danger', 'dangerInk', 'dangerEdge',
   'info', 'infoInk', 'infoEdge',
+  'prevu', 'prevuInk', 'prevuEdge',
   'catA', 'catAInk', 'catAEdge',
   'catB', 'catBInk', 'catBEdge',
   'catC', 'catCInk', 'catCEdge',
@@ -117,6 +157,7 @@ export const TOKEN_LABELS: Record<keyof ThemeTokens, string> = {
   link: 'lien',
   rule: 'filet',
   focus: 'anneau de focus',
+  saisie: 'aplat de saisie',
   success: 'fond de succès',
   successInk: 'encre de succès',
   successEdge: 'bordure de succès',
@@ -129,6 +170,9 @@ export const TOKEN_LABELS: Record<keyof ThemeTokens, string> = {
   info: 'fond d’information',
   infoInk: 'encre d’information',
   infoEdge: 'bordure d’information',
+  prevu: 'fond du prévisionnel',
+  prevuInk: 'encre du prévisionnel',
+  prevuEdge: 'bordure du prévisionnel',
   catA: 'fond de catégorie 1',
   catAInk: 'encre de catégorie 1',
   catAEdge: 'bordure de catégorie 1',
@@ -150,75 +194,55 @@ export const TOKEN_LABELS: Record<keyof ThemeTokens, string> = {
 }
 
 /**
- * Palette catégorielle des thèmes **clairs**, étalonnée par le calcul et non
- * choisie à l'œil (lot 1f).
+ * Palette catégorielle des thèmes **clairs**, reconstruite en LCh au lot 1g.
  *
- * Les six teintes livrées par le lot 1e vivaient dans une fenêtre chaude —
- * corail, abricot, crème, jaune, rose, rose pâle. Elles tenaient bien leur
- * écart deux à deux (20,97 au pire), mais cet écart-là ne dépend pas du fond :
- * c'est une distance entre deux teintes. Ce qui dépend du fond, et que rien ne
- * vérifiait, c'est l'écart entre une teinte et **la surface qui la porte**.
- * Mesuré : `catF` (rose pâle) n'était qu'à 10,0 du fond des week-ends sur la
- * palette de la marque, et à 9,2 du fond des fériés sur la neutre — une
- * cellule remplie ne se lisait plus comme remplie. C'était bien, en partie, le
- * thème d'entreprise ; mais la palette neutre livrée en souffrait autant.
+ * Le lot 1f avait déjà corrigé le vrai défaut de couverture — il vérifiait
+ * l'écart *entre teintes*, qui ne dépend pas du fond, et pas l'écart entre une
+ * teinte et **la surface qui la porte**. Ce que la palette qu'il a livrée
+ * n'avait pas, c'est l'unité : ses six chromas valaient 25 · 50 · 81 · 42 · 28
+ * · 40, soit un rapport de 3,2 entre `catC` qui hurlait et `catA` qui
+ * s'effaçait. Six teintes de chromas différents ne forment pas une famille,
+ * elles forment une collection.
  *
- * Le correctif ne baisse pas le seuil : il replace les six teintes sur six
- * secteurs de teinte répartis (≈8°, 44°, 96°, 176°, 232°, 308°), à une clarté
- * commune de L*≈76 pour le fond, L*≈68 pour la bordure et L*≈21 pour l'encre.
- * La clarté commune est ce qui garantit l'écart aux fonds clairs (L* ≥ 85) par
- * la seule différence de clarté, sans dépendre de la teinte ; les secteurs
- * répartis garantissent l'écart deux à deux.
+ * Le correctif est donc l'**égalité**, pas la baisse : six secteurs de teinte
+ * répartis (20°, 80°, 140°, 200°, 260°, 320°), une clarté commune, et le
+ * **même chroma pour les six**. C*39 est le point retenu — une première
+ * tentative à 24 a été jugée terne par le porteur.
+ *
+ * Clair : L*74 / C*39 (fond), L*23 / C*17,5 (encre), L*68 / C*38 (bordure).
+ * La clarté du fond descend de 78 à 74 parce que C*39 n'est pas atteignable
+ * dans le gamut sRGB à L*78 sur les teintes 20° et 260° : y rester aurait
+ * rendu deux teintes plus pâles que les quatre autres, c'est-à-dire aurait
+ * reproduit le défaut qu'on corrige.
  */
 const CATEGORIES_CLAIR = {
-  catA: '#eaada3',
-  catAInk: '#5a1f16',
-  catAEdge: '#df9287',
-  catB: '#d9b95e',
-  catBInk: '#3e310f',
-  catBEdge: '#c8a035',
-  catC: '#77d13c',
-  catCInk: '#1f380e',
-  catCEdge: '#68b931',
-  catD: '#35d0c5',
-  catDInk: '#0e3836',
-  catDEdge: '#31b8af',
-  catE: '#b0b9ed',
-  catEInk: '#1e2a77',
-  catEEdge: '#98a2e3',
-  catF: '#eaa5e1',
-  catFInk: '#591650',
-  catFEdge: '#df88d4',
+  catA: '#fc9b9f', catAInk: '#502d2f', catAEdge: '#e98c90',
+  catB: '#d8b06f', catBInk: '#43351d', catBEdge: '#c6a062',
+  catC: '#8cc487', catCInk: '#283c26', catCEdge: '#7eb378',
+  catD: '#2cc9cd', catDInk: '#033e3f', catDEdge: '#12b8bc',
+  catE: '#6dbdfc', catEInk: '#1c3950', catEEdge: '#5eade9',
+  catF: '#d7a4e4', catFInk: '#433048', catFEdge: '#c695d2',
 } as const
 
 /**
- * Palette catégorielle du thème **sombre**, construite et non dérivée.
+ * Palette catégorielle des thèmes **sombres**, construite et non dérivée.
  *
- * Rien n'y est l'inverse de `CATEGORIES_CLAIR` : les fonds descendent à
- * L*≈34 avec une saturation nettement plus basse (0,34 contre 0,62), et
- * l'encre monte à L*≈92 sans être blanche. Une inversion de clarté aurait
- * conservé la saturation du clair et produit six aplats criards sur un fond
- * sombre — c'est exactement ce que la spec écarte.
+ * Rien n'y est l'inverse de `CATEGORIES_CLAIR` : les fonds descendent à L*38
+ * et leur chroma commun tombe à 24,5 — nettement sous les trois quarts du
+ * clair, ce que `tokens.test.ts` exige. Une inversion de clarté aurait
+ * conservé le chroma du clair et produit six aplats criards sur fond sombre.
+ *
+ * Sombre : L*38 / C*24,5 (fond), L*91 / C*12 (encre), L*43 / C*26,5 (bordure).
+ * La bordure est ici **plus claire** que le fond, et l'encre reste en deçà du
+ * blanc pur.
  */
 const CATEGORIES_SOMBRE = {
-  catA: '#76423a',
-  catAInk: '#f0e5e4',
-  catAEdge: '#915248',
-  catB: '#5c4f2d',
-  catBInk: '#ece8db',
-  catBEdge: '#716238',
-  catC: '#3d582b',
-  catCInk: '#e1ebdb',
-  catCEdge: '#4b6d35',
-  catD: '#2b5855',
-  catDInk: '#dbebea',
-  catDEdge: '#356c68',
-  catE: '#424c87',
-  catEInk: '#e6e7f2',
-  catEEdge: '#525ea7',
-  catF: '#773a6e',
-  catFInk: '#f1e4ef',
-  catFEdge: '#914888',
+  catA: '#804a4d', catAInk: '#fedede', catAEdge: '#905558',
+  catB: '#6c5632', catBInk: '#f3e3cf', catBEdge: '#7a623a',
+  catC: '#42613f', catCInk: '#d9ead6', catCEdge: '#4c6e49',
+  catD: '#046466', catDInk: '#c9eced', catDEdge: '#0a7174',
+  catE: '#305d80', catEInk: '#d5e7fc', catEEdge: '#386a90',
+  catF: '#6c5073', catFInk: '#f1e0f4', catFEdge: '#7a5b82',
 } as const
 
 /**
@@ -248,6 +272,15 @@ export const THEME_KREATIVPM: ThemeTokens = {
   // Assombri par rapport à l'or de survol : l'anneau se pose aussi sur les
   // cellules fériées (`offStrong`), où #b57730 ne tenait que 2,73:1.
   focus: '#a86c2b',
+  // L'aplat d'une case saisie : l'or de la marque ramené à la clarté d'un
+  // aplat (L*74), où l'encre du chiffre tient 7,03:1. L'or pleine force n'y
+  // tenait que 5,51:1 — le seul des cinq préréglages à passer, et de peu.
+  // Le chroma descend à 20 pour s'écarter de l'ambre du prévisionnel : à C*39
+  // les deux aplats n'étaient qu'à 14,3 (ΔE*ab) l'un de l'autre, sous le seuil
+  // de distinction que ce module applique à la palette catégorielle. À 20, ils
+  // s'écartent de 32,3 — et le réalisé ne se lit plus comme un prévisionnel
+  // pâle sur la palette de la marque.
+  saisie: '#ceb193',
 
   success: '#e9f0de',
   successInk: '#3b5322',
@@ -263,6 +296,15 @@ export const THEME_KREATIVPM: ThemeTokens = {
   info: '#efeae0',
   infoInk: '#4f4636',
   infoEdge: '#d8cfbf',
+
+  // La bordure est assombrie par rapport à l'ambre du fond : elle doit tenir
+  // 3:1 jusque sur le fond des fériés (`#e4dccc`), où un ambre clair tombe
+  // sous 2,3:1.
+  prevu: '#e8b45c',
+  prevuInk: '#48300a',
+  // Assombrie : la bordure se dessine **sur** l'ambre qu'elle borde, et
+  // #9d7010 n'y tenait que 2,34:1 — un marqueur non chromatique invisible.
+  prevuEdge: '#795109',
 
   // Les six teintes catégorielles ne portent pas l'identité de marque à elles
   // seules — `page`/`ink`/`accent` en sont déjà chargés. Elles sont donc
@@ -295,6 +337,7 @@ export const THEME_CLAIR: ThemeTokens = {
   link: '#2f4a45',
   rule: '#cdcecd',
   focus: '#3f4744',
+  saisie: '#9fbcb1',
 
   success: '#e7efe7',
   successInk: '#2f4a33',
@@ -308,6 +351,10 @@ export const THEME_CLAIR: ThemeTokens = {
   info: '#eaedef',
   infoInk: '#33414a',
   infoEdge: '#c3ccd2',
+
+  prevu: '#f2b544',
+  prevuInk: '#4a2f05',
+  prevuEdge: '#7c5500',
 
   ...CATEGORIES_CLAIR,
 }
@@ -341,6 +388,9 @@ export const THEME_SOMBRE: ThemeTokens = {
   link: '#9bc0e8',
   rule: '#3a3f47',
   focus: '#9bc0e8',
+  // L'aplat descend à la clarté des aplats catégoriels sombres (L*38) : le
+  // bleu clair de l'accent ne portait l'encre du chiffre qu'à 2,02:1.
+  saisie: '#375c80',
 
   success: '#1b2a20',
   successInk: '#8fd0a2',
@@ -355,15 +405,115 @@ export const THEME_SOMBRE: ThemeTokens = {
   infoInk: '#a8c4d8',
   infoEdge: '#31414e',
 
+  // Sur fond sombre, la contrainte s'inverse : la bordure doit être assez
+  // *claire* pour tenir 3:1 sur la surface ouvrée, le plus clair des quatre
+  // fonds de cellule.
+  // Un ambre d'aplat, et non l'ambre vif du clair : le chiffre du jour se
+  // pose dessus en `ink`, quasi blanc ici, et l'ambre clair ne lui laissait
+  // que 1,74:1. L'encre du prévisionnel s'inverse en conséquence, comme les
+  // encres catégorielles sombres, et la bordure passe au-dessus du fond.
+  prevu: '#7c4f2c',
+  prevuInk: '#f3e3cf',
+  prevuEdge: '#dcaf64',
+
   ...CATEGORIES_SOMBRE,
 }
 
 /**
- * Palette de repli, et seule palette que `globals.css` déclare en dur. Le
- * clair : c'est le thème qu'un poste sans préférence, ou une base vide,
- * doit obtenir.
+ * Encre — l'identité propre de CRA, distincte de la marque comme du neutre.
+ *
+ * `onAccent` n'est plus blanc : l'accent est vif et clair (L*≈55), et le blanc
+ * n'y tiendrait pas 4,5:1. Une encre teal très sombre autorise un accent bien
+ * plus lumineux qu'un teal sombre à texte blanc — c'est ce choix, et lui seul,
+ * qui retire la grisaille que le porteur a constatée.
  */
-export const DEFAULT_THEME: ThemeTokens = THEME_CLAIR
+export const THEME_ENCRE_CLAIR: ThemeTokens = {
+  page: '#eaf2ef',
+  surface: '#ffffff',
+  off: '#dbe8e3',
+  offStrong: '#c8dad4',
+
+  ink: '#12211d',
+  inkDeep: '#0a1512',
+  muted: '#485853',
+  onAccent: '#031c18',
+  onDark: '#eaf2ef',
+
+  accent: '#0e9480',
+  accentDark: '#0b7566',
+  link: '#0a6355',
+  rule: '#aec5bd',
+  focus: '#0b7566',
+  saisie: '#51c9b2',
+
+  success: '#dff0e2',
+  successInk: '#1e5232',
+  successEdge: '#98c9a8',
+  warning: '#fbecd0',
+  warningInk: '#6b4708',
+  warningEdge: '#e5bf72',
+  danger: '#fbe3dc',
+  dangerInk: '#7f2c17',
+  dangerEdge: '#e8a894',
+  info: '#dfebef',
+  infoInk: '#24454f',
+  infoEdge: '#aac6ce',
+
+  // Le fond des fériés est ici plus sombre que sur le neutre (`#c8dad4`) : la
+  // bordure du prévisionnel descend d'autant pour y tenir ses 3:1.
+  prevu: '#f2b544',
+  prevuInk: '#4a2f05',
+  prevuEdge: '#7c5500',
+
+  ...CATEGORIES_CLAIR,
+}
+
+/** Construite, pas inversée : son chroma catégoriel est inférieur au clair. */
+export const THEME_ENCRE_SOMBRE: ThemeTokens = {
+  page: '#121a18',
+  surface: '#1e2a27',
+  off: '#111917',
+  offStrong: '#050807',
+
+  ink: '#e2ece9',
+  inkDeep: '#060a09',
+  muted: '#9fb0ab',
+  onAccent: '#04211c',
+  onDark: '#e2ece9',
+
+  accent: '#3fc9b0',
+  accentDark: '#2ba792',
+  link: '#5fd8c0',
+  rule: '#33443f',
+  focus: '#5fd8c0',
+  saisie: '#1f6458',
+
+  success: '#14291c',
+  successInk: '#86d09a',
+  successEdge: '#294733',
+  warning: '#2b2513',
+  warningInk: '#e0bf6e',
+  warningEdge: '#4b3e1c',
+  danger: '#2c1b16',
+  dangerInk: '#f0a189',
+  dangerEdge: '#4e2f25',
+  info: '#16242a',
+  infoInk: '#a2c7d0',
+  infoEdge: '#2d454e',
+
+  prevu: '#7c4f2c',
+  prevuInk: '#f3e3cf',
+  prevuEdge: '#dcaf64',
+
+  ...CATEGORIES_SOMBRE,
+}
+
+/**
+ * Palette de repli, et seule palette que `globals.css` déclare en dur. Encre
+ * clair : c'est le thème qu'un poste sans préférence, ou une base vide, doit
+ * obtenir.
+ */
+export const DEFAULT_THEME: ThemeTokens = THEME_ENCRE_CLAIR
 
 /**
  * Nature d'un préréglage : sur quel versant du thème il peut être appliqué.
@@ -374,13 +524,15 @@ export const DEFAULT_THEME: ThemeTokens = THEME_CLAIR
 export type ThemeNature = 'clair' | 'sombre'
 
 export const THEME_PRESETS: ReadonlyArray<{
-  id: 'CLAIR' | 'SOMBRE' | 'KREATIVPM'
+  id: 'ENCRE_CLAIR' | 'ENCRE_SOMBRE' | 'CLAIR' | 'SOMBRE' | 'KREATIVPM'
   label: string
   nature: ThemeNature
   tokens: ThemeTokens
 }> = [
-  { id: 'CLAIR', label: 'Clair', nature: 'clair', tokens: THEME_CLAIR },
-  { id: 'SOMBRE', label: 'Sombre', nature: 'sombre', tokens: THEME_SOMBRE },
+  { id: 'ENCRE_CLAIR', label: 'Encre clair', nature: 'clair', tokens: THEME_ENCRE_CLAIR },
+  { id: 'ENCRE_SOMBRE', label: 'Encre sombre', nature: 'sombre', tokens: THEME_ENCRE_SOMBRE },
+  { id: 'CLAIR', label: 'Neutre clair', nature: 'clair', tokens: THEME_CLAIR },
+  { id: 'SOMBRE', label: 'Neutre sombre', nature: 'sombre', tokens: THEME_SOMBRE },
   { id: 'KREATIVPM', label: 'KreativPM', nature: 'clair', tokens: THEME_KREATIVPM },
 ]
 
@@ -415,8 +567,8 @@ export interface ThemeConfig {
 
 export const DEFAULT_THEME_CONFIG: ThemeConfig = {
   mode: 'systeme',
-  clair: THEME_CLAIR,
-  sombre: THEME_SOMBRE,
+  clair: THEME_ENCRE_CLAIR,
+  sombre: THEME_ENCRE_SOMBRE,
 }
 
 export interface TokenPair {
@@ -536,6 +688,10 @@ export const TEXT_PAIRS: readonly TokenPair[] = [
   // l'ajouter « par symétrie » romprait la règle du fichier — c'est le
   // balayage plus bas, adossé à `ENCRES_ETAT`, qui l'exigerait le jour où une
   // classe apparaît.
+  // Aplat du prévisionnel : calendrier, grille, réglette et légende. La
+  // bordure n'y figure pas — voir `prevuEdge`, tenu à 3:1 comme élément non
+  // textuel, et jamais rempli.
+  { text: 'prevuInk', background: 'prevu' },
   { text: 'successInk', background: 'off' },
   { text: 'successInk', background: 'offStrong' },
   { text: 'warningInk', background: 'off' },
@@ -564,6 +720,16 @@ export const TEXT_PAIRS: readonly TokenPair[] = [
   // autre `className` que le sien. Il est donc déclaré ici, à la main, comme
   // le contrat d'usage l'exige.
   ...CATEGORY_BACKGROUNDS.map((background): TokenPair => ({ text: 'ink', background })),
+  // Les deux autres teintes que le **même** chiffre peut recevoir sous lui, et
+  // que le lot 1g avait mises en service sans les déclarer : l'aplat de la
+  // prestation saisie en portée « Cette prestation » — la portée par défaut —
+  // et l'aplat du prévisionnel. Elles sont hors de portée du balayage pour la
+  // raison exacte des six ci-dessus, et le contrat vaut donc ici : un aplat
+  // qui n'entre pas dans cette liste rend un chiffre que personne n'a mesuré.
+  // `src/core/saisie/colors.test.ts` dérive la liste des aplats possibles et
+  // exige que chacun y figure.
+  { text: 'ink', background: 'saisie' },
+  { text: 'ink', background: 'prevu' },
 ]
 
 /**
@@ -587,6 +753,18 @@ export const NON_TEXT_PAIRS: readonly TokenPair[] = [
   ...FONDS_DE_TEXTE.map((background): TokenPair => ({ text: 'focus', background })),
   { text: 'accentDark', background: 'page' },
   { text: 'accentDark', background: 'surface' },
+  // Le contour tireté d'une case prévisionnelle : c'est lui, et non la teinte,
+  // qui porte l'état quand la couleur n'est pas perçue. Il se dessine sur les
+  // quatre fonds de cellule — ouvré, week-end, férié — donc il est exigé sur
+  // les quatre. Le mesurer sur le seul blanc laissait `#c1860f` à 2,20:1 sur
+  // les fériés, c'est-à-dire un marqueur non chromatique invisible.
+  ...FONDS_DE_TEXTE.map((background): TokenPair => ({ text: 'prevuEdge', background })),
+  // Et sur le fond qu'il borde vraiment. Le tireté du segment de prévisionnel
+  // (`EngagementBar`, `SegmentLegend`) se dessine **sur son propre
+  // remplissage** : le confronter aux seuls fonds de cellule laissait ce
+  // marqueur entre 1,52 et 2,53:1 sur les cinq préréglages, c'est-à-dire
+  // laissait l'information reposer sur la seule couleur.
+  { text: 'prevuEdge', background: 'prevu' },
 ]
 
 /**
@@ -699,7 +877,17 @@ export function chroma(hex: string): number {
  * rapidement et pas toujours en pleine attention : 15 retient une marge
  * confortable au-dessus du simple « perceptible », sans réduire l'espace des
  * teintes chaudes disponibles au point de ne plus pouvoir en placer six — la
- * palette livrée ci-dessous tient 20,97 au pire couple, largement au-dessus.
+ * palette livrée ci-dessous tient 24,11 au pire couple, largement au-dessus.
+ *
+ * Le chiffre est **mesuré**, sur toutes les `DISTINCTION_PAIRS` des cinq
+ * préréglages, et il n'est annoncé qu'**une fois** ci-dessus : une seconde
+ * copie se périmerait sans que le garde-fou la voie, ce qui est exactement ce
+ * qui est arrivé. Le pire couple est `catA`/`catF` sur les deux versants
+ * sombres, qui partagent `CATEGORIES_SOMBRE`. Le 20,97 qu'annonçait ce
+ * commentaire datait du lot 1f — c'était l'écart de la palette chaude du lot
+ * 1e, et il a survécu au remplacement complet de la palette. `tokens.test.ts`
+ * confronte désormais ce nombre-ci au calcul, et refuse tout autre décimal
+ * dans ce commentaire : il ne peut plus se périmer en silence.
  */
 export const MIN_CATEGORY_DISTANCE = 15
 

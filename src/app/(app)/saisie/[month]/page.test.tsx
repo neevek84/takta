@@ -106,3 +106,39 @@ describe('page de saisie — occupation de l agenda', () => {
     expect(screen.getByTestId('valeur-2026-03-12').textContent).toBe('1')
   })
 })
+
+/**
+ * Trois gabarits cohabitaient : la barre en `max-w-4xl`, `PageShell` en
+ * `max-w-5xl`, et cet écran sans gabarit du tout. Le bord gauche du contenu
+ * sautait donc d'un écran à l'autre.
+ */
+describe('page de saisie — le gabarit commun', () => {
+  beforeEach(() => {
+    getBusyDays.mockReset().mockResolvedValue([])
+    window.localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  it('rend la saisie dans le gabarit commun', async () => {
+    await rendre()
+
+    const titre = screen.getByRole('heading', { level: 1, name: 'Saisie' })
+    expect(titre.className).toContain('text-2xl')
+    // Un `h1` en `text-xl font-semibold` était une étiquette en gras, pas un
+    // titre : ×1,29 du corps. Le gabarit le porte à ×1,57.
+    expect(titre.className).not.toContain('text-xl')
+  })
+
+  it('lui donne la largeur et la marge de tous les autres écrans', async () => {
+    const { container } = render(
+      await SaisiePage({ params: Promise.resolve({ month: '2026-03' }) }),
+    )
+
+    // C'est `<main>` qui porte la marge : le test de budget des sept colonnes
+    // la lit dans `PageShell.tsx`, et un écran qui déclarerait la sienne
+    // mesurerait un budget que personne n'applique.
+    const principal = container.querySelector('main')!
+    expect(principal.className).toContain('max-w-5xl')
+    expect(principal.className).toContain('p-6')
+  })
+})

@@ -4,6 +4,16 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react'
 import { MonthCalendar } from './MonthCalendar'
+import { colorForLine, LINE_COLORS } from '@/core/saisie/colors'
+import {
+  lightness,
+  MIN_LIGHTNESS_GAP,
+  TEXT_PAIRS,
+  THEME_PRESETS,
+  THEME_TOKEN_KEYS,
+  type ThemeTokens,
+} from '@/core/theme/tokens'
+import { AA_TEXT_RATIO, contrastRatio } from '@/core/theme/contrast'
 import { buildMonthDays } from '@/core/month/build'
 import { DEFAULT_SLOTS } from '@/services/settings'
 import type { LineForGrid } from '@/services/missions'
@@ -115,13 +125,31 @@ describe('MonthCalendar', () => {
   })
 
   it('ne confie pas à la seule couleur le fait qu un jour est chômé', () => {
-    // Un motif et un intitulé doublent la teinte : sans eux, la distinction
-    // disparaît pour qui ne perçoit pas la nuance de fond.
+    // L'intitulé double la teinte : sans lui, la distinction disparaîtrait
+    // pour qui ne perçoit pas la nuance de fond.
     renderCalendar()
-    expect(classes(caseDu('2026-03-01'))).toContain('pattern-stripes')
-    expect(classes(caseDu('2026-03-02'))).toContain('pattern-dots')
     expect(caseDu('2026-03-01').getAttribute('aria-label')).toContain('Jour non ouvré')
     expect(caseDu('2026-03-02').getAttribute('aria-label')).toContain('Jour férié')
+  })
+
+  it('distingue le week-end par la clarté, sans motif', () => {
+    // Le dithering était le signal d'ancienneté le plus fort du dessin, et il
+    // couvrait huit jours par mois. L'écart de clarté entre `surface` et `off`
+    // (100 contre 91,2 en L*) porte l'information, et `MIN_LIGHTNESS_GAP` le
+    // vérifie déjà ; le nom accessible la porte pour qui ne voit ni l'un ni
+    // l'autre.
+    renderCalendar()
+    expect(classes(caseDu('2026-03-01'))).toContain('bg-off')
+    expect(classes(caseDu('2026-03-01'))).not.toContain('pattern-stripes')
+    expect(classes(caseDu('2026-03-03'))).toContain('bg-surface')
+  })
+
+  it('garde le motif sur les fériés, qui sont rares', () => {
+    // Dix jours par an, une information plus forte, un marqueur qui ne fatigue
+    // personne : le férié garde le sien.
+    renderCalendar()
+    expect(classes(caseDu('2026-03-02'))).toContain('pattern-dots')
+    expect(classes(caseDu('2026-03-02'))).toContain('bg-off-strong')
   })
 
   it('reste parcourable au clavier', () => {
@@ -549,6 +577,32 @@ describe('MonthCalendar', () => {
       glisserAvec('mouse', de, versLesDates)
     }
 
+    /**
+     * La capture implicite, simulée là où le navigateur l'installe.
+     *
+     * `happy-dom` implémente bien `setPointerCapture` / `hasPointerCapture` /
+     * `releasePointerCapture` — et leur état réel, pas un décor : ce qu'il
+     * n'implémente pas, c'est la capture **implicite** qu'un navigateur pose
+     * lui-même au `pointerdown` d'un doigt. On la pose donc à sa place, avec la
+     * vraie API, avant que le geste ne parte. Sans cette pose, la ligne qui la
+     * relâche n'était couverte par aucun test : la retirer laissait toute la
+     * suite verte, alors que le glissement au doigt cesse de fonctionner sur un
+     * appareil réel — tous les événements restant adressés à la case de départ,
+     * aucune autre ne verrait le doigt passer.
+     */
+    it('relâche la capture implicite du doigt, sans quoi le glissement tactile n existe pas', () => {
+      renderCalendar()
+      const depart = caseDu('2026-03-09')
+      depart.setPointerCapture(1)
+      expect(depart.hasPointerCapture(1)).toBe(true)
+
+      fireEvent.pointerDown(depart, {
+        pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10,
+      })
+
+      expect(depart.hasPointerCapture(1)).toBe(false)
+    })
+
     it('n affiche aucune barre tant qu un seul jour est sélectionné', () => {
       renderCalendar()
       glisser('2026-03-09', [])
@@ -899,6 +953,34 @@ describe('MonthCalendar', () => {
         expect(classes(caseDu('2026-03-10'))).toContain('ring-focus')
         expect(classes(caseDu('2026-03-11'))).not.toContain('ring-focus')
       })
+
+      // Le liseré d'éclatement et la bague de sélection se disputaient les
+      // mêmes propriétés : `ring-1 ring-warning-edge` et `ring-2 ring-focus`
+      // appartiennent aux groupes `ring-w` et `ring-color` de `tailwind-merge`,
+      // et le dernier déclaré effaçait le premier. Une journée saisie en
+      // plusieurs créneaux perdait donc son avertissement au moment précis où
+      // on la sélectionne pour agir dessus. Les deux marqueurs portent
+      // désormais des propriétés distinctes — anneau intérieur pour
+      // l'éclatement, bague pour la sélection — et coexistent.
+      it('garde le liseré d une journée éclatée quand la case est sélectionnée', () => {
+        renderCalendar({
+          entries: [
+            entree({ id: 'e1', date: '2026-03-09', minutes: 120, startMinute: 540, endMinute: 660 }),
+            entree({ id: 'e2', date: '2026-03-09', minutes: 120, startMinute: 840, endMinute: 960 }),
+          ],
+        })
+
+        // Hors sélection, le liseré est là — sinon le test qui suit passerait
+        // sur une case qui n'a jamais rien porté.
+        expect(classes(caseDu('2026-03-09'))).toContain('inset-ring-warning-edge')
+
+        glisser('2026-03-09', ['2026-03-10'])
+
+        const marqueurs = classes(caseDu('2026-03-09'))
+        expect(marqueurs).toContain('inset-ring-1')
+        expect(marqueurs).toContain('inset-ring-warning-edge')
+        expect(marqueurs).toContain('ring-focus')
+      })
     })
   })
 })
@@ -1073,17 +1155,41 @@ describe('MonthCalendar — le prévisionnel', () => {
     expect(classes(caseDu('2026-03-10'))).not.toContain('pattern-hatch')
   })
 
-  it('garde exactement le même remplissage que le réalisé', () => {
+  /**
+   * La forme ne faiblit pas, la teinte change.
+   *
+   * Le lot 1f donnait au prévisionnel le remplissage exact du réalisé, teinte
+   * comprise : il ne s'en distinguait que par l'horloge. Le passé est froid,
+   * le futur est chaud — le prévisionnel porte désormais sa propre teinte,
+   * mais il garde la même forme et la même hauteur, parce qu'un demi-jour
+   * prévu n'est pas moins qu'un demi-jour réalisé.
+   */
+  it('garde la forme et la hauteur du réalisé, mais pas sa teinte', () => {
     renderCalendar({ entries: [entree({ minutes: 240, slotId: 'matin', kind: 'REALISE' })] })
     const realise = screen.getByTestId('remplissage-2026-03-10')
-    const signature = `${realise.getAttribute('data-forme')}|${realise.style.height}|${realise.className}`
+    const forme = `${realise.getAttribute('data-forme')}|${realise.style.height}`
+    const teinteRealisee = classes(realise).find((c) => c.startsWith('bg-'))
     cleanup()
 
     renderCalendar({ entries: [entree({ minutes: 240, slotId: 'matin', kind: 'PREVISIONNEL' })] })
     const previsionnel = screen.getByTestId('remplissage-2026-03-10')
-    expect(
-      `${previsionnel.getAttribute('data-forme')}|${previsionnel.style.height}|${previsionnel.className}`,
-    ).toBe(signature)
+    expect(`${previsionnel.getAttribute('data-forme')}|${previsionnel.style.height}`).toBe(forme)
+    expect(classes(previsionnel)).toContain('bg-prevu')
+    expect(teinteRealisee).not.toBe('bg-prevu')
+  })
+
+  it('dessine une case prévisionnelle en ambre et en tireté', () => {
+    // La teinte dit l'état, le tireté le dit aussi sans elle : deux aplats
+    // opaques ne se distingueraient pas en vision monochrome.
+    renderCalendar({ entries: [entree({ kind: 'PREVISIONNEL' })] })
+    expect(classes(screen.getByTestId('remplissage-2026-03-10'))).toContain('bg-prevu')
+    expect(classes(caseDu('2026-03-10'))).toContain('border-dashed')
+  })
+
+  it('laisse la case réalisée en plein trait et sans ambre', () => {
+    renderCalendar({ entries: [entree({ kind: 'REALISE' })] })
+    expect(classes(screen.getByTestId('remplissage-2026-03-10'))).not.toContain('bg-prevu')
+    expect(classes(caseDu('2026-03-10'))).not.toContain('border-dashed')
   })
 
   it('porte une icône d horloge, visible en monochrome', () => {
@@ -1164,6 +1270,16 @@ describe('MonthCalendar — la légende', () => {
     expect(legende.querySelector('.clip-half-pm')).not.toBeNull()
   })
 
+  it('montre la teinte du prévisionnel, pas seulement son nom', () => {
+    // Une légende qui nomme un état sans le donner à voir ne sert à rien : la
+    // pastille porte la teinte ambre et le tireté que la case emploie.
+    renderCalendar()
+    const legende = screen.getByTestId('legende-calendrier')
+    const pastille = legende.querySelector('.bg-prevu')
+    expect(pastille).not.toBeNull()
+    expect(classes(pastille!.parentElement!)).toContain('border-dashed')
+  })
+
   it('garde les fonds de week-end et de férié qu elle portait déjà', () => {
     renderCalendar()
     const legende = screen.getByTestId('legende-calendrier')
@@ -1204,8 +1320,18 @@ describe('MonthCalendar — l icône tient-elle à 375 points', () => {
   afterEach(cleanup)
 
   const CSS = readFileSync(join(process.cwd(), 'src', 'app', 'globals.css'), 'utf8')
-  const PAGE = readFileSync(
-    join(process.cwd(), 'src', 'app', '(app)', 'saisie', '[month]', 'page.tsx'),
+  /**
+   * La marge de la page de saisie, telle que le gabarit commun la déclare.
+   *
+   * Elle vivait dans `page.tsx` tant que cet écran portait son propre
+   * `<main>` ; depuis le lot 1g, tous les écrans passent par `PageShell`, et
+   * c'est lui qui fait foi. Lire ailleurs mesurerait un budget que personne
+   * n'applique — et lire un fichier qui n'a plus de `<main className="p-N">`
+   * ferait lever ce test sur un `null`, avec un message qui ne dirait rien de
+   * la cause.
+   */
+  const SHELL = readFileSync(
+    join(process.cwd(), 'src', 'components', 'ui', 'PageShell.tsx'),
     'utf8',
   )
 
@@ -1228,8 +1354,9 @@ describe('MonthCalendar — l icône tient-elle à 375 points', () => {
   const TEXT_SM = jetonRem('--text-sm')
   const PAS = jetonRem('--spacing')
 
-  /** Les marges de la page de saisie, telles qu'elle les déclare. */
-  const MARGE = Number(/<main className="p-(\d+)"/.exec(PAGE)![1]!) * PAS
+  const marge = /<main className="[^"]*\bp-(\d+)\b/.exec(SHELL)
+  expect(marge, 'PageShell ne déclare plus de marge `p-N` sur son <main>').not.toBeNull()
+  const MARGE = Number(marge![1]!) * PAS
 
   /** Nombre de pas d'espacement d'une classe `gap-N` ou `gap-x-N`. */
   function gap(el: Element): number {
@@ -1271,13 +1398,15 @@ describe('MonthCalendar — l icône tient-elle à 375 points', () => {
     expect(largeurHorloge).toBeGreaterThan(0)
 
     const ligne = horloge.parentElement!
+    // Le marqueur d'occupation est un tracé, plus un caractère : sa largeur se
+    // lit sur l'attribut, comme celle de l'horloge. La mesurer par son
+    // `textContent` rendrait zéro et le budget cesserait de compter un terme.
     const occupation = screen.getByTestId('occupation-2026-03-10')
+    const largeurOccupation = Number(occupation.getAttribute('width'))
+    expect(largeurOccupation).toBeGreaterThan(0)
 
     const requis =
-      largeurTexte('31', TEXT_XS) +
-      largeurTexte(occupation.textContent!, TEXT_XS) +
-      largeurHorloge +
-      2 * gap(ligne)
+      largeurTexte('31', TEXT_XS) + largeurOccupation + largeurHorloge + 2 * gap(ligne)
 
     expect(requis).toBeLessThanOrEqual(colonne)
   })
@@ -1337,8 +1466,10 @@ describe('MonthCalendar — occupation de l agenda', () => {
   it('porte un marqueur visible qui ne dépend pas de la teinte', () => {
     renderCalendar({ busyDates: ['2026-03-10'] })
     const marqueur = screen.getByTestId('occupation-2026-03-10')
-    // Un glyphe, comme les bandeaux : il se voit en vision monochrome.
-    expect(marqueur.textContent).not.toBe('')
+    // Un tracé, comme les bandeaux : il se voit en vision monochrome. Lire le
+    // `textContent` d'un `svg` rendrait la chaîne vide et ne prouverait rien.
+    expect(marqueur.tagName.toLowerCase()).toBe('svg')
+    expect(marqueur.querySelectorAll('circle, path, line, polyline').length).toBeGreaterThan(0)
     // Et il est masqué aux lecteurs d'écran, qui lisent déjà le nom de la case.
     expect(marqueur.getAttribute('aria-hidden')).toBe('true')
     expect(screen.queryByTestId('occupation-2026-03-11')).toBeNull()
@@ -1361,5 +1492,478 @@ describe('MonthCalendar — occupation de l agenda', () => {
     // `toBe` et non `toContain` : le marqueur ne doit pas se glisser dans la
     // valeur, et « 0,5 » contient déjà « 0 » comme « 5 ».
     expect(valeurDu('2026-03-10').textContent).toBe('0,5')
+  })
+})
+
+/**
+ * La teinte de l'aplat de la prestation saisie.
+ *
+ * Une couleur catégorielle ne distingue rien quand une seule catégorie est à
+ * l'écran : le calendrier appelait pourtant `colorForLine(line.id)` sans
+ * condition, et la prestation ouverte recevait une teinte tirée au hachage.
+ */
+describe('MonthCalendar — la teinte de l aplat suit la portée affichée', () => {
+  afterEach(cleanup)
+
+  /** La classe de fond de l'aplat, isolée des autres. */
+  function fondDeLAplat(date: string): string | undefined {
+    return classes(screen.getByTestId(`remplissage-${date}`)).find((c) => c.startsWith('bg-'))
+  }
+
+  const journee = [entree({ minutes: 480, slotId: '' })]
+
+  it('signale « saisi » avec l aplat de saisie quand une seule prestation est affichée', () => {
+    renderCalendar({ entries: journee, toutLeMois: false })
+    expect(fondDeLAplat('2026-03-10')).toBe('bg-saisie')
+  })
+
+  it('ne tire aucune teinte au hachage en mode « Cette prestation »', () => {
+    // Deux prestations différentes, ouvertes l'une après l'autre : la teinte
+    // ne bouge pas, parce qu'elle ne dit rien de la prestation.
+    renderCalendar({ entries: journee, toutLeMois: false })
+    const premiere = fondDeLAplat('2026-03-10')
+    cleanup()
+
+    renderCalendar({
+      line: { ...ligneJour, id: 'lX' },
+      entries: journee.map((e) => ({ ...e, lineId: 'lX' })),
+      toutLeMois: false,
+    })
+    expect(fondDeLAplat('2026-03-10')).toBe(premiere)
+  })
+
+  it('rend la teinte catégorielle en mode « Toutes les prestations »', () => {
+    // Là, et seulement là, la teinte porte une information : c'est ce qui
+    // distingue cette prestation des autres affichées à côté d'elle.
+    renderCalendar({ entries: journee, toutLeMois: true })
+    expect(fondDeLAplat('2026-03-10')).toBe(colorForLine(ligneJour.id).bg)
+    expect(fondDeLAplat('2026-03-10')).not.toBe('bg-saisie')
+  })
+
+  /**
+   * Le couple réellement peint, lu sur le DOM et non déduit.
+   *
+   * Le chiffre du jour et la valeur sont écrits sur le `<button>`, l'aplat est
+   * un nœud posé dessous : le balayage de `tokens.test.ts` ne rapproche jamais
+   * ces deux `className`, et le contrôle de contraste ne voyait donc ni
+   * `ink`/`accent` ni `ink`/`prevu`. Ce test-ci les rapproche à la source, en
+   * lisant les classes que le composant vient d'écrire.
+   */
+  describe('le couple encre du chiffre / teinte de l aplat entre dans le contrôle', () => {
+    /** L'encre posée sur la case elle-même, isolée des autres classes. */
+    function encreDeLaCase(date: string): string | undefined {
+      return classes(caseDu(date)).find((c) => c.startsWith('text-') && c !== 'text-sm')
+    }
+
+    const JETON_PAR_CLASSE = new Map<string, keyof ThemeTokens>(
+      THEME_TOKEN_KEYS.flatMap((k) => {
+        const classe = k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
+        return [
+          [`bg-${classe}`, k],
+          [`text-${classe}`, k],
+        ] as [string, keyof ThemeTokens][]
+      }),
+    )
+
+    function coupleRendu(date: string): { text: keyof ThemeTokens; background: keyof ThemeTokens } {
+      const encre = encreDeLaCase(date)
+      const fond = fondDeLAplat(date)
+      expect(encre, `aucune encre sur la case ${date}`).toBeDefined()
+      expect(fond, `aucun aplat sur la case ${date}`).toBeDefined()
+      const text = JETON_PAR_CLASSE.get(encre!)
+      const background = JETON_PAR_CLASSE.get(fond!)
+      expect(text, `${encre} n’est pas un jeton du thème`).toBeDefined()
+      expect(background, `${fond} n’est pas un jeton du thème`).toBeDefined()
+      return { text: text!, background: background! }
+    }
+
+    it('en portée « Cette prestation », qui est la portée par défaut', () => {
+      renderCalendar({ entries: journee, toutLeMois: false })
+      expect(TEXT_PAIRS).toContainEqual(coupleRendu('2026-03-10'))
+    })
+
+    it('en portée « Toutes les prestations »', () => {
+      renderCalendar({ entries: journee, toutLeMois: true })
+      expect(TEXT_PAIRS).toContainEqual(coupleRendu('2026-03-10'))
+    })
+
+    it('sur une case prévisionnelle, qui prend sa propre teinte', () => {
+      renderCalendar({
+        entries: [entree({ minutes: 480, slotId: '', kind: 'PREVISIONNEL' })],
+        toutLeMois: false,
+      })
+      expect(TEXT_PAIRS).toContainEqual(coupleRendu('2026-03-10'))
+    })
+  })
+
+  it('garde à chaque autre prestation sa propre teinte catégorielle', () => {
+    // Les libellés des autres prestations ne changent pas de règle : eux ne
+    // sont rendus qu'en mode « Toutes les prestations ».
+    const ligneB: LineForGrid = { ...ligneJour, id: 'lB', label: 'Astreinte' }
+    renderCalendar({
+      entries: [...journee, entree({ id: 'eB', lineId: 'lB' })],
+      autresLignes: [ligneB],
+      toutLeMois: true,
+    })
+    expect(classes(screen.getByTestId('autre-lB-2026-03-10'))).toContain(colorForLine('lB').bg)
+  })
+})
+
+/**
+ * La plage, pas la case.
+ *
+ * Des jours contigus au même état sont un seul fait : un consultant ne pense
+ * pas « lundi, mardi, mercredi » mais « j'étais chez eux toute la semaine ».
+ *
+ * Toute la difficulté est que la fusion ne doit **rien** coûter en largeur :
+ * à 375 points, la colonne vaut 45,0 pour une cible de 44 — un seul point de
+ * marge. Elle se dessine donc par des bordures rendues transparentes, qui
+ * occupent toujours leur largeur, et par un aplat en absolu qui déborde la
+ * gouttière sans peser sur la boîte.
+ */
+describe('MonthCalendar — la plage plutôt que la case', () => {
+  afterEach(cleanup)
+
+  const journeeLe = (date: string, id: string) => entree({ id, date, minutes: 480, slotId: '' })
+
+  function positionDe(date: string): string | null {
+    return caseDu(date).getAttribute('data-plage')
+  }
+
+  it('rend les cases carrées', () => {
+    renderCalendar()
+    expect(classes(caseDu('2026-03-10'))).toContain('aspect-square')
+  })
+
+  it('aligne les chiffres d une case sur l autre', () => {
+    // Trente-et-une cases en colonnes : sans chasse fixe, le numéro du jour et
+    // la valeur dansent d'une ligne à l'autre. C'est la correction
+    // typographique la moins chère et la plus visible du lot.
+    renderCalendar()
+    expect(classes(caseDu('2026-03-10'))).toContain('tabular-nums')
+  })
+
+  it('fusionne trois jours pleins contigus', () => {
+    // 9, 10 et 11 mars 2026 : lundi, mardi, mercredi, dans la même ligne.
+    renderCalendar({
+      entries: [journeeLe('2026-03-09', 'a'), journeeLe('2026-03-10', 'b'), journeeLe('2026-03-11', 'c')],
+    })
+    expect(positionDe('2026-03-09')).toBe('DEBUT')
+    expect(positionDe('2026-03-10')).toBe('MILIEU')
+    expect(positionDe('2026-03-11')).toBe('FIN')
+  })
+
+  it('rompt la plage sur une demi-journée', () => {
+    // Ce jour-là n'est pas le même fait que les autres : il garde ses quatre
+    // filets, son rayon et ses marges.
+    renderCalendar({
+      entries: [
+        journeeLe('2026-03-09', 'a'),
+        entree({ id: 'b', date: '2026-03-10', minutes: 240, slotId: 'matin' }),
+        journeeLe('2026-03-11', 'c'),
+      ],
+    })
+    expect(positionDe('2026-03-09')).toBe('SEULE')
+    expect(positionDe('2026-03-10')).toBe('SEULE')
+    expect(positionDe('2026-03-11')).toBe('SEULE')
+  })
+
+  it('ne fusionne pas un jour réalisé avec un jour prévisionnel', () => {
+    renderCalendar({
+      entries: [
+        journeeLe('2026-03-09', 'a'),
+        { ...journeeLe('2026-03-10', 'b'), kind: 'PREVISIONNEL' as const },
+      ],
+    })
+    expect(positionDe('2026-03-09')).toBe('SEULE')
+    expect(positionDe('2026-03-10')).toBe('SEULE')
+  })
+
+  it('ne franchit pas la fin de ligne de la grille', () => {
+    // Dimanche 8 et lundi 9 mars sont contigus dans le mois mais séparés à
+    // l'écran : la grille les met sur deux lignes. Une plage qui les
+    // réunirait dessinerait une soudure vers un bord qui n'existe pas.
+    //
+    // Le mois y est rendu avec les sept jours ouvrés, sans quoi le dimanche
+    // ne fusionnerait jamais et le cas ne se présenterait pas.
+    renderCalendar({
+      days: buildMonthDays('2026-03', [1, 2, 3, 4, 5, 6, 7], []),
+      entries: [journeeLe('2026-03-08', 'a'), journeeLe('2026-03-09', 'b')],
+    })
+    expect(positionDe('2026-03-08')).toBe('SEULE')
+    expect(positionDe('2026-03-09')).toBe('SEULE')
+  })
+
+  it('n ajoute aucune largeur à la case, quelle que soit sa position', () => {
+    // Le test de budget ne compte que la gouttière `gap-*` : il ne voit pas
+    // les marges d'une case. `mx-0.5` sur les bouts ferait tomber la colonne
+    // réelle à 42,7 points en le laissant vert à 46,7 — le faux test que ce
+    // projet a payé vingt fois. Les bordures intérieures deviennent donc
+    // transparentes, jamais nulles : une bordure transparente occupe toujours
+    // sa largeur, et la boîte reste identique dans les quatre cas.
+    renderCalendar({
+      entries: [journeeLe('2026-03-09', 'a'), journeeLe('2026-03-10', 'b'), journeeLe('2026-03-11', 'c')],
+    })
+
+    const positions = ['2026-03-09', '2026-03-10', '2026-03-11', '2026-03-12'].map((d) =>
+      classes(caseDu(d)),
+    )
+    for (const c of positions) {
+      // Aucune marge, dans aucun sens, positive ou négative.
+      expect(c.filter((n) => /^-?m[xytrbl]?-/.test(n))).toEqual([])
+      // Et la bordure reste déclarée : elle change de teinte, pas de largeur.
+      expect(c.filter((n) => /^border-[0-9]+$/.test(n) || n === 'border')).toHaveLength(1)
+      expect(c).not.toContain('border-0')
+      expect(c).not.toContain('border-x-0')
+      expect(c).not.toContain('border-r-0')
+      expect(c).not.toContain('border-l-0')
+    }
+  })
+
+  it('efface les filets intérieurs sans toucher aux extérieurs', () => {
+    renderCalendar({
+      entries: [journeeLe('2026-03-09', 'a'), journeeLe('2026-03-10', 'b'), journeeLe('2026-03-11', 'c')],
+    })
+    expect(classes(caseDu('2026-03-09'))).toContain('border-r-transparent')
+    expect(classes(caseDu('2026-03-10'))).toContain('border-x-transparent')
+    expect(classes(caseDu('2026-03-11'))).toContain('border-l-transparent')
+    // Une case isolée garde ses quatre filets visibles.
+    expect(classes(caseDu('2026-03-12')).filter((c) => c.includes('-transparent'))).toEqual([])
+  })
+
+  it('soude les aplats par-dessus la gouttière, sans occuper de place', () => {
+    // L'aplat est posé en absolu : un débord négatif couvre la gouttière et
+    // relie les deux cases sans peser d'un point sur le budget des sept
+    // colonnes.
+    renderCalendar({
+      entries: [journeeLe('2026-03-09', 'a'), journeeLe('2026-03-10', 'b'), journeeLe('2026-03-11', 'c')],
+    })
+    const aplat = (date: string) => classes(screen.getByTestId(`remplissage-${date}`))
+    expect(aplat('2026-03-09')).toContain('-mr-0.5')
+    expect(aplat('2026-03-10')).toContain('-mx-0.5')
+    expect(aplat('2026-03-11')).toContain('-ml-0.5')
+  })
+
+  it('ne soude rien sous une case isolée', () => {
+    renderCalendar({ entries: [journeeLe('2026-03-10', 'b')] })
+    const aplat = classes(screen.getByTestId('remplissage-2026-03-10'))
+    expect(aplat.filter((c) => /^-m/.test(c))).toEqual([])
+  })
+})
+
+/**
+ * Le marqueur d'une journée éclatée — une journée saisie en plusieurs créneaux.
+ *
+ * C'est un avertissement, et il doit se voir sur **n'importe quel** fond de
+ * case : `surface`, `off`, `off-strong`, l'aplat de saisie, l'aplat du
+ * prévisionnel et les six aplats catégoriels, dans les cinq préréglages.
+ *
+ * Le liseré `inset-ring-warning-edge` ne le pouvait pas. Mesuré entre
+ * `warningEdge` et `prevu` : ΔL\* = 1,63 en Encre clair — le préréglage par
+ * défaut — contre 3,46 en Neutre clair et 4,90 en KreativPM. Le projet
+ * s'impose `MIN_LIGHTNESS_GAP` = 4 pour qu'un état se lise **sans distinguer
+ * les teintes** ; ce marqueur était à moins de la moitié sur le thème que tout
+ * le monde verra. Aucune valeur de bordure ne pouvait le sauver : elle doit
+ * tenir contre onze fonds inconnus d'avance, dont un ambre et six teintes
+ * catégorielles, et une teinte seule n'y arrive pas — c'est la leçon du lot 1f,
+ * qui a remplacé les hachures du prévisionnel par une horloge.
+ *
+ * Le liseré reste, comme renfort là où il se voit. Ce qui **porte**
+ * l'information est désormais un tracé : un coin plein, peint de l'encre de la
+ * case et non d'un jeton à lui. Il change donc de couleur avec le fond au lieu
+ * de le subir, et cette encre-là est déjà tenue à 4,5:1 sur les onze fonds par
+ * `TEXT_PAIRS` — c'est elle qui écrit le chiffre du jour.
+ */
+describe('MonthCalendar — le marqueur d une journée éclatée', () => {
+  afterEach(cleanup)
+
+  /** Deux créneaux le même jour : la définition même d'une journée éclatée. */
+  function eclateeLe(date: string, prefixe: string, over: Partial<MonthEntry> = {}): MonthEntry[] {
+    return [
+      entree({ id: `${prefixe}1`, date, minutes: 120, startMinute: 540, endMinute: 660, ...over }),
+      entree({ id: `${prefixe}2`, date, minutes: 120, startMinute: 840, endMinute: 960, ...over }),
+    ]
+  }
+
+  function marqueurDu(date: string): SVGElement | null {
+    return screen.queryByTestId(`eclatement-${date}`) as SVGElement | null
+  }
+
+  /**
+   * La signature du dessin : ce qui doit rester identique d'un fond à l'autre.
+   * Le `data-testid` en est exclu — il porte la date, qui change d'un cas au
+   * suivant et masquerait un tracé qui, lui, aurait bougé.
+   */
+  function traceDu(date: string): string {
+    const marqueur = marqueurDu(date)
+    expect(marqueur, `aucun marqueur d’éclatement sur ${date}`).not.toBeNull()
+    const chemin = marqueur!.querySelector('path')
+    expect(chemin, `le marqueur du ${date} ne dessine aucun tracé`).not.toBeNull()
+    return [
+      marqueur!.getAttribute('width'),
+      marqueur!.getAttribute('height'),
+      marqueur!.getAttribute('viewBox'),
+      chemin!.getAttribute('d'),
+      chemin!.getAttribute('fill'),
+    ].join(' ')
+  }
+
+  /** La classe de fond de l'aplat, celle qui change de teinte selon la portée. */
+  function fondDeLAplat(date: string): string | undefined {
+    return classes(screen.getByTestId(`remplissage-${date}`)).find((c) => c.startsWith('bg-'))
+  }
+
+  /** L'encre posée sur la case elle-même, isolée des autres classes. */
+  function encreDeLaCase(date: string): string | undefined {
+    return classes(caseDu(date)).find((c) => c.startsWith('text-') && c !== 'text-sm')
+  }
+
+  const JETON_PAR_CLASSE = new Map<string, keyof ThemeTokens>(
+    THEME_TOKEN_KEYS.flatMap((k) => {
+      const classe = k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
+      return [
+        [`bg-${classe}`, k],
+        [`text-${classe}`, k],
+      ] as [string, keyof ThemeTokens][]
+    }),
+  )
+
+  function jetonDe(classe: string | undefined): keyof ThemeTokens {
+    expect(classe, 'aucune classe de jeton lue sur la case').toBeDefined()
+    const jeton = JETON_PAR_CLASSE.get(classe!)
+    expect(jeton, `${classe} n’est pas un jeton du thème`).toBeDefined()
+    return jeton!
+  }
+
+  /**
+   * Les cas qui font varier la teinte sous le marqueur, et rien d'autre.
+   * Le 1er mars 2026 est un dimanche, le 2 est le férié du mois de test.
+   */
+  const CAS: { nom: string; date: string; props: Parameters<typeof renderCalendar>[0] }[] = [
+    {
+      nom: 'un jour ouvré, portée « Cette prestation »',
+      date: '2026-03-10',
+      props: { entries: eclateeLe('2026-03-10', 'a'), toutLeMois: false },
+    },
+    {
+      nom: 'un jour ouvré, portée « Toutes les prestations »',
+      date: '2026-03-10',
+      props: { entries: eclateeLe('2026-03-10', 'b'), toutLeMois: true },
+    },
+    {
+      nom: 'un jour prévisionnel, qui prend sa propre teinte',
+      date: '2026-03-10',
+      props: { entries: eclateeLe('2026-03-10', 'c', { kind: 'PREVISIONNEL' }) },
+    },
+    {
+      nom: 'un dimanche',
+      date: '2026-03-01',
+      props: { entries: eclateeLe('2026-03-01', 'd') },
+    },
+    {
+      nom: 'un jour férié',
+      date: '2026-03-02',
+      props: { entries: eclateeLe('2026-03-02', 'e') },
+    },
+  ]
+
+  it('dessine un tracé sur la journée éclatée, et sur elle seule', () => {
+    renderCalendar({
+      entries: [
+        ...eclateeLe('2026-03-10', 'a'),
+        entree({ id: 'seul', date: '2026-03-11', minutes: 240, startMinute: 540, endMinute: 780 }),
+        entree({ id: 'plein', date: '2026-03-12', minutes: 480, slotId: '' }),
+      ],
+    })
+
+    const marqueur = marqueurDu('2026-03-10')
+    expect(marqueur).not.toBeNull()
+    expect(marqueur!.tagName.toLowerCase()).toBe('svg')
+    expect(marqueur!.querySelector('path')).not.toBeNull()
+
+    // Un seul créneau, une journée entière : rien à signaler.
+    expect(marqueurDu('2026-03-11')).toBeNull()
+    expect(marqueurDu('2026-03-12')).toBeNull()
+    expect(marqueurDu('2026-03-13')).toBeNull()
+  })
+
+  it('pose le tracé hors du flux : il ne coûte rien au budget des sept colonnes', () => {
+    // À 375 points la colonne vaut 45,0 pour une cible de 44. La ligne du
+    // numéro du jour porte déjà le losange d'occupation et l'horloge du
+    // prévisionnel ; un troisième glyphe dans ce flux ferait tomber le test de
+    // budget. Le coin est posé en absolu dans la case, comme l'aplat.
+    renderCalendar({ entries: eclateeLe('2026-03-10', 'a') })
+    const marqueur = marqueurDu('2026-03-10')!
+    expect(classes(marqueur)).toContain('absolute')
+    expect(marqueur.parentElement).toBe(caseDu('2026-03-10'))
+  })
+
+  it('garde exactement le même tracé quand la teinte de la case change', () => {
+    // Le cœur du correctif : ce n'est pas un rapport de clarté contre un fond
+    // inconnu qui porte l'avertissement, c'est une forme. Elle doit donc
+    // survivre au changement de teinte — et les teintes doivent bien changer,
+    // sans quoi ce test ne mesurerait rien.
+    const traces = new Set<string>()
+    const fonds = new Set<string>()
+
+    for (const cas of CAS) {
+      renderCalendar(cas.props)
+      traces.add(traceDu(cas.date))
+      const fond = fondDeLAplat(cas.date)
+      expect(fond, `aucun aplat sous ${cas.nom}`).toBeDefined()
+      fonds.add(`${fond} sur ${encreDeLaCase(cas.date)}`)
+      cleanup()
+    }
+
+    expect(fonds.size, 'les cas balayés ne font pas varier la teinte').toBeGreaterThan(1)
+    expect([...traces], 'le tracé change avec la teinte').toHaveLength(1)
+  })
+
+  it('ne déclare aucune teinte à lui : il prend l encre de la case', () => {
+    renderCalendar({ entries: eclateeLe('2026-03-10', 'a') })
+    const marqueur = marqueurDu('2026-03-10')!
+
+    // `currentColor` et non un jeton : un marqueur qui porterait sa propre
+    // couleur retomberait dans le défaut qu'il corrige — une teinte figée
+    // confrontée à onze fonds dont elle ne sait rien.
+    expect(marqueur.querySelector('path')!.getAttribute('fill')).toBe('currentColor')
+    expect(classes(marqueur).filter((c) => /^(text|fill|stroke)-/.test(c))).toEqual([])
+  })
+
+  it('tient le plancher de clarté sur les onze fonds, dans les cinq préréglages', () => {
+    // La mesure, pas l'affirmation. L'encre est lue sur la case rendue, les
+    // fonds sont lus sur le DOM pour les trois états de jour et sur
+    // `colors.ts` pour les huit aplats — jamais recopiés à la main.
+    renderCalendar({ entries: eclateeLe('2026-03-10', 'a') })
+    const encre = jetonDe(encreDeLaCase('2026-03-10'))
+    cleanup()
+
+    const fonds = new Set<keyof ThemeTokens>()
+    for (const cas of CAS) {
+      renderCalendar(cas.props)
+      fonds.add(jetonDe(classes(caseDu(cas.date)).find((c) => c.startsWith('bg-'))))
+      fonds.add(jetonDe(fondDeLAplat(cas.date)))
+      cleanup()
+    }
+    // Les six teintes catégorielles : une seule sort du hachage à l'écran,
+    // mais l'aplat peut prendre n'importe laquelle des six.
+    for (const couleur of LINE_COLORS) fonds.add(jetonDe(couleur.bg))
+
+    // surface, off, offStrong, saisie, prevu et les six catégorielles.
+    expect(fonds.size).toBe(11)
+
+    for (const preset of THEME_PRESETS) {
+      for (const fond of fonds) {
+        const ecart = Math.abs(lightness(preset.tokens[encre]) - lightness(preset.tokens[fond]))
+        expect(
+          ecart,
+          `${preset.label} : ${encre} sur ${fond} n’écarte que ${ecart.toFixed(2)} de L*`,
+        ).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP)
+        expect(
+          contrastRatio(preset.tokens[encre], preset.tokens[fond]),
+          `${preset.label} : ${encre} sur ${fond}`,
+        ).toBeGreaterThanOrEqual(AA_TEXT_RATIO)
+      }
+    }
   })
 })

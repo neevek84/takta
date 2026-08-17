@@ -9,6 +9,8 @@ import {
   THEME_KREATIVPM,
   THEME_CLAIR,
   THEME_SOMBRE,
+  THEME_ENCRE_CLAIR,
+  THEME_ENCRE_SOMBRE,
   THEME_PRESETS,
   THEME_MODES,
   THEME_MODE_LABELS,
@@ -27,6 +29,7 @@ import {
   chroma,
   findContrastIssues,
   findConfigIssues,
+  findPolarityIssues,
   describeContrastIssue,
   type ThemeTokens,
   type ContrastIssue,
@@ -46,10 +49,48 @@ const polarites = (issues: ThemeIssue[]): PolarityIssue[] =>
   issues.filter((i): i is PolarityIssue => i.kind === 'polarite')
 
 const PALETTES: ReadonlyArray<[string, ThemeTokens]> = [
+  ['Encre clair', THEME_ENCRE_CLAIR],
+  ['Encre sombre', THEME_ENCRE_SOMBRE],
   ['Clair', THEME_CLAIR],
   ['Sombre', THEME_SOMBRE],
   ['KreativPM', THEME_KREATIVPM],
 ]
+
+/**
+ * Encre — l'identité propre de CRA. Les valeurs ont été construites puis
+ * mesurées, jamais choisies à l'œil : ces tests sont la mesure.
+ */
+describe('les préréglages Encre', () => {
+  it('livre Encre sans aucune anomalie de contraste', () => {
+    expect(findContrastIssues(THEME_ENCRE_CLAIR).map(describeContrastIssue)).toEqual([])
+    expect(findContrastIssues(THEME_ENCRE_SOMBRE).map(describeContrastIssue)).toEqual([])
+  })
+
+  it('respecte la polarité de chaque versant', () => {
+    expect(findPolarityIssues(THEME_ENCRE_CLAIR, 'clair')).toEqual([])
+    expect(findPolarityIssues(THEME_ENCRE_SOMBRE, 'sombre')).toEqual([])
+  })
+
+  it('fait d’Encre le défaut, et garde KreativPM comme préréglage', () => {
+    expect(DEFAULT_THEME).toBe(THEME_ENCRE_CLAIR)
+    expect(DEFAULT_THEME_CONFIG.clair).toBe(THEME_ENCRE_CLAIR)
+    expect(DEFAULT_THEME_CONFIG.sombre).toBe(THEME_ENCRE_SOMBRE)
+    expect(THEME_PRESETS.map((p) => p.id)).toContain('KREATIVPM')
+  })
+
+  // L'accent d'Encre est vif et clair : le blanc n'y tient pas 4,5:1. C'est ce
+  // renoncement au blanc — et lui seul — qui autorise un accent lumineux, donc
+  // qui retire la grisaille. L'affirmer sans le mesurer n'en ferait qu'un
+  // commentaire.
+  it('renonce au blanc sur l’accent, ce qui est ce qui retire la grisaille', () => {
+    expect(contrastRatio('#ffffff', THEME_ENCRE_CLAIR.accent)).toBeLessThan(AA_TEXT_RATIO)
+    expect(
+      contrastRatio(THEME_ENCRE_CLAIR.onAccent, THEME_ENCRE_CLAIR.accent),
+    ).toBeGreaterThanOrEqual(AA_TEXT_RATIO)
+    // Et l'accent est bien plus lumineux que celui qu'il remplace.
+    expect(lightness(THEME_ENCRE_CLAIR.accent)).toBeGreaterThan(lightness(THEME_CLAIR.accent) + 15)
+  })
+})
 
 describe('inventaire des jetons', () => {
   it('énumère exactement les clés du type', () => {
@@ -70,20 +111,25 @@ describe('inventaire des jetons', () => {
     }
   })
 
-  it('prend le clair pour défaut, la marque n’étant plus qu’un préréglage', () => {
-    expect(DEFAULT_THEME).toEqual(THEME_CLAIR)
+  it('prend Encre clair pour défaut, la marque n’étant plus qu’un préréglage', () => {
+    expect(DEFAULT_THEME).toEqual(THEME_ENCRE_CLAIR)
+    expect(DEFAULT_THEME).not.toEqual(THEME_CLAIR)
     expect(DEFAULT_THEME).not.toEqual(THEME_KREATIVPM)
   })
 
-  it('expose les trois préréglages annoncés, chacun avec son versant', () => {
+  it('expose les cinq préréglages annoncés, chacun avec son versant', () => {
     expect(THEME_PRESETS.map((p) => [p.id, p.nature])).toEqual([
+      ['ENCRE_CLAIR', 'clair'],
+      ['ENCRE_SOMBRE', 'sombre'],
       ['CLAIR', 'clair'],
       ['SOMBRE', 'sombre'],
       ['KREATIVPM', 'clair'],
     ])
-    expect(THEME_PRESETS[0]!.tokens).toEqual(THEME_CLAIR)
-    expect(THEME_PRESETS[1]!.tokens).toEqual(THEME_SOMBRE)
-    expect(THEME_PRESETS[2]!.tokens).toEqual(THEME_KREATIVPM)
+    expect(THEME_PRESETS[0]!.tokens).toEqual(THEME_ENCRE_CLAIR)
+    expect(THEME_PRESETS[1]!.tokens).toEqual(THEME_ENCRE_SOMBRE)
+    expect(THEME_PRESETS[2]!.tokens).toEqual(THEME_CLAIR)
+    expect(THEME_PRESETS[3]!.tokens).toEqual(THEME_SOMBRE)
+    expect(THEME_PRESETS[4]!.tokens).toEqual(THEME_KREATIVPM)
   })
 
   // Le versant annoncé n'est pas une étiquette : c'est ce que `findConfigIssues`
@@ -99,8 +145,8 @@ describe('inventaire des jetons', () => {
   it('part de la préférence du système, avec les deux palettes livrées', () => {
     expect(DEFAULT_THEME_CONFIG).toEqual({
       mode: 'systeme',
-      clair: THEME_CLAIR,
-      sombre: THEME_SOMBRE,
+      clair: THEME_ENCRE_CLAIR,
+      sombre: THEME_ENCRE_SOMBRE,
     })
   })
 
@@ -108,6 +154,55 @@ describe('inventaire des jetons', () => {
     expect([...THEME_MODES]).toEqual(['systeme', 'clair', 'sombre'])
     for (const mode of THEME_MODES) expect(THEME_MODE_LABELS[mode]).toBeTruthy()
   })
+})
+
+/**
+ * Le prévisionnel n'est pas un accent délavé : il porte sa propre teinte, donc
+ * ses propres jetons. Une opacité (`bg-accent/45`) échappe par nature au
+ * contrôle de contraste — une teinte opaque y entre.
+ */
+describe('les jetons du prévisionnel', () => {
+  it('porte les trois jetons du prévisionnel', () => {
+    expect(THEME_TOKEN_KEYS).toContain('prevu')
+    expect(THEME_TOKEN_KEYS).toContain('prevuInk')
+    expect(THEME_TOKEN_KEYS).toContain('prevuEdge')
+    expect(THEME_TOKEN_KEYS).toHaveLength(48)
+  })
+
+  it('exige l’encre du prévisionnel sur son fond, jamais sur sa bordure', () => {
+    expect(TEXT_PAIRS).toContainEqual({ text: 'prevuInk', background: 'prevu' })
+    // Mesuré : `prevuInk` sur `prevuEdge` ne tient que 2,74:1 sur le clair. La
+    // bordure est tenue comme élément non textuel (3:1) sur les quatre fonds
+    // de cellule, et aucun composant ne la remplit.
+    expect(TEXT_PAIRS).not.toContainEqual({ text: 'prevuInk', background: 'prevuEdge' })
+  })
+
+  it('exige la bordure du prévisionnel à 3:1 sur les fonds de texte', () => {
+    for (const background of FONDS_DE_TEXTE) {
+      expect(NON_TEXT_PAIRS).toContainEqual({ text: 'prevuEdge', background })
+    }
+  })
+
+  it('l’exige aussi sur le fond qu’elle borde', () => {
+    // `EngagementBar` pose `border-dashed border-prevu-edge` sur le `<div>`
+    // qui porte `bg-prevu` : la bordure se dessine sur son propre
+    // remplissage, et c'est là qu'elle était invisible — de 1,52 à 2,53:1
+    // selon le préréglage, sans qu'aucun couple ne la mesure.
+    expect(NON_TEXT_PAIRS).toContainEqual({ text: 'prevuEdge', background: 'prevu' })
+  })
+
+  // Le contour tireté d'une case prévisionnelle se dessine aussi bien sur une
+  // cellule ouvrée que sur un week-end ou un férié. Le mesurer seulement sur
+  // du blanc — ce que la spec faisait — laissait trois fonds sur quatre sans
+  // garde-fou : `#c1860f` n'y tenait que 2,20:1 sur les fériés.
+  for (const [nom, palette] of PALETTES) {
+    it(`${nom} : la bordure du prévisionnel tient sur les quatre fonds de cellule`, () => {
+      for (const fond of FONDS_DE_TEXTE) {
+        const ratio = contrastRatio(palette.prevuEdge, palette[fond])
+        expect(ratio, `prevuEdge sur ${fond}`).toBeGreaterThanOrEqual(NON_TEXT_RATIO)
+      }
+    })
+  }
 })
 
 // C'est le test que la spec réclame : il parcourt les couples texte/fond des
@@ -129,6 +224,9 @@ const COUPLES_TEXTE_ATTENDUS = [
   'dangerInk/danger', 'dangerInk/dangerEdge', 'dangerInk/page', 'dangerInk/surface',
   'dangerInk/off', 'dangerInk/offStrong',
   'infoInk/info', 'infoInk/infoEdge', 'infoInk/page', 'infoInk/surface',
+  // L'aplat du prévisionnel. Sa bordure n'y figure pas : elle est tenue comme
+  // élément non textuel, et aucun composant ne la remplit.
+  'prevuInk/prevu',
   'catAInk/catA', 'catAInk/catAEdge',
   'catBInk/catB', 'catBInk/catBEdge',
   'catCInk/catC', 'catCInk/catCEdge',
@@ -140,11 +238,23 @@ const COUPLES_TEXTE_ATTENDUS = [
   // ne couvre que la moitié de la case et que le chiffre doit tenir aussi sur
   // le fond du jour.
   'ink/catA', 'ink/catB', 'ink/catC', 'ink/catD', 'ink/catE', 'ink/catF',
+  // Les deux autres teintes que ce même chiffre reçoit sous lui : l'aplat de
+  // la prestation saisie en portée « Cette prestation » — la portée par
+  // défaut — et l'aplat du prévisionnel. Le lot 1g les a mises en service
+  // sans les déclarer, et quatre préréglages sur cinq rendaient alors un
+  // chiffre sous 2,1:1 sans qu'aucun contrôle ne le voie.
+  'ink/saisie', 'ink/prevu',
 ]
 
 const COUPLES_NON_TEXTUELS_ATTENDUS = [
   'focus/page', 'focus/surface', 'focus/off', 'focus/offStrong',
   'accentDark/page', 'accentDark/surface',
+  // Le contour tireté d'une case prévisionnelle, sur les quatre fonds de
+  // cellule sur lesquels elle se dessine.
+  'prevuEdge/page', 'prevuEdge/surface', 'prevuEdge/off', 'prevuEdge/offStrong',
+  // Et sur le fond qu'il borde réellement : le tireté du segment de
+  // prévisionnel se dessine sur son propre remplissage.
+  'prevuEdge/prevu',
 ]
 
 const nomme = (pairs: readonly { text: string; background: string }[]): string[] =>
@@ -249,10 +359,11 @@ describe('findContrastIssues', () => {
 
   it('remonte tous les couples fautifs, pas seulement le premier', () => {
     // L'or en encre casse ses quatre fonds — page, surface, off, offStrong —
-    // et les six aplats catégoriels sur lesquels le calendrier pose désormais
-    // le chiffre d'une case.
+    // les six aplats catégoriels sur lesquels le calendrier pose le chiffre
+    // d'une case, et les deux aplats d'état (saisie, prévisionnel) sur
+    // lesquels il pose le même chiffre.
     const fautive: ThemeTokens = { ...THEME_KREATIVPM, ink: '#d4943f' }
-    expect(contrastes(findContrastIssues(fautive)).filter((i) => i.text === 'ink')).toHaveLength(10)
+    expect(contrastes(findContrastIssues(fautive)).filter((i) => i.text === 'ink')).toHaveLength(12)
   })
 
   it('contrôle aussi les couples non textuels, à 3:1', () => {
@@ -393,9 +504,110 @@ describe('distinction de la palette catégorielle', () => {
       pires.set(nom, Math.round(pire * 100) / 100)
     }
     expect(Object.fromEntries(pires)).toEqual({
-      Clair: 27.05,
-      Sombre: 19.59,
-      KreativPM: 24.61,
+      'Encre clair': 34.78,
+      'Encre sombre': 24.11,
+      Clair: 38.8,
+      Sombre: 24.11,
+      KreativPM: 33.49,
+    })
+  })
+
+  /**
+   * Le chiffre que le commentaire de `MIN_CATEGORY_DISTANCE` annonce est celui
+   * qu'on mesure — vérifié, pas relu.
+   *
+   * Dans un fichier où chaque valeur est présentée comme mesurée, un nombre
+   * périmé est un piège : il a la même autorité qu'un nombre juste. Le
+   * commentaire a annoncé « 20,97 au pire couple » après que la palette
+   * entière eut été remplacée — 20,97 était la valeur de la palette chaude du
+   * lot 1e, mesurée plus bas dans ce fichier, et elle a survécu à deux
+   * refontes. Ce test lit le commentaire dans la source et le confronte au
+   * calcul : la prochaine palette fera tomber l'un ou l'autre.
+   */
+  describe('le commentaire de MIN_CATEGORY_DISTANCE dit la mesure', () => {
+    /**
+     * Le pire couple, toutes paires dérivées et tous préréglages confondus —
+     * et **tous** ceux qui atteignent ce minimum, jamais le premier rencontré.
+     *
+     * Le minimum est atteint deux fois : `ENCRE_SOMBRE` et `SOMBRE` partagent
+     * `CATEGORIES_SOMBRE` et mesurent donc exactement la même distance. Nommer
+     * « le » pire couple revenait alors à nommer celui que l'ordre de
+     * `THEME_PRESETS` place en premier : réordonner les préréglages faisait
+     * tomber le test sans qu'aucune couleur ait bougé, et le test annonçait
+     * une mesure en vérifiant un ordre de déclaration.
+     */
+    function pireCouple(): { distance: number; ou: string[] } {
+      const mesures: { d: number; ou: string }[] = []
+      for (const preset of THEME_PRESETS) {
+        for (const { a, b } of DISTINCTION_PAIRS) {
+          mesures.push({
+            d: colorDistance(preset.tokens[a], preset.tokens[b]),
+            ou: `${preset.id} ${a}/${b}`,
+          })
+        }
+      }
+      const distance = Math.min(...mesures.map((m) => m.d))
+      // À l'epsilon près : deux palettes qui partagent leurs teintes donnent le
+      // même flottant, mais une égalité stricte ferait dépendre le résultat du
+      // dernier bit d'un calcul en virgule flottante.
+      const ou = mesures.filter((m) => m.d - distance < 1e-9).map((m) => m.ou)
+      return { distance, ou: [...ou].sort() }
+    }
+
+    /**
+     * Deux décimales, tronquées — jamais arrondies au-dessus : le commentaire
+     * ne doit pas pouvoir annoncer une marge que la palette n'a pas.
+     */
+    function auCentieme(valeur: number): string {
+      return (Math.floor(valeur * 100) / 100).toFixed(2).replace('.', ',')
+    }
+
+    it('mesure 24,11 au pire couple, sur les versants sombres', () => {
+      const { distance, ou } = pireCouple()
+      expect(auCentieme(distance)).toBe('24,11')
+      // Nommés, et tous : une valeur juste sur le mauvais couple ne dirait
+      // rien, et n'en nommer qu'un parmi deux ex æquo ne mesurerait que
+      // l'ordre de `THEME_PRESETS`. Trié, donc insensible à cet ordre.
+      expect(ou).toEqual(['ENCRE_SOMBRE catA/catF', 'SOMBRE catA/catF'])
+      expect(distance).toBeGreaterThanOrEqual(MIN_CATEGORY_DISTANCE)
+    })
+
+    /**
+     * Le commentaire de `MIN_CATEGORY_DISTANCE` seul — du `/**` qui l'ouvre à
+     * la déclaration qu'il documente. Lire toute la source laisserait passer
+     * un chiffre écrit ailleurs dans le fichier, et surtout n'aurait aucun
+     * moyen de compter les occurrences *de ce commentaire-ci*.
+     */
+    function commentaireDuSeuil(): string {
+      const source = readFileSync(join(process.cwd(), 'src/core/theme/tokens.ts'), 'utf8')
+      const fin = source.indexOf('export const MIN_CATEGORY_DISTANCE')
+      const debut = source.lastIndexOf('/**', fin)
+      return source.slice(debut, fin)
+    }
+
+    /**
+     * Les deux seuls nombres décimaux que ce commentaire porte sans prétendre
+     * mesurer la palette livrée : le seuil de perception de la colorimétrie,
+     * et la valeur périmée qu'il cite précisément comme périmée. Tout autre
+     * décimal y est une mesure de cette palette, et doit donc valoir la
+     * mesure — y compris s'il n'est qu'une seconde copie de la première.
+     */
+    const REPERES_CITES = ['2,3', '20,97']
+
+    it('annonce dans la source exactement ce chiffre-là, et une seule fois', () => {
+      const bloc = commentaireDuSeuil()
+      const mesure = auCentieme(pireCouple().distance)
+
+      const annonce = /tient (\d+,\d+) au pire couple/.exec(bloc)
+      expect(annonce, 'le commentaire n’annonce plus de pire couple').not.toBeNull()
+      expect(annonce![1]).toBe(mesure)
+
+      // Toutes les occurrences, pas la première : le commentaire a annoncé le
+      // chiffre **deux fois** et cette regex n'en lisait qu'une — muter la
+      // seule seconde en 19,04 laissait les 105 tests verts. Un chiffre
+      // annoncé deux fois est un chiffre qui se périmera une fois.
+      const decimaux = bloc.match(/\d+,\d+/g) ?? []
+      expect(decimaux.filter((n) => !REPERES_CITES.includes(n))).toEqual([mesure])
     })
   })
 
@@ -454,6 +666,58 @@ describe('distinction de la palette catégorielle', () => {
   it('n’en signale aucun sur les palettes livrées', () => {
     for (const [nom, palette] of PALETTES) {
       expect(distinctions(findContrastIssues(palette)), nom).toEqual([])
+    }
+  })
+})
+
+/**
+ * Les six fonds du lot 1f, tels qu'ils étaient livrés. Ils servent de mesure
+ * au défaut que ce lot corrige : ce n'était pas « trop saturé », c'était
+ * « six teintes qui n'appartiennent pas au même jeu ».
+ */
+const CATEGORIELLES_1F = {
+  catA: '#eaada3', catB: '#d9b95e', catC: '#77d13c',
+  catD: '#35d0c5', catE: '#b0b9ed', catF: '#eaa5e1',
+} as const
+
+describe('la palette catégorielle est une famille', () => {
+  it('mesure l’inégalité que la palette du lot 1f portait', () => {
+    const cs = Object.values(CATEGORIELLES_1F).map(chroma)
+    // 25 · 50 · 81 · 42 · 28 · 40 : `catC` hurlait pendant que `catA`
+    // s'effaçait. Le rapport entre les deux extrêmes vaut 3,2.
+    expect(cs.map((c) => Math.round(c))).toEqual([25, 50, 81, 42, 28, 40])
+    expect(Math.max(...cs) / Math.min(...cs)).toBeGreaterThan(3)
+  })
+
+  it('donne le même chroma aux six teintes, dans les deux versants', () => {
+    // C'est l'égalité, et non le niveau, qui fait la famille. Un écart de
+    // moins d'une unité de C* est en deçà du plus petit pas perceptible.
+    for (const t of [THEME_ENCRE_CLAIR, THEME_ENCRE_SOMBRE]) {
+      const cs = CATEGORY_BACKGROUNDS.map((k) => chroma(t[k]))
+      expect(Math.max(...cs) - Math.min(...cs)).toBeLessThan(1)
+    }
+  })
+
+  it('tient les six teintes entre le criard et le terne', () => {
+    const fonds = CATEGORY_BACKGROUNDS.map((k) => THEME_ENCRE_CLAIR[k])
+    const moyen = fonds.reduce((s, h) => s + chroma(h), 0) / fonds.length
+    // 62 était criard (lot 1f), 24 était terne (première tentative de ce lot).
+    expect(moyen).toBeGreaterThan(33)
+    expect(moyen).toBeLessThan(45)
+  })
+
+  it('construit le sombre au lieu de l’inverser', () => {
+    const c = (t: ThemeTokens): number =>
+      CATEGORY_BACKGROUNDS.reduce((s, k) => s + chroma(t[k]), 0) / CATEGORY_BACKGROUNDS.length
+    expect(c(THEME_ENCRE_SOMBRE)).toBeLessThan(c(THEME_ENCRE_CLAIR))
+  })
+
+  it('laisse les cinq préréglages sans anomalie', () => {
+    for (const preset of THEME_PRESETS) {
+      expect(
+        findContrastIssues(preset.tokens).map(describeContrastIssue),
+        preset.id,
+      ).toEqual([])
     }
   })
 })
