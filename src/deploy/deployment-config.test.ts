@@ -206,7 +206,11 @@ describe('le .env de développement ne part pas dans l image', () => {
     // `next build` recopie le `.env` du dépôt dans `.next/standalone` : sans
     // cette exclusion, l'image embarquerait le secret d'authentification et la
     // clé de chiffrement de développement, donc les mêmes chez tout le monde.
-    expect(lignesActives(DOCKERIGNORE)).toContain('.env')
+    //
+    // La question posée est l'EFFET du fichier, pas la présence d'une ligne :
+    // chercher le texte `.env` restait vert alors même que `prisma/dev.db`,
+    // couvert par une ligne tout aussi présente, entrait dans l'image.
+    expect(ignoreParDocker('.env')).toBe(true)
   })
 
   it('.env.example ne porte aucune valeur de secret exploitable', () => {
@@ -215,6 +219,93 @@ describe('le .env de développement ne part pas dans l image', () => {
       const valeur = brut.replace(/^"|"$/g, '')
       const factice = valeur === '' || /remplacer|exemple|changeme|xxx/i.test(valeur)
       expect(factice, `${nom} de .env.example doit rester vide ou manifestement factice`).toBe(true)
+    }
+  })
+})
+
+/**
+ * Sémantique réelle de `.dockerignore`, reproduite ici.
+ *
+ * Elle n'est PAS celle de `.gitignore`, et c'est toute l'affaire : un motif sans
+ * barre oblique y est **ancré à la racine du contexte**, et `*` ne franchit
+ * jamais un `/` (BuildKit applique `filepath.Match` segment par segment, `**`
+ * étant le seul joker qui traverse les dossiers). `*.db` protège donc
+ * correctement le dépôt git — où le même motif s'applique à toute profondeur —
+ * et ne protège pas l'image : `prisma/dev.db` entrait dans le contexte, puis
+ * dans l'étage final par `COPY --from=builder /app/prisma ./prisma`.
+ *
+ * C'est cette asymétrie qui rendait le défaut invisible : la même ligne, lue par
+ * deux outils, ne veut pas dire la même chose.
+ */
+function ignoreParDocker(chemin: string): boolean {
+  const enRegex = (motif: string): RegExp => {
+    const corps = motif
+      .split('/')
+      .map((segment) =>
+        segment === '**'
+          ? '(?:[^/]+/)*[^/]*'
+          : segment
+              .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+              .replace(/\*/g, '[^/]*')
+              .replace(/\?/g, '[^/]'),
+      )
+      .join('/')
+      .replace(/\(\?:\[\^\/\]\+\/\)\*\[\^\/\]\*\//g, '(?:[^/]+/)*')
+    return new RegExp(`^${corps}$`)
+  }
+
+  const motifs = lignesActives(DOCKERIGNORE)
+  // Un motif qui exclut un dossier exclut tout ce qu'il contient : on teste
+  // donc le chemin ET chacun de ses préfixes.
+  const segments = chemin.split('/')
+  const prefixes = segments.map((_, i) => segments.slice(0, i + 1).join('/'))
+  return motifs.some((motif) => prefixes.some((p) => enRegex(motif).test(p)))
+}
+
+describe("l'image Docker n'emporte pas la base de développement", () => {
+  it('reproduit fidèlement la sémantique qui a laissé passer le défaut', () => {
+    // Sans cette vérification, le reste du bloc ne prouverait rien : un
+    // « matcher » trop permissif rendrait tout exclu, donc tout vert.
+    expect(ignoreParDocker('prisma/schema.prisma')).toBe(false)
+    expect(ignoreParDocker('package.json')).toBe(false)
+    expect(ignoreParDocker('src/db/client.ts')).toBe(false)
+    expect(ignoreParDocker('.git/config')).toBe(true)
+    expect(ignoreParDocker('node_modules/next/package.json')).toBe(true)
+  })
+
+  it.each([
+    'prisma/dev.db',
+    'prisma/test-90254.db',
+    'prisma/dev.db-wal',
+    'prisma/dev.db-shm',
+    'donnees/cra.db',
+  ])('%s reste hors du contexte de construction', (chemin) => {
+    // Mesuré par la revue sur `prisma/dev.db` : 320 Ko contenant un utilisateur
+    // avec son hash argon2, deux clients et deux missions — les données réelles
+    // de qui construit l'image, livrées à qui la reçoit.
+    expect(ignoreParDocker(chemin), `${chemin} entre dans l'image`).toBe(true)
+  })
+
+  it.each(['.env', '.env.local', '.next-rev56/standalone/.env', 'donnees/cra.env'])(
+    '%s reste hors du contexte de construction',
+    (chemin) => {
+      // `next build` recopie le `.env` du dépôt dans sa sortie standalone, et
+      // `distDir` est arbitraire (`CRA_DIST_DIR`) : énumérer `.next` et
+      // `.next-dist` par leur nom ne suffit pas.
+      expect(ignoreParDocker(chemin), `${chemin} entre dans l'image`).toBe(true)
+    },
+  )
+
+  it('laisse entrer ce dont la construction a besoin', () => {
+    for (const chemin of [
+      'prisma/schema.prisma',
+      'prisma/migrations/migration_lock.toml',
+      'prisma/migrations-sqlite/migration_lock.toml',
+      'src/instrumentation.ts',
+      'next.config.ts',
+      'public/manifest.webmanifest',
+    ]) {
+      expect(ignoreParDocker(chemin), `${chemin} manquerait à la construction`).toBe(false)
     }
   })
 })

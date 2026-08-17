@@ -114,3 +114,89 @@ export async function refreshSignatureStatus(
 
   return { ok: true, statut, effet }
 }
+
+export interface RefreshSweepReport {
+  /** demandes réellement soumises au prestataire */
+  examinees: number
+  valides: number
+  refusees: number
+  expirees: number
+  /** le prestataire n'a rien de neuf à dire */
+  inchangees: number
+  /** interrogations impossibles : le prochain passage retentera */
+  echecs: number
+}
+
+/**
+ * Le balayage que l'ordonnanceur déclenche : **le rattrapage des webhooks
+ * perdus, sans qu'aucun humain n'ait à cliquer**.
+ *
+ * Comme la relance, il porte sur l'instance quand aucun `userId` n'est donné :
+ * un réveil externe n'a pas de session, et une demande appartient au compte de
+ * son CRA, pas à l'appelant.
+ *
+ * Ne sélectionne que ce qu'il peut encore faire bouger : demande `EN_ATTENTE`,
+ * jamais achevée, et **CRA encore `ENVOYE`**. Un CRA validé ou refusé à la
+ * main garde une demande `EN_ATTENTE` intacte — `applySignatureStatus` rend
+ * `AUCUN` avant de la marquer quand la transition n'est plus franchissable —
+ * et l'interroger n'apprendrait rien à personne tout en faisant un appel
+ * réseau par passage, indéfiniment.
+ *
+ * Chaque demande passe par `refreshSignatureStatus`, jamais par un chemin
+ * parallèle : deux applicateurs du même statut finiraient par diverger, et
+ * c'est un verrou de mois qui en dépend.
+ *
+ * Un prestataire injoignable compte un échec et n'arrête pas le balayage : les
+ * demandes suivantes n'ont pas à payer la panne de la première.
+ */
+export async function refreshPendingSignatures(
+  args: { userId?: string; connector?: SignatureConnector | null } = {},
+): Promise<RefreshSweepReport> {
+  const rapport: RefreshSweepReport = {
+    examinees: 0,
+    valides: 0,
+    refusees: 0,
+    expirees: 0,
+    inchangees: 0,
+    echecs: 0,
+  }
+
+  const connector =
+    args.connector !== undefined ? args.connector : await getSignatureConnector()
+  // Sans outil de signature, il n'y a rien à rafraîchir — et ce n'est pas une
+  // panne : c'est le mode nominal d'une instance qui n'en a pas.
+  if (connector === null) return rapport
+
+  const demandes = await prisma.signatureRequest.findMany({
+    where: {
+      status: 'EN_ATTENTE',
+      completedAt: null,
+      cra: {
+        status: 'ENVOYE',
+        ...(args.userId === undefined ? {} : { userId: args.userId }),
+      },
+    },
+    select: { craId: true, cra: { select: { userId: true } } },
+  })
+
+  for (const demande of demandes) {
+    rapport.examinees += 1
+
+    // Le propriétaire vient de la ligne du CRA, jamais de l'appelant : le
+    // scope de `refreshSignatureStatus` reste entier même sous un réveil qui
+    // n'a pas de session.
+    const r = await refreshSignatureStatus(demande.cra.userId, demande.craId, { connector })
+
+    if (!r.ok) {
+      rapport.echecs += 1
+      continue
+    }
+
+    if (r.effet === 'VALIDE') rapport.valides += 1
+    else if (r.effet === 'REFUSE') rapport.refusees += 1
+    else if (r.effet === 'EXPIRE') rapport.expirees += 1
+    else rapport.inchangees += 1
+  }
+
+  return rapport
+}

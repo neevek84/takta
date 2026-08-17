@@ -300,7 +300,14 @@ export const THEME_KREATIVPM: ThemeTokens = {
   // La bordure est assombrie par rapport à l'ambre du fond : elle doit tenir
   // 3:1 jusque sur le fond des fériés (`#e4dccc`), où un ambre clair tombe
   // sous 2,3:1.
-  prevu: '#e8b45c',
+  //
+  // L'ambre est celui des deux autres préréglages clairs, et non plus un ambre
+  // teinté de la marque : à `#e8b45c`, il n'était qu'à 13,2 (ΔE*ab) de `catB`,
+  // sous le seuil de distinction — et les deux se peignent dans la même grille
+  // en portée « Toutes les prestations », le prévisionnel de la prestation
+  // saisie contre la teinte d'une voisine. À `#f2b544`, ils s'écartent de 25,6,
+  // et l'ambre reste dans la famille chaude de l'identité.
+  prevu: '#f2b544',
   prevuInk: '#48300a',
   // Assombrie : la bordure se dessine **sur** l'ambre qu'elle borde, et
   // #9d7010 n'y tenait que 2,34:1 — un marqueur non chromatique invisible.
@@ -412,7 +419,13 @@ export const THEME_SOMBRE: ThemeTokens = {
   // pose dessus en `ink`, quasi blanc ici, et l'ambre clair ne lui laissait
   // que 1,74:1. L'encre du prévisionnel s'inverse en conséquence, comme les
   // encres catégorielles sombres, et la bordure passe au-dessus du fond.
-  prevu: '#7c4f2c',
+  //
+  // Il descend à L*31,5 — l'ambre brun de `catB` (L*38) n'en était qu'à 11,8
+  // (ΔE*ab), sous le seuil de distinction, et les deux se peignent dans la
+  // même grille en portée « Toutes les prestations ». Deux teintes chaudes ne
+  // se séparent bien que par la clarté : à L*31,5 l'écart passe à 20,1, et le
+  // chiffre quasi blanc y gagne du contraste (7,4:1 au lieu de 5,9:1).
+  prevu: '#743a20',
   prevuInk: '#f3e3cf',
   prevuEdge: '#dcaf64',
 
@@ -501,7 +514,9 @@ export const THEME_ENCRE_SOMBRE: ThemeTokens = {
   infoInk: '#a2c7d0',
   infoEdge: '#2d454e',
 
-  prevu: '#7c4f2c',
+  // Le même ambre brun que le neutre sombre, et pour la même raison : à
+  // `#7c4f2c` il n'était qu'à 11,8 (ΔE*ab) de `catB`.
+  prevu: '#743a20',
   prevuInk: '#f3e3cf',
   prevuEdge: '#dcaf64',
 
@@ -873,45 +888,83 @@ export function chroma(hex: string): number {
  * Seuil minimal de ΔE*ab entre deux fonds catégoriels. Repères usuels de la
  * colorimétrie : ~2,3 est le plus petit écart perceptible dans des conditions
  * de laboratoire (JND), ~10 marque un écart net « au premier coup d'œil ».
- * Le calendrier pose ces six teintes en petites cellules adjacentes, vues
+ * Le calendrier pose ces teintes en petites cellules adjacentes, vues
  * rapidement et pas toujours en pleine attention : 15 retient une marge
  * confortable au-dessus du simple « perceptible », sans réduire l'espace des
  * teintes chaudes disponibles au point de ne plus pouvoir en placer six — la
- * palette livrée ci-dessous tient 24,11 au pire couple, largement au-dessus.
+ * palette livrée ci-dessous tient 17,27 au pire couple, au-dessus.
  *
  * Le chiffre est **mesuré**, sur toutes les `DISTINCTION_PAIRS` des cinq
  * préréglages, et il n'est annoncé qu'**une fois** ci-dessus : une seconde
  * copie se périmerait sans que le garde-fou la voie, ce qui est exactement ce
- * qui est arrivé. Le pire couple est `catA`/`catF` sur les deux versants
- * sombres, qui partagent `CATEGORIES_SOMBRE`. Le 20,97 qu'annonçait ce
- * commentaire datait du lot 1f — c'était l'écart de la palette chaude du lot
- * 1e, et il a survécu au remplacement complet de la palette. `tokens.test.ts`
- * confronte désormais ce nombre-ci au calcul, et refuse tout autre décimal
- * dans ce commentaire : il ne peut plus se périmer en silence.
+ * qui est arrivé. Le pire couple est désormais `saisie`/`offStrong` sur le
+ * neutre clair — l'aplat de saisie contre le fond des fériés —, la liste des
+ * paires ayant cessé de s'arrêter aux six teintes catégorielles. Le 20,97
+ * qu'annonçait ce commentaire datait du lot 1f — c'était l'écart de la palette
+ * chaude du lot 1e, et il a survécu au remplacement complet de la palette.
+ * `tokens.test.ts` confronte désormais ce nombre-ci au calcul, et refuse tout
+ * autre décimal dans ce commentaire : il ne peut plus se périmer en silence.
  */
 export const MIN_CATEGORY_DISTANCE = 15
+
+/**
+ * Ce qu'une même grille peut peindre **en même temps**, portée par portée.
+ *
+ * C'est de là que se déduisent les paires de distinction, et c'est ce qui
+ * manquait : la liste ne connaissait que les six teintes catégorielles, alors
+ * que le lot 1g avait mis deux aplats de plus en service, porteurs exactement
+ * du même sens — « cette case est remplie » contre « cette case est vide ».
+ *
+ * - En portée « Toutes les prestations », chaque prestation reçoit sa teinte
+ *   catégorielle (`colorForLine`) et les jours prévisionnels de celle qu'on
+ *   saisit reçoivent `prevu` : les sept se côtoient dans la même grille.
+ * - En portée « Cette prestation » — la portée par **défaut**, celle que tout
+ *   le monde voit —, une teinte catégorielle ne distinguerait rien : l'aplat
+ *   est `saisie`, et il ne voisine que `prevu`.
+ *
+ * `saisie` et les six catégorielles ne s'y trouvent donc jamais ensemble, et
+ * la liste ne les confronte pas : exiger un écart entre deux aplats qui ne
+ * peuvent pas se voir reviendrait à contraindre la palette au nom d'une
+ * confusion impossible. Ce que chacun doit à la **surface qui le porte**, en
+ * revanche, ne dépend d'aucune portée — voir la seconde famille plus bas.
+ */
+const APLATS_SIMULTANES: readonly (readonly (keyof ThemeTokens)[])[] = [
+  [...CATEGORY_BACKGROUNDS, 'prevu'],
+  ['prevu', 'saisie'],
+]
+
+/**
+ * Toutes les teintes d'aplat du système, dédupliquées — dérivées de ce que les
+ * portées ci-dessus peignent. `src/core/saisie/colors.test.ts` confronte cette
+ * liste aux teintes que `colors.ts` sait réellement poser : une septième y
+ * entrera sans qu'on y pense, ou fera tomber ce contrôle-là.
+ */
+export const APLAT_BACKGROUNDS: readonly (keyof ThemeTokens)[] = [
+  ...new Set(APLATS_SIMULTANES.flat()),
+]
 
 /**
  * Toutes les paires de surfaces qui doivent rester discernables l'une de
  * l'autre — **dérivées, jamais énumérées**.
  *
- * Deux familles, et la seconde est celle qui manquait :
+ * Deux familles :
  *
- * 1. les six fonds catégoriels deux à deux — deux prestations affichées côte à
- *    côte dans le calendrier ;
- * 2. chaque fond catégoriel contre chacun des `FONDS_DE_TEXTE` — une cellule
- *    *remplie* contre une cellule *vide*. Le lot 1e ne vérifiait que la
- *    première famille, et la seconde échouait en silence sur les deux palettes
+ * 1. les aplats qu'une même grille peut peindre ensemble, deux à deux — deux
+ *    prestations côte à côte, un jour prévisionnel contre un jour réalisé ;
+ * 2. chaque aplat contre chacun des `FONDS_DE_TEXTE` — une cellule *remplie*
+ *    contre une cellule *vide*. Le lot 1e ne vérifiait que la première
+ *    famille, et la seconde échouait en silence sur les deux palettes
  *    livrées : `catF` n'était qu'à 10,0 (ΔE\*ab) du fond des week-ends sur la
  *    palette de la marque, `catC` à 12,5 du fond des fériés. La distance entre
  *    deux teintes ne dépend pas du fond ; la distance d'une teinte à son fond,
  *    si — c'est tout l'objet du soupçon « c'est peut-être mon thème
  *    d'entreprise qui fout le bazar », et il était fondé.
  *
- * Écrire ces 39 paires à la main les aurait rendues fausses à la première
- * septième catégorie. Elles se déduisent de `CATEGORY_BACKGROUNDS` et de
- * `FONDS_DE_TEXTE`, qui se déduisent eux-mêmes de `CATEGORIES` et du contrat
- * d'usage — ajouter une catégorie ajoute ses paires sans qu'on y pense.
+ * Écrire ces paires à la main les aurait rendues fausses à la première
+ * septième catégorie — et elles l'ont été à la première teinte d'aplat ajoutée
+ * hors de la palette catégorielle. Elles se déduisent d'`APLATS_SIMULTANES` et
+ * de `FONDS_DE_TEXTE`, qui se déduisent eux-mêmes de `CATEGORIES` et du contrat
+ * d'usage.
  *
  * Ce que la liste n'inclut délibérément pas : les `FONDS_DE_TEXTE` entre eux.
  * `page` et `surface` sont voisins **par construction** dans les trois thèmes,
@@ -921,12 +974,24 @@ export const MIN_CATEGORY_DISTANCE = 15
 export const DISTINCTION_PAIRS: readonly {
   a: keyof ThemeTokens
   b: keyof ThemeTokens
-}[] = [
-  ...CATEGORY_BACKGROUNDS.flatMap((a, i) =>
-    CATEGORY_BACKGROUNDS.slice(i + 1).map((b) => ({ a, b })),
-  ),
-  ...CATEGORY_BACKGROUNDS.flatMap((a) => FONDS_DE_TEXTE.map((b): { a: keyof ThemeTokens; b: keyof ThemeTokens } => ({ a, b }))),
-]
+}[] = (() => {
+  const paires = new Map<string, { a: keyof ThemeTokens; b: keyof ThemeTokens }>()
+  const poser = (a: keyof ThemeTokens, b: keyof ThemeTokens): void => {
+    // `prevu` appartient aux deux portées : sans déduplication, ses paires
+    // seraient mesurées — et signalées — deux fois.
+    if (!paires.has(`${a}/${b}`)) paires.set(`${a}/${b}`, { a, b })
+  }
+
+  for (const portee of APLATS_SIMULTANES) {
+    for (let i = 0; i + 1 < portee.length; i++) {
+      for (let j = i + 1; j < portee.length; j++) poser(portee[i]!, portee[j]!)
+    }
+  }
+  for (const aplat of APLAT_BACKGROUNDS) {
+    for (const fond of FONDS_DE_TEXTE) poser(aplat, fond)
+  }
+  return [...paires.values()]
+})()
 
 export interface ContrastIssue {
   kind: 'contraste'

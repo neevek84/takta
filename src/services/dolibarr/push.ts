@@ -11,26 +11,9 @@ import {
   DolibarrRequestError,
   DolibarrUnavailableError,
   type DolibarrApi,
+  type DolibarrTask,
 } from './api'
-
-/** Types d'entités portés par `ExternalLink` pour ce connecteur. */
-const LIEN_MISSION = 'Mission'
-const LIEN_LIGNE = 'MissionLine'
-/**
- * Une correspondance par **cellule de grille**, pas par saisie : la clé est
- * `craId|lineId|date|slotId`. Une saisie supprimée puis ressaisie retombe donc
- * sur le même temps passé chez Dolibarr au lieu d'en créer un second, et le
- * préfixe `craId|` permet de retrouver d'un coup tout ce qui a été poussé pour
- * ce CRA — y compris ce qui n'a plus de saisie locale.
- *
- * C'est cette table qui porte **toute** l'idempotence du push : `addTimeSpent`
- * n'en a aucune côté Dolibarr, et deux appels produisent deux lignes de temps
- * consommé chez le client.
- */
-const LIEN_TEMPS = 'CraTimeSpent'
-
-/** Sépare les quatre parts de la clé de cellule. Aucun `cuid` n'en contient. */
-const SEPARATEUR = '|'
+import { LIEN_LIGNE, LIEN_MISSION, LIEN_TEMPS, SEPARATEUR } from './liens'
 
 export interface PushResult {
   poussees: number
@@ -215,6 +198,19 @@ export async function pushCraTimes(args: {
   const tacheParLigne = new Map<string, number>()
 
   /**
+   * Les tâches du projet **actuellement** rattaché, lues une fois par push.
+   *
+   * Une seule lecture, et non une par prestation : le lot entier vise le même
+   * projet. La tâche créée en cours de route rejoint la liste, sans quoi deux
+   * prestations de même libellé en créeraient deux.
+   */
+  let tachesDuProjet: DolibarrTask[] | null = null
+  async function tachesProjet(): Promise<DolibarrTask[]> {
+    tachesDuProjet ??= await args.api.listTasks(projectId)
+    return tachesDuProjet
+  }
+
+  /**
    * Une prestation se mappe sur une **tâche** du projet. Elle est adoptée si
    * une tâche du même libellé existe déjà — cas d'une base Dolibarr organisée
    * à la main — et créée sinon, une seule fois, le lien étant alors mémorisé.
@@ -237,17 +233,28 @@ export async function pushCraTimes(args: {
       },
       select: { externalId: true },
     })
+    // Une correspondance mémorisée ne vaut que si sa tâche appartient **encore**
+    // au projet rattaché. Le rattachement rompt déjà ces correspondances quand
+    // la mission est repointée (`rompreLiensDerives`) ; cette vérification-ci
+    // couvre ce qui a été posé avant elle, et tout chemin qui repointerait la
+    // mission sans passer par le service. Sans elle, la tâche d'hier — donc le
+    // projet d'hier, donc éventuellement le tiers d'hier — reste la cible.
     if (lien !== null) {
       const id = Number(lien.externalId)
-      tacheParLigne.set(lineId, id)
-      return id
+      if ((await tachesProjet()).some((t) => t.id === id)) {
+        tacheParLigne.set(lineId, id)
+        return id
+      }
     }
 
     const label = labelParLigne.get(lineId) ?? lineId
-    const existantes = await args.api.listTasks(projectId)
+    const existantes = await tachesProjet()
     const deja = existantes.find((t) => t.label === label)
     const tache = deja ?? (await args.api.createTask({ projectId, label }))
-    if (deja === undefined) resultat.tachesCreees += 1
+    if (deja === undefined) {
+      resultat.tachesCreees += 1
+      existantes.push(tache)
+    }
 
     // Comme la correspondance mission → projet, celle-ci est de portée
     // instance : la prestation est la même pour tous ceux qui l'imputent. La

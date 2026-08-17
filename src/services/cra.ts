@@ -382,14 +382,33 @@ export async function listCrasNonClotures(
 }
 
 /**
- * Les CRA envoyés que trois relances n'ont pas fait revenir.
+ * Les CRA envoyés dont la signature ne reviendra pas d'elle-même.
+ *
+ * Deux situations, et c'est volontairement une union :
+ *
+ *   - **trois relances sans réponse** (`abandoned`) : le circuit automatique a
+ *     rendu la main ;
+ *   - **une demande expirée chez le prestataire** : plus personne ne peut la
+ *     signer, et elle n'est plus relancée non plus. Sans cette branche, un
+ *     document expiré laissait un CRA bloqué en `ENVOYE`, absent de cette
+ *     liste comme des alertes — alors que le commentaire d'`apply.ts` annonce
+ *     exactement l'inverse.
  *
  * Ils restent `ENVOYE` — on ne les annule pas de force : c'est un problème
- * humain, et le rendre visible est tout ce que le logiciel peut faire.
+ * humain, et le rendre visible est tout ce que le logiciel peut faire. C'est
+ * aussi pourquoi l'état du CRA fait partie du filtre : un CRA validé ou refusé
+ * à la main depuis n'est plus en souffrance, quoi que sa demande raconte, et
+ * l'y laisser enverrait le porteur relancer un client sur un mois déjà clos.
  */
 export async function listCrasEnSouffrance(userId: string): Promise<CraView[]> {
   const rows = await prisma.cra.findMany({
-    where: { userId, signatureRequest: { abandoned: true, status: 'EN_ATTENTE' } },
+    where: {
+      userId,
+      status: 'ENVOYE',
+      signatureRequest: {
+        OR: [{ abandoned: true, status: 'EN_ATTENTE' }, { status: 'EXPIRE' }],
+      },
+    },
     include: WITH_MISSION,
     orderBy: { month: 'asc' },
   })

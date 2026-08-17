@@ -158,11 +158,14 @@ function quantiteAffichee(cell: Cell, line: LineForGrid): string {
  */
 function formeDeLaCellule(
   cell: Cell | undefined,
-  line: LineForGrid,
   slots: readonly Slot[],
 ): Forme {
   if (cell === undefined) return { kind: 'AUCUNE' }
-  const etat = readCellState(cell.brutes, { minutesParJour: line.minutesParJour, slots })
+  // Le facteur de la prestation n'entre pas dans la lecture : chaque saisie
+  // porte celui qui a été figé à son écriture. C'est la condition pour que la
+  // cellule et la case du calendrier classent la journée pareil, y compris sur
+  // un CRA validé dont le réglage a bougé depuis.
+  const etat = readCellState(cell.brutes, { slots })
   // Les saisies partent une à une : chacune porte le facteur figé à son
   // écriture, et `formeDeLaCase` les convertit à facteur constant. Sommer
   // d'abord donnerait une hauteur d'aplat fausse.
@@ -485,7 +488,7 @@ export function MonthGrid({
                 // Seulement en vue journée : sur un créneau choisi, la cellule
                 // est modifiable, c'est tout l'objet de ce lot.
                 const parCreneaux = slotDe(l.id) === '' && cells.get(key)?.hasSlots === true
-                const forme = formeDeLaCellule(cell, l, slots)
+                const forme = formeDeLaCellule(cell, slots)
                 const previsionnel = etatSaisie(cell) === 'previsionnel'
                 // Une seule encre pour la cellule, et le champ la reprend :
                 // c'est elle que `CoinAgrege` prend par `currentColor`, et deux

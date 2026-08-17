@@ -2,8 +2,10 @@ import type { FetchLike } from '@/services/webhooks/delivery'
 import type { Mailer } from '@/services/notify'
 import {
   distributionRappels,
+  rafraichissementSignatures,
   rappelCloture,
   rappelSaisie,
+  relanceSignatures,
   verificationJournal,
   vidageFileSortie,
 } from './handlers'
@@ -93,20 +95,23 @@ export const JOB_DEFINITIONS: readonly JobDefinition[] = [
  * d'ici — le test « chaque travail déclaré est traité, ou explicitement
  * différé » l'y oblige.
  *
- * `outbox.flush` n'y figure plus : les lots 1b et 2 sont livrés, et
- * `flushAllProviders` existe. Annoncer « porté par un lot à venir » un
- * traitement déjà écrit ferait mentir l'écran aussi sûrement que le silence.
+ * **Le tableau est vide, et c'est le fait de la livraison.** Il portait encore
+ * les deux travaux de signature alors que `runSignatureReminders` et
+ * `refreshPendingSignatures` étaient écrits, testés et exportés : la case
+ * « différé » satisfaisait le garde-fou, l'écran de supervision affichait
+ * indéfiniment « ce travail est porté par le lot 3 », et **aucun CRA n'était
+ * jamais relancé, aucun webhook perdu jamais rattrapé**. Un travail écrit mais
+ * non inscrit ici ne se voit d'aucune autre façon.
  */
-export const TRAVAUX_DIFFERES: Readonly<Record<string, string>> = {
-  'signature.relance': 'lot 3',
-  'signature.rafraichissement': 'lot 3',
-}
+export const TRAVAUX_DIFFERES: Readonly<Record<string, string>> = {}
 
-/** Les travaux que ce lot porte. */
+/** Les travaux portés — les sept de la spec, sans exception. */
 export const JOB_HANDLERS: Readonly<Record<string, JobHandler>> = {
   'outbox.flush': vidageFileSortie,
   'webhooks.distribute': distributionRappels,
   'rappel.saisie': rappelSaisie,
   'rappel.cloture': rappelCloture,
+  'signature.relance': relanceSignatures,
+  'signature.rafraichissement': rafraichissementSignatures,
   'journal.verification': verificationJournal,
 }

@@ -61,14 +61,18 @@ describe('le registre', () => {
     }
   })
 
-  it('nomme le lot qui portera chaque travail différé', () => {
-    // Seuls les deux travaux de signature restent différés : leur lot est en
-    // cours. `outbox.flush`, lui, est porté — les lots 1b et 2 sont livrés,
-    // et `flushAllProviders` existe : le déclarer « à venir » mentirait.
-    expect(Object.keys(TRAVAUX_DIFFERES)).toEqual([
-      'signature.relance',
-      'signature.rafraichissement',
-    ])
+  it('PLUS AUCUN TRAVAIL N EST DIFFÉRÉ : les sept sont portés', () => {
+    // L'attente a changé, et c'est le fait de la livraison. Ce test figeait
+    // `['signature.relance', 'signature.rafraichissement']` : il verrouillait
+    // l'état exact que le lot 3 devait défaire, et livrer le raccordement le
+    // faisait échouer. Tant que le tableau restait plein, la case « différé »
+    // satisfaisait le garde-fou « traité, ou explicitement différé » — et
+    // aucun CRA n'était jamais relancé, aucun webhook perdu jamais rattrapé.
+    //
+    // Ce qui reste gardé : chaque nom encore différé doit nommer son lot. Le
+    // jour où un huitième travail est déclaré sans traitement, cette
+    // assertion-là le reprend.
+    expect(TRAVAUX_DIFFERES).toEqual({})
     for (const lot of Object.values(TRAVAUX_DIFFERES)) {
       expect(lot).toMatch(/lot/i)
     }
@@ -251,10 +255,16 @@ describe('réveil', () => {
   })
 
   it('marque INDISPONIBLE un travail déclaré sans traitement, sans le compter en échec', async () => {
+    // L'attente a changé de sujet, pas de fond. Ce test prenait
+    // `signature.relance` comme exemple de travail non porté : plus aucun ne
+    // l'est, et s'appuyer sur un trou du produit pour couvrir un mécanisme
+    // faisait de sa disparition un échec de suite. Le registre est donc
+    // **injecté vide** — le mécanisme reste exercé, et le jour où un huitième
+    // travail est déclaré sans traitement, il se comportera comme ici.
     await syncJobDefinitions()
     await setJobEnabled(userId, 'signature.relance', true)
 
-    const rapport = await tick({ now: NOW, userId })
+    const rapport = await tick({ now: NOW, userId, handlers: {} })
 
     const ligne = rapport.executes.find((e) => e.name === 'signature.relance')
     expect(ligne).toMatchObject({ state: 'INDISPONIBLE' })
@@ -362,10 +372,11 @@ describe('vue des travaux', () => {
     const vues = await listJobs()
 
     expect(vues).toHaveLength(JOB_DEFINITIONS.length)
-    expect(vues.find((v) => v.name === 'journal.verification')!.disponible).toBe(true)
-    expect(vues.find((v) => v.name === 'outbox.flush')!.disponible).toBe(true)
-    expect(vues.find((v) => v.name === 'signature.relance')!.disponible).toBe(false)
+    // L'attente a changé : les deux travaux de signature sont portés, donc
+    // disponibles. L'écran n'affiche plus « Aucun traitement enregistré » pour
+    // eux — c'était le symptôme visible du défaut.
     for (const v of vues) {
+      expect(v.disponible, v.name).toBe(true)
       expect(v.label.length).toBeGreaterThan(0)
     }
   })

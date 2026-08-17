@@ -1,8 +1,10 @@
 import { prisma } from '@/db/client'
-import { applyTransition, canTransition } from '@/core/cra/state-machine'
+import { canTransition } from '@/core/cra/state-machine'
 import { libelleMois } from '@/core/cra/document'
 import type { SignatureConnector } from '@/core/signature/connector'
 import type { CraStatus } from '@/core/types'
+import { actorOf, appendAudit } from '@/services/audit'
+import { transitionCra } from '@/services/cra'
 import { buildCraPdf } from '@/services/cra-pdf'
 import { ENTITY_CRA } from './constants'
 import { getSignatureConnector } from './registry'
@@ -145,8 +147,34 @@ export async function sendCraForSignature(
     update: { externalId, syncState: 'EN_ATTENTE', syncedAt: maintenant },
   })
 
-  const suivant = applyTransition(statut, 'ENVOYER')
-  await prisma.cra.update({ where: { id: craId }, data: { status: suivant } })
+  // **`transitionCra`, jamais un `cra.update` direct.** C'est l'unique point
+  // qui consigne la transition au journal de preuve : écrire le statut à la
+  // main ici rendait muet le geste central du lot, là où le bouton « Marquer
+  // envoyé » produisait bien une entrée `cra.envoye`. L'historique d'un CRA
+  // validé montrait alors `cra.ouvert` puis `cra.valide`, avec un trou au
+  // milieu, et aucun abonné à `cra.envoye` n'apprenait que le document était
+  // parti chez le client.
+  const vue = await transitionCra(userId, craId, 'ENVOYER')
 
-  return { ok: true, externalId, status: suivant }
+  // Et l'événement propre au lot 3, **après** la transition : le catalogue le
+  // promet aux abonnés (`core/audit/events.ts`), et un nom proposé à
+  // l'abonnement que personne n'émet est une promesse fausse.
+  //
+  // Ni le nom ni l'adresse du signataire n'y figurent : le journal est
+  // conservé indéfiniment et poussé vers des URL tierces. Le destinataire
+  // reste lisible sur la demande, qui, elle, ne sort pas.
+  await appendAudit({
+    ...(await actorOf(userId)),
+    action: 'signature.envoyee',
+    entityType: 'Cra',
+    entityId: craId,
+    payload: {
+      missionId: cra.missionId,
+      month: mois,
+      provider: connector.provider,
+      externalId,
+    },
+  })
+
+  return { ok: true, externalId, status: vue.status }
 }

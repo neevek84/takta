@@ -3,6 +3,8 @@ import { createClient } from '@/services/clients'
 import { createMission } from '@/services/missions'
 import { verifierCoherenceTiers } from '@/core/dolibarr/coherence'
 import { DOLIBARR, type DolibarrApi } from './api'
+import { LIEN_MISSION, rompreLiensDerives, type LienDolibarr } from './liens'
+import { rattraperCraValides } from './rattrapage'
 
 export interface RemoteThirdparty {
   id: number
@@ -30,6 +32,26 @@ export interface ImportCandidates {
 
 /** Les deux natures d'objet que cet écran sait rattacher. */
 export type ImportEntityType = 'Client' | 'Mission'
+
+/**
+ * Ce qu'un rattachement de projet a réellement fait — au-delà de la
+ * correspondance qu'il pose.
+ *
+ * Les trois nombres existent pour être **dits à l'écran**. Une rupture de
+ * correspondances dérivées et une mise en file d'historique sont des effets
+ * qu'un rattachement « réussi » ne laisse pas deviner, et qui décident de ce
+ * qui partira, ou non, chez le client.
+ */
+export interface AttachMissionResult {
+  /** la mission pointait déjà sur un **autre** projet */
+  repointage: boolean
+  /** correspondances `prestation → tâche` rompues par le repointage */
+  lignes: number
+  /** correspondances `cellule → temps consommé` rompues par le repointage */
+  temps: number
+  /** CRA déjà validés remis en file pour ce rattachement */
+  craRattrapes: number
+}
 
 /**
  * Correspondances existantes d'un type d'entité, indexées par identifiant
@@ -196,12 +218,40 @@ export async function tiersAttendu(clientId: string): Promise<number | null> {
 }
 
 /**
+ * Le projet Dolibarr auquel une mission est rattachée, ou `null`.
+ *
+ * Lu avant tout rattachement : c'est ce qui permet de reconnaître un
+ * **repointage** — un rattachement vers un autre projet que celui d'hier — du
+ * simple réenregistrement du même.
+ */
+async function projetRattache(missionId: string): Promise<string | null> {
+  const lien = await prisma.externalLink.findUnique({
+    where: {
+      entityType_entityId_provider: {
+        entityType: LIEN_MISSION,
+        entityId: missionId,
+        provider: DOLIBARR,
+      },
+    },
+    select: { externalId: true },
+  })
+  return lien?.externalId ?? null
+}
+
+/**
  * Rattache une mission existante à un projet Dolibarr.
  *
  * Refuse si le tiers du projet (`projectSocid`) ne correspond pas au tiers
  * déjà rattaché au client de la mission : rien n'empêcherait sinon de
  * rattacher le projet du tiers A à une mission du client B, et les temps
  * poussés atterriraient chez le mauvais client.
+ *
+ * **Un repointage rompt les correspondances dérivées.** Rattacher ailleurs
+ * sans les rompre ne changeait rien du tout : le push retrouvait les tâches de
+ * l'ancien projet et continuait d'y déverser les temps — le nouveau projet
+ * restait vide, et le refus de cohérence ne pouvait rien y voir puisqu'il ne
+ * s'exécute qu'ici. Le compte rendu dit combien de correspondances sont
+ * tombées : une rupture silencieuse laisserait croire que rien n'a bougé.
  */
 export async function attachMission(args: {
   userId: string
@@ -211,7 +261,7 @@ export async function attachMission(args: {
   projectRef: string
   /** tiers auquel Dolibarr rattache le projet ; null si le projet n'en porte aucun */
   projectSocid: number | null
-}): Promise<void> {
+}): Promise<AttachMissionResult> {
   const mission = await prisma.mission.findUniqueOrThrow({
     where: { id: args.missionId },
     select: { client: { select: { id: true, name: true } } },
@@ -224,12 +274,20 @@ export async function attachMission(args: {
     expectedThirdpartyId: await tiersAttendu(mission.client.id),
   })
 
+  const precedent = await projetRattache(args.missionId)
+  const repointage = precedent !== null && precedent !== String(args.dolibarrProjectId)
+  const rupture = repointage
+    ? await rompreLiensDerives(args.missionId)
+    : { lignes: 0, temps: 0 }
+
   await poser({
     userId: args.userId,
-    entityType: 'Mission',
+    entityType: LIEN_MISSION,
     entityId: args.missionId,
     externalId: String(args.dolibarrProjectId),
   })
+
+  return { repointage, ...rupture, craRattrapes: await rattraperCraValides(args.missionId) }
 }
 
 /**
@@ -263,10 +321,12 @@ export async function createMissionFromDolibarr(args: {
   const m = await createMission({ clientId: args.clientId, label: args.label })
   await poser({
     userId: args.userId,
-    entityType: 'Mission',
+    entityType: LIEN_MISSION,
     entityId: m.id,
     externalId: String(args.dolibarrProjectId),
   })
+  // Aucun rattrapage ni aucune rupture à annoncer : une mission qui vient de
+  // naître n'a ni prestation, ni CRA, ni correspondance dérivée.
   return { missionId: m.id }
 }
 
@@ -314,12 +374,31 @@ export async function pushClientToDolibarr(args: {
  * Rompt une correspondance sans rien supprimer des deux côtés. Toute référence
  * externe est nullable à tout moment (spec §1) — c'est ce qui préserve
  * l'autoportance de l'application.
+ *
+ * **Les cinq natures, pas deux.** Le connecteur en pose cinq ; la rupture n'en
+ * connaissait que deux, et les trois autres — `MissionLine`,
+ * `MissionLinePropalLine`, `CraTimeSpent` — n'avaient aucun chemin de rupture,
+ * ni par l'interface ni par un service. La promesse citée juste au-dessus était
+ * donc fausse pour la majorité d'entre elles, et un repointage de mission
+ * n'était réparable qu'en base. `LienDolibarr` ferme la liste : une sixième
+ * nature ne compilera pas sans passer par ici.
+ *
+ * **Détacher une mission rompt ce qu'elle a engendré.** Garder les tâches et
+ * les temps de l'ancien projet après avoir rompu le projet lui-même ne laisse
+ * que des correspondances orphelines, qui redeviendraient actives au premier
+ * rattachement suivant — vers un autre projet, donc vers les mauvaises tâches.
+ *
+ * `userId` n'est pas un filtre, et ne peut pas l'être : ces correspondances
+ * sont de portée instance, posées par l'écran d'administration pour tout le
+ * monde. Il reste la trace de qui a demandé la rupture.
  */
 export async function detachEntity(args: {
   userId: string
-  entityType: ImportEntityType
+  entityType: LienDolibarr
   entityId: string
 }): Promise<void> {
+  if (args.entityType === LIEN_MISSION) await rompreLiensDerives(args.entityId)
+
   await prisma.externalLink.deleteMany({
     where: { entityType: args.entityType, entityId: args.entityId, provider: DOLIBARR },
   })

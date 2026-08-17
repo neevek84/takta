@@ -16,6 +16,7 @@ const {
   detachEntity,
   listProjects,
   applyDolibarrSetup,
+  rattraperCraValides,
 } = vi.hoisted(() => ({
   requireUser: vi.fn(),
   revalidatePath: vi.fn(),
@@ -32,6 +33,7 @@ const {
   detachEntity: vi.fn(),
   listProjects: vi.fn(),
   applyDolibarrSetup: vi.fn(),
+  rattraperCraValides: vi.fn(),
 }))
 
 vi.mock('@/auth', () => ({ requireUser }))
@@ -48,6 +50,7 @@ vi.mock('@/services/dolibarr/import', () => ({
   pushClientToDolibarr,
   detachEntity,
 }))
+vi.mock('@/services/dolibarr/rattrapage', () => ({ rattraperCraValides }))
 vi.mock('@/services/dolibarr/setup', () => ({ applyDolibarrSetup }))
 
 import {
@@ -79,6 +82,9 @@ function formulaireConnexion(patch: Record<string, string> = {}): FormData {
   return fd
 }
 
+/** Un rattachement sans repointage ni rattrapage : rien à annoncer. */
+const RATTACHEMENT_SIMPLE = { repointage: false, lignes: 0, temps: 0, craRattrapes: 0 }
+
 function form(champs: Record<string, string>): FormData {
   const fd = new FormData()
   for (const [k, v] of Object.entries(champs)) fd.set(k, v)
@@ -95,7 +101,7 @@ beforeEach(() => {
   createHttpDolibarrApi.mockReset().mockReturnValue({ listProjects })
   getDolibarrApi.mockReset().mockResolvedValue({ listProjects })
   attachClient.mockReset().mockResolvedValue(undefined)
-  attachMission.mockReset().mockResolvedValue(undefined)
+  attachMission.mockReset().mockResolvedValue(RATTACHEMENT_SIMPLE)
   createClientFromDolibarr.mockReset().mockResolvedValue({ clientId: 'c-neuf' })
   createMissionFromDolibarr.mockReset().mockResolvedValue({ missionId: 'm-neuf' })
   pushClientToDolibarr.mockReset().mockResolvedValue({ dolibarrThirdpartyId: 42 })
@@ -103,6 +109,7 @@ beforeEach(() => {
   applyDolibarrSetup
     .mockReset()
     .mockResolvedValue({ reglagesRepris: [], recalibrees: 0, sauteesVerrouillees: 0 })
+  rattraperCraValides.mockReset().mockResolvedValue(0)
 })
 
 /**
@@ -223,6 +230,33 @@ describe('connecterDolibarr', () => {
     expect(rendu).not.toContain(CLE_FICTIVE)
   })
 
+  // La connexion est l'un des deux instants où le push s'arme : tout ce qui a
+  // été validé avant elle n'est jamais entré dans la file, et rien ne l'y
+  // ramenait. Le rattrapage se déclenche ici, et se dit.
+  it('rattrape les CRA déjà validés et annonce combien', async () => {
+    rattraperCraValides.mockResolvedValue(7)
+
+    const r = await connecterDolibarr(null, formulaireConnexion())
+
+    expect(rattraperCraValides).toHaveBeenCalledTimes(1)
+    expect(r).toMatchObject({ ok: true })
+    expect(r && 'message' in r ? r.message : '').toContain('7 CRA')
+  })
+
+  it('dit qu il n y avait rien à rattraper, plutôt que de se taire', async () => {
+    const r = await connecterDolibarr(null, formulaireConnexion())
+
+    expect(r && 'message' in r ? r.message : '').toMatch(/aucun cra validé/i)
+  })
+
+  it('ne rattrape rien quand la clé est refusée', async () => {
+    listProjects.mockRejectedValue(new Error('401'))
+
+    await connecterDolibarr(null, formulaireConnexion())
+
+    expect(rattraperCraValides).not.toHaveBeenCalled()
+  })
+
   it('ne renvoie jamais la clé dans le message de succès', async () => {
     const state = await connecterDolibarr(null, formulaireConnexion())
     expect(JSON.stringify(state)).not.toContain(CLE_FICTIVE)
@@ -311,6 +345,30 @@ describe('rattachement des projets', () => {
       projectRef: 'PJ030',
       projectSocid: null,
     })
+  })
+
+  // Un repointage rompt les correspondances de l'ancien projet, et un
+  // rattachement rattrape les mois déjà validés : deux effets qu'un
+  // « rattachement réussi » ne laisse pas deviner, et qui décident de ce qui
+  // partira chez le client.
+  it('annonce le repointage et le rattrapage, qui ne se devinent pas', async () => {
+    attachMission.mockResolvedValue({ repointage: true, lignes: 2, temps: 9, craRattrapes: 3 })
+
+    await rattacherProjet(form({ dolibarrId: '30', missionId: 'm1', ref: 'PJ030', socid: '5' }))
+
+    expect(redirect).toHaveBeenCalledTimes(1)
+    const cible = decodeURIComponent(String(redirect.mock.calls[0]![0]))
+    expect(cible).toContain('2 correspondance(s) de prestation')
+    expect(cible).toContain('9 de temps consommé')
+    expect(cible).toContain('3 CRA')
+    expect(cible).toContain('tone=success')
+  })
+
+  it('ne dit rien d un rattachement ordinaire', async () => {
+    await rattacherProjet(form({ dolibarrId: '30', missionId: 'm1', ref: 'PJ030', socid: '5' }))
+
+    expect(redirect).not.toHaveBeenCalled()
+    expect(revalidatePath).toHaveBeenCalledWith('/admin/dolibarr')
   })
 
   it('annonce le refus du service au lieu de laisser planter la page', async () => {

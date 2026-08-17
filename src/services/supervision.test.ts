@@ -1,20 +1,27 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/db/client'
 import { ACTEUR_SYSTEME, appendAudit } from '@/services/audit'
+import { createClient } from '@/services/clients'
+import { createMission } from '@/services/missions'
 import { syncJobDefinitions } from './jobs/scheduler'
 import { listAlertes, readOrdonnanceur } from './supervision'
 
 let userId = ''
+let missionId = ''
 
 beforeAll(async () => {
   userId = (
     await prisma.user.create({ data: { email: 'supervision@test.local', name: 'K', passwordHash: 'x' } })
   ).id
+  const c = await createClient('SUPERVISION client', null, userId)
+  missionId = (await createMission({ clientId: c.id, label: 'M', userId })).id
 })
 
 beforeEach(async () => {
   await prisma.webhook.deleteMany({})
   await prisma.scheduledJob.deleteMany({})
+  await prisma.signatureRequest.deleteMany({})
+  await prisma.cra.deleteMany({ where: { userId } })
   await prisma.auditEvent.deleteMany({})
   await syncJobDefinitions()
 })
@@ -22,10 +29,29 @@ beforeEach(async () => {
 afterAll(async () => {
   await prisma.webhook.deleteMany({})
   await prisma.scheduledJob.deleteMany({})
+  await prisma.signatureRequest.deleteMany({})
+  await prisma.cra.deleteMany({ where: { userId } })
   await prisma.auditEvent.deleteMany({})
   await prisma.user.deleteMany({ where: { email: { startsWith: 'supervision' } } })
+  await prisma.client.deleteMany({ where: { name: 'SUPERVISION client' } })
   await prisma.$disconnect()
 })
+
+/** Un CRA envoyé dont la demande de signature est dans l'état demandé. */
+async function craEnSouffrance(demande: Record<string, unknown>): Promise<string> {
+  const cra = await prisma.cra.create({
+    data: {
+      userId,
+      missionId,
+      month: new Date('2026-06-01T00:00:00.000Z'),
+      status: 'ENVOYE',
+    },
+  })
+  await prisma.signatureRequest.create({
+    data: { craId: cra.id, provider: 'double', status: 'EN_ATTENTE', ...demande },
+  })
+  return cra.id
+}
 
 async function abonnement(patch: Record<string, unknown> = {}) {
   return prisma.webhook.create({
@@ -122,6 +148,36 @@ describe('alertes', () => {
     await prisma.auditEvent.update({ where: { seq: 1 }, data: { payloadJson: '{"x":1}' } })
 
     expect((await listAlertes(userId))[0]!.code).toBe('JOURNAL_ROMPU')
+  })
+
+  it('SIGNALE LES CRA EN SOUFFRANCE DE SIGNATURE', async () => {
+    // L'alerte que le lot 3 devait ajouter à l'union : sans elle, l'écran
+    // vers lequel le produit dirige l'utilisateur pour savoir « ce qui demande
+    // une action » annonce « rien ne demande d'action » alors que des CRA
+    // attendent une reprise à la main.
+    const craId = await craEnSouffrance({ abandoned: true, status: 'EN_ATTENTE' })
+
+    const alertes = await listAlertes(userId)
+    const souffrance = alertes.find((a) => a.code === 'CRA_SOUFFRANCE_SIGNATURE')
+    expect(souffrance, 'aucune alerte de CRA en souffrance').toBeDefined()
+    expect(souffrance!.detail).toContain('SUPERVISION client')
+    expect(souffrance!.detail).toContain('2026-06')
+
+    await prisma.cra.delete({ where: { id: craId } })
+  })
+
+  it('signale aussi une demande expirée, qu aucune relance ne reprendra', async () => {
+    const craId = await craEnSouffrance({ status: 'EXPIRE' })
+
+    expect((await listAlertes(userId)).map((a) => a.code)).toContain('CRA_SOUFFRANCE_SIGNATURE')
+
+    await prisma.cra.delete({ where: { id: craId } })
+  })
+
+  it('n alerte pas sur un CRA dont la signature suit son cours', async () => {
+    const craId = await craEnSouffrance({ status: 'EN_ATTENTE', abandoned: false })
+    expect(await listAlertes(userId)).toEqual([])
+    await prisma.cra.delete({ where: { id: craId } })
   })
 
   it('isole par utilisateur', async () => {

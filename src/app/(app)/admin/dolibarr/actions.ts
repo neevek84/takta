@@ -16,6 +16,7 @@ import {
   detachEntity,
   type ImportEntityType,
 } from '@/services/dolibarr/import'
+import { rattraperCraValides } from '@/services/dolibarr/rattrapage'
 import { applyDolibarrSetup } from '@/services/dolibarr/setup'
 
 const CHEMIN = '/admin/dolibarr'
@@ -89,8 +90,22 @@ export async function connecterDolibarr(
     metadata: { dolibarrUserId },
   })
 
+  // La connexion est l'un des deux instants où le push s'arme. Tout ce qui a
+  // été validé avant elle n'est jamais entré dans la file : sans ce
+  // rattrapage, l'historique reste hors de Dolibarr définitivement, et rien à
+  // l'écran ne le dit. Le compte est annoncé dans les deux cas — « aucun »
+  // est une information, pas un silence.
+  const rattrapes = await rattraperCraValides()
+
   revalidatePath(CHEMIN)
-  return { ok: true, message: 'Connexion à Dolibarr enregistrée.' }
+  return {
+    ok: true,
+    message:
+      rattrapes === 0
+        ? "Connexion à Dolibarr enregistrée. Aucun CRA validé n'attendait d'être poussé."
+        : `Connexion à Dolibarr enregistrée. ${rattrapes} CRA déjà validé(s) ont été mis en file : ` +
+          'ils partiront à la prochaine synchronisation.',
+  }
 }
 
 /**
@@ -129,6 +144,39 @@ export async function rattacherTiers(formData: FormData): Promise<void> {
  * mission : `attachMission` et `createMissionFromDolibarr` portent le refus,
  * cette action se contente de l'annoncer au lieu de laisser planter la page.
  */
+/**
+ * Ce qu'un rattachement a fait **au-delà** de la correspondance qu'il pose, ou
+ * `null` quand il n'y a rien à dire.
+ *
+ * Les deux effets annoncés ici ne se devinent pas, et décident tous les deux de
+ * ce qui partira chez le client : un repointage rompt les tâches et les temps
+ * de l'ancien projet, et un rattachement rattrape les mois validés avant lui.
+ * Les taire, c'est le défaut d'origine — un historique hors de Dolibarr, ou des
+ * temps qui continuent d'atterrir chez le tiers précédent, sans un mot.
+ */
+function resumeRattachement(r: {
+  repointage: boolean
+  lignes: number
+  temps: number
+  craRattrapes: number
+}): string | null {
+  const phrases: string[] = []
+  if (r.repointage) {
+    phrases.push(
+      `Projet repointé : ${r.lignes} correspondance(s) de prestation et ${r.temps} de temps ` +
+        'consommé ont été rompues. Les temps suivants iront dans le nouveau projet ; ' +
+        "ce qui a déjà été poussé reste dans l'ancien.",
+    )
+  }
+  if (r.craRattrapes > 0) {
+    phrases.push(
+      `${r.craRattrapes} CRA déjà validé(s) ont été mis en file : ils partiront à la ` +
+        'prochaine synchronisation.',
+    )
+  }
+  return phrases.length === 0 ? null : phrases.join(' ')
+}
+
 export async function rattacherProjet(formData: FormData): Promise<void> {
   const user = await requireUser()
   const dolibarrProjectId = Number(formData.get('dolibarrId'))
@@ -137,6 +185,7 @@ export async function rattacherProjet(formData: FormData): Promise<void> {
   const projectSocid = socidBrut === '' ? null : Number(socidBrut)
   const missionId = String(formData.get('missionId') ?? '')
 
+  let resume: string | null = null
   try {
     if (missionId === '') {
       const clientId = String(formData.get('clientId') ?? '')
@@ -152,13 +201,24 @@ export async function rattacherProjet(formData: FormData): Promise<void> {
         label: String(formData.get('titre') ?? ''),
       })
     } else {
-      await attachMission({ userId: user.id, missionId, dolibarrProjectId, projectRef, projectSocid })
+      resume = resumeRattachement(
+        await attachMission({
+          userId: user.id,
+          missionId,
+          dolibarrProjectId,
+          projectRef,
+          projectSocid,
+        }),
+      )
     }
   } catch (err) {
     redirect(annonce(err instanceof Error ? err.message : String(err), 'danger'))
     return
   }
   revalidatePath(CHEMIN)
+  // Un rattachement ordinaire ne dit rien : la page se réaffiche, la
+  // correspondance est visible. Seuls les deux effets invisibles s'annoncent.
+  if (resume !== null) redirect(annonce(resume))
 }
 
 export async function detacher(formData: FormData): Promise<void> {

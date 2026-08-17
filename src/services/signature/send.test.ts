@@ -238,6 +238,52 @@ describe('sendCraForSignature', () => {
     expect(demande.signedPdf).toBeNull()
   })
 
+  it('CONSIGNE LA TRANSITION AU JOURNAL, comme le bouton « Marquer envoyé »', async () => {
+    // L'envoi pour signature est le geste central du lot : il franchissait
+    // `BROUILLON → ENVOYE` par un `cra.update` direct, donc sans passer par
+    // `transitionCra` — le seul point qui consigne. Le même changement d'état
+    // était journalisé au clic manuel et muet ici, et l'historique d'un CRA
+    // validé montrait `cra.ouvert` puis `cra.valide` avec un trou au milieu.
+    await prisma.auditEvent.deleteMany({})
+    const connector = createFakeSignatureConnector()
+
+    await sendCraForSignature(userId, craId, { connector })
+
+    const entrees = await prisma.auditEvent.findMany({ orderBy: { seq: 'asc' } })
+    const envoye = entrees.find((e) => e.action === 'cra.envoye')
+    expect(envoye, 'aucune entrée `cra.envoye`').toBeDefined()
+    expect(envoye!.entityId).toBe(craId)
+    expect(envoye!.actorId).toBe(userId)
+  })
+
+  it('CONSIGNE `signature.envoyee`, que le catalogue promet aux abonnés', async () => {
+    await prisma.auditEvent.deleteMany({})
+    const connector = createFakeSignatureConnector()
+
+    await sendCraForSignature(userId, craId, { connector })
+
+    const entrees = await prisma.auditEvent.findMany({ orderBy: { seq: 'asc' } })
+    const signature = entrees.find((e) => e.action === 'signature.envoyee')
+    expect(signature, 'aucune entrée `signature.envoyee`').toBeDefined()
+    expect(signature!.entityId).toBe(craId)
+    const payload = JSON.parse(signature!.payloadJson) as Record<string, unknown>
+    expect(payload.provider).toBe('double')
+    // Le journal part vers des URL tierces : jamais l'adresse du signataire.
+    expect(signature!.payloadJson).not.toContain('claire@send.test')
+  })
+
+  it('NE CONSIGNE RIEN quand le connecteur échoue', async () => {
+    await prisma.auditEvent.deleteMany({})
+    const connector = createFakeSignatureConnector()
+    connector.faireEchouerEnvoi('Le prestataire est injoignable.')
+
+    await sendCraForSignature(userId, craId, { connector })
+
+    const actions = (await prisma.auditEvent.findMany({})).map((e) => e.action)
+    expect(actions).not.toContain('cra.envoye')
+    expect(actions).not.toContain('signature.envoyee')
+  })
+
   it('refuse le CRA d un autre utilisateur', async () => {
     const r = await sendCraForSignature(autreUserId, craId, {
       connector: createFakeSignatureConnector(),

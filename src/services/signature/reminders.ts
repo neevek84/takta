@@ -57,7 +57,16 @@ export async function runSignatureReminders(
       // une reprise humaine, pas un quatrième courriel.
       abandoned: false,
       completedAt: null,
-      ...(args.userId === undefined ? {} : { cra: { userId: args.userId } }),
+      // **Le CRA est joint, et son état fait partie du filtre.** Sans lui, un
+      // CRA validé — ou refusé — à la main pendant que la signature courait
+      // gardait une demande `EN_ATTENTE` intacte : `applySignatureStatus` rend
+      // `AUCUN` avant de marquer la demande quand la transition n'est plus
+      // franchissable. Le client recevait alors trois « merci de signer » sur
+      // un mois déjà arrêté, puis le CRA remontait en « souffrance ».
+      cra: {
+        status: 'ENVOYE',
+        ...(args.userId === undefined ? {} : { userId: args.userId }),
+      },
     },
     select: {
       craId: true,

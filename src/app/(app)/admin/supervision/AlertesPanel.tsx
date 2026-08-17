@@ -8,6 +8,9 @@ const TONALITES: Record<CodeAlerte, 'danger' | 'warning'> = {
   TRAVAIL_ECHEC: 'danger',
   ABONNEMENT_SUSPENDU: 'warning',
   LIVRAISON_ABANDONNEE: 'warning',
+  // Un CRA en souffrance n'est pas une panne du logiciel : c'est un client qui
+  // ne répond pas. Il demande une action humaine, pas une réparation.
+  CRA_SOUFFRANCE_SIGNATURE: 'warning',
 }
 
 export function AlertesPanel({ alertes }: { alertes: Alerte[] }) {

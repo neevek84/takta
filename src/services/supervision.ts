@@ -1,20 +1,27 @@
 import { prisma } from '@/db/client'
 import { verifyJournalChain } from './audit'
+import { listCrasEnSouffrance } from './cra'
 import { instanceOwnerId, listJobs } from './jobs/scheduler'
 
 /**
- * Les alertes que le lot 4 sait produire.
+ * Les alertes que la supervision sait produire.
  *
- * La spec en énumère trois autres — file de sortie abandonnée, conflits
- * d'agenda non arbitrés, CRA en souffrance de signature — qui appartiennent
- * aux lots 1b, 2 et 3. Le lot qui les livre étend cette union ; le
- * compilateur lui désignera alors l'écran à compléter.
+ * `CRA_SOUFFRANCE_SIGNATURE` est celle que le lot 3 devait ajouter à cette
+ * union et n'y avait pas ajoutée : l'écran vers lequel le produit dirige
+ * l'utilisateur pour savoir « ce qui demande une action » annonçait « rien ne
+ * demande d'action » pendant que des CRA attendaient une reprise à la main.
+ *
+ * La spec en énumère deux autres — file de sortie abandonnée, conflits
+ * d'agenda non arbitrés — qui appartiennent aux lots 1b et 2. Le lot qui les
+ * livre étend cette union ; le compilateur lui désignera alors l'écran à
+ * compléter.
  */
 export type CodeAlerte =
   | 'JOURNAL_ROMPU'
   | 'TRAVAIL_ECHEC'
   | 'ABONNEMENT_SUSPENDU'
   | 'LIVRAISON_ABANDONNEE'
+  | 'CRA_SOUFFRANCE_SIGNATURE'
 
 export interface Alerte {
   code: CodeAlerte
@@ -134,6 +141,24 @@ export async function listAlertes(userId: string): Promise<Alerte[]> {
           `Chacune peut être renvoyée à la main.`,
       })
     }
+  }
+
+  // 5. Les CRA que la signature ne fera plus revenir : trois relances sans
+  //    réponse, ou une demande expirée chez le prestataire. Une ligne par CRA
+  //    — ils se reprennent un par un, avec un client à la fois.
+  for (const cra of await listCrasEnSouffrance(userId)) {
+    const relances = cra.signature?.relances ?? 0
+    alertes.push({
+      code: 'CRA_SOUFFRANCE_SIGNATURE',
+      libelle: `CRA en souffrance de signature : ${cra.clientName} · ${cra.missionLabel}`,
+      detail:
+        `${cra.clientName} · ${cra.missionLabel} · ${cra.month} — ` +
+        (cra.signature?.status === 'EXPIRE'
+          ? 'la demande a expiré chez le prestataire ; aucune relance ne la reprendra.'
+          : `${relances} relance(s) sans réponse.`) +
+        ' Le CRA reste envoyé : à reprendre à la main avec le client, ou à renvoyer' +
+        ' après réouverture.',
+    })
   }
 
   return alertes

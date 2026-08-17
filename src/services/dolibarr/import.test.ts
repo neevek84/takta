@@ -4,6 +4,7 @@ import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
 import { FakeDolibarr } from './fake'
 import { DOLIBARR } from './api'
+import { LIENS_DOLIBARR } from './liens'
 import {
   listImportCandidates,
   attachClient,
@@ -420,5 +421,151 @@ describe('import initial', () => {
     // formulaire de connexion accessible.
     api.panne = true
     await expect(listImportCandidates(userId, api)).rejects.toThrow()
+  })
+})
+
+/**
+ * Le connecteur pose cinq natures de correspondance ; la rupture n'en
+ * connaissait que deux. Les trois autres n'avaient aucun chemin de rupture, ce
+ * qui rendait un repointage de mission irréparable sans intervention en base.
+ */
+describe('rupture des correspondances', () => {
+  const MOIS = new Date('2026-05-01T00:00:00.000Z')
+
+  /** Une mission rattachée au projet A, avec tout ce que le push mémorise. */
+  async function decor() {
+    const tiers = api.seedThirdparty('IMPORT ACME')
+    const projetA = api.seedProject({ ref: 'PJ-A', title: 'IMPORT A', socid: tiers.id })
+    const projetB = api.seedProject({ ref: 'PJ-B', title: 'IMPORT B', socid: tiers.id })
+
+    const client = await createClient('IMPORT ACME local')
+    await attachClient({ userId, clientId: client.id, dolibarrThirdpartyId: tiers.id })
+    const mission = await createMission({ clientId: client.id, label: 'IMPORT mission' })
+    const ligne = await createLine({
+      missionId: mission.id,
+      userId,
+      label: 'Développement',
+      soldCentiemes: 1000,
+      tjmCents: 80_000,
+    })
+    await attachMission({
+      userId,
+      missionId: mission.id,
+      dolibarrProjectId: projetA.id,
+      projectRef: projetA.ref,
+      projectSocid: tiers.id,
+    })
+
+    const cra = await prisma.cra.create({
+      data: { userId, missionId: mission.id, month: MOIS, status: 'VALIDE' },
+    })
+
+    // Ce qu'un push aurait laissé derrière lui : la tâche adoptée dans le
+    // projet A, et le temps consommé d'une cellule de mai.
+    for (const lien of [
+      { entityType: 'MissionLine', entityId: ligne.id, externalId: '55' },
+      { entityType: 'CraTimeSpent', entityId: `${cra.id}|${ligne.id}|2026-05-04|`, externalId: '55:77' },
+      { entityType: 'MissionLinePropalLine', entityId: ligne.id, externalId: '9:3' },
+    ]) {
+      await prisma.externalLink.create({
+        data: { userId, provider: DOLIBARR, syncState: 'SYNCED', ...lien },
+      })
+    }
+
+    return { tiers, projetA, projetB, client, mission, ligne, cra }
+  }
+
+  function compter(entityType: string): Promise<number> {
+    return prisma.externalLink.count({ where: { entityType, provider: DOLIBARR } })
+  }
+
+  it('repointer une mission rompt les tâches et les temps de l ancien projet', async () => {
+    const d = await decor()
+
+    const r = await attachMission({
+      userId,
+      missionId: d.mission.id,
+      dolibarrProjectId: d.projetB.id,
+      projectRef: d.projetB.ref,
+      projectSocid: d.tiers.id,
+    })
+
+    expect(r.repointage).toBe(true)
+    expect(r.lignes).toBe(1)
+    expect(r.temps).toBe(1)
+    expect(await compter('MissionLine')).toBe(0)
+    expect(await compter('CraTimeSpent')).toBe(0)
+    // La correspondance de mission, elle, pointe désormais sur le projet neuf.
+    const lien = await prisma.externalLink.findFirstOrThrow({
+      where: { entityType: 'Mission', entityId: d.mission.id },
+    })
+    expect(lien.externalId).toBe(String(d.projetB.id))
+  })
+
+  // Une propale appartient à un tiers, pas à un projet : repointer le projet
+  // ne rend pas faux l'engagement repris, et le rompre ferait reperdre des
+  // jours vendus qu'on ne saurait plus retrouver.
+  it('laisse intacte la reprise de propale', async () => {
+    const d = await decor()
+
+    await attachMission({
+      userId,
+      missionId: d.mission.id,
+      dolibarrProjectId: d.projetB.id,
+      projectRef: d.projetB.ref,
+      projectSocid: d.tiers.id,
+    })
+
+    expect(await compter('MissionLinePropalLine')).toBe(1)
+  })
+
+  // Réenregistrer le même projet n'est pas un repointage : rompre là ferait
+  // repousser tout un CRA chez Dolibarr au moindre reclic sur « Rattacher ».
+  it('ne rompt rien quand la mission est rattachée au MÊME projet', async () => {
+    const d = await decor()
+
+    const r = await attachMission({
+      userId,
+      missionId: d.mission.id,
+      dolibarrProjectId: d.projetA.id,
+      projectRef: d.projetA.ref,
+      projectSocid: d.tiers.id,
+    })
+
+    expect(r.repointage).toBe(false)
+    expect(await compter('MissionLine')).toBe(1)
+    expect(await compter('CraTimeSpent')).toBe(1)
+  })
+
+  it('détacher une mission rompt aussi ce qu elle a engendré', async () => {
+    const d = await decor()
+
+    await detachEntity({ userId, entityType: 'Mission', entityId: d.mission.id })
+
+    expect(await compter('Mission')).toBe(0)
+    expect(await compter('MissionLine')).toBe(0)
+    expect(await compter('CraTimeSpent')).toBe(0)
+  })
+
+  // Les trois natures que la rupture ne savait pas nommer. Sans elles, la
+  // promesse « toute référence externe est nullable à tout moment » était
+  // fausse pour la majorité des correspondances posées.
+  it('sait rompre les cinq natures, une par une', async () => {
+    for (const nature of LIENS_DOLIBARR) {
+      const d = await decor()
+      const entityId =
+        nature === 'Client'
+          ? d.client.id
+          : nature === 'Mission'
+            ? d.mission.id
+            : nature === 'CraTimeSpent'
+              ? `${d.cra.id}|${d.ligne.id}|2026-05-04|`
+              : d.ligne.id
+
+      await detachEntity({ userId, entityType: nature, entityId })
+
+      expect(await compter(nature), `« ${nature} » n'a aucun chemin de rupture`).toBe(0)
+      await nettoyer()
+    }
   })
 })

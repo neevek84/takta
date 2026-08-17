@@ -11,6 +11,7 @@ import {
 } from '@/core/sync/policy'
 import type { TimeEntryKind } from '@/core/types'
 import type { FetchLike } from '@/integrations/google/calendar'
+import { actorOf, appendAudit } from '@/services/audit'
 import { OWNER_SCOPE_USER } from '@/services/credentials'
 import { getSettings } from '@/services/settings'
 import { toIsoDate } from '@/services/time-entries'
@@ -64,7 +65,19 @@ async function ouvrirConflit(row: Row, kind: ConflictKind, snapshot: unknown): P
   }
 }
 
-type Issue = 'OK' | 'CONFLIT'
+/**
+ * Ce qu'une ligne a réellement produit.
+ *
+ * `RIEN` se distingue de `POUSSE` parce que le journal de preuve les
+ * distingue : une saisie disparue entre la mise en file et le drainage
+ * consomme sa ligne sans qu'aucun bloc ne parte chez Google, et consigner
+ * `agenda.bloc.pousse` pour elle ferait attendre un abonné devant un
+ * événement qui n'a rien changé.
+ */
+type Issue =
+  | { etat: 'POUSSE'; entryId: string; externalId: string }
+  | { etat: 'RIEN' }
+  | { etat: 'CONFLIT'; kind: ConflictKind }
 
 async function traiterUpsert(
   connector: CalendarConnector,
@@ -78,7 +91,7 @@ async function traiterUpsert(
   })
   // La saisie a disparu entre la mise en file et le drainage : plus rien à
   // pousser. La ligne DELETE, elle, aura été mise en file par la suppression.
-  if (entry === null) return 'OK'
+  if (entry === null) return { etat: 'RIEN' }
 
   // Aucun réglage n'est relu ici, et c'est tout l'enjeu : les heures d'une
   // saisie sont figées à son écriture, et ce drainage les reportait autrefois
@@ -117,7 +130,7 @@ async function traiterUpsert(
         syncedAt: now,
       },
     })
-    return 'OK'
+    return { etat: 'POUSSE', entryId: entry.id, externalId: cree.externalId }
   }
 
   // On lit avant d'écrire. C'est le seul moment où une modification faite dans
@@ -128,7 +141,7 @@ async function traiterUpsert(
   } catch (err) {
     if (err instanceof CalendarApiError && err.kind === 'NOT_FOUND') {
       await ouvrirConflit(row, 'REMOTE_DELETED', { externalId: link.externalId })
-      return 'CONFLIT'
+      return { etat: 'CONFLIT', kind: 'REMOTE_DELETED' }
     }
     throw err
   }
@@ -136,7 +149,7 @@ async function traiterUpsert(
   if (link.etag !== '' && remote.etag !== link.etag) {
     await ouvrirConflit(row, 'REMOTE_MODIFIED', remote)
     // Et surtout : aucune écriture. La divergence part en arbitrage.
-    return 'CONFLIT'
+    return { etat: 'CONFLIT', kind: 'REMOTE_MODIFIED' }
   }
 
   const maj = await connector.updateEvent(link.externalId, draft)
@@ -144,7 +157,7 @@ async function traiterUpsert(
     where: { id: link.id },
     data: { etag: maj.etag, syncState: 'SYNCED', syncedAt: now },
   })
-  return 'OK'
+  return { etat: 'POUSSE', entryId: entry.id, externalId: link.externalId }
 }
 
 async function traiterSuppression(connector: CalendarConnector, row: Row): Promise<Issue> {
@@ -152,13 +165,15 @@ async function traiterSuppression(connector: CalendarConnector, row: Row): Promi
     where: { entityType_entityId_provider: cibleDe(row) },
   })
   // Jamais poussée, donc rien à retirer de l'agenda.
-  if (link === null) return 'OK'
+  if (link === null) return { etat: 'RIEN' }
 
   // Un événement déjà absent est absorbé par le connecteur : l'objectif est
   // atteint, la ligne peut être consommée.
   await connector.deleteEvent(link.externalId)
   await prisma.externalLink.delete({ where: { id: link.id } })
-  return 'OK'
+  // `RIEN` et non `POUSSE` : `agenda.bloc.pousse` atteste qu'un bloc a été
+  // écrit dans l'agenda, et un retrait n'en écrit aucun.
+  return { etat: 'RIEN' }
 }
 
 export async function flushSyncOutbox(args: {
@@ -230,34 +245,83 @@ export async function flushSyncOutbox(args: {
 
   for (const row of rows) {
     report.traitees += 1
+
+    // Ce qui reste à consigner une fois la ligne de file tranchée. Le journal
+    // est écrit **hors** du `try` : une panne du journal ne doit ni faire
+    // repartir un bloc déjà poussé, ni tenter de replanifier une ligne qui
+    // vient d'être supprimée.
+    let aConsigner: (() => Promise<unknown>) | null = null
+
     try {
       const issue =
         row.operation === 'DELETE'
           ? await traiterSuppression(connector, row)
           : await traiterUpsert(connector, row, now, timeZone)
 
-      if (issue === 'CONFLIT') report.conflits += 1
+      if (issue.etat === 'CONFLIT') report.conflits += 1
       else report.reussies += 1
 
       // Conflit compris : la ligne quitte la file, le conflit porte désormais
       // l'état. Sans cela, chaque passage rouvrirait la même divergence.
       await prisma.syncOutbox.delete({ where: { id: row.id } })
+
+      if (issue.etat === 'POUSSE') {
+        aConsigner = async () =>
+          appendAudit({
+            ...(await actorOf(row.userId)),
+            action: 'agenda.bloc.pousse',
+            entityType: row.entityType,
+            entityId: row.entityId,
+            payload: { provider: row.provider, externalId: issue.externalId },
+          })
+      } else if (issue.etat === 'CONFLIT') {
+        aConsigner = async () =>
+          appendAudit({
+            ...(await actorOf(row.userId)),
+            action: 'agenda.conflit.detecte',
+            entityType: row.entityType,
+            entityId: row.entityId,
+            payload: { provider: row.provider, nature: issue.kind },
+          })
+      }
     } catch (err) {
       // Un refus définitif ne se rejoue pas : il part directement en `FAILED`,
       // où l'écran de synchronisation le montrera une fois au lieu de cinq.
       const definitif = err instanceof CalendarApiError && err.kind === 'INVALID'
       const suite = definitif ? abandon(row.attempts, now) : nextAttempt(row.attempts, now)
+      const erreur = messageDe(err)
       await prisma.syncOutbox.update({
         where: { id: row.id },
         data: {
           attempts: suite.attempts,
           state: suite.state,
           nextAttemptAt: suite.nextAttemptAt,
-          lastError: messageDe(err),
+          lastError: erreur,
         },
       })
-      if (suite.state === 'FAILED') report.echecs += 1
+      if (suite.state === 'FAILED') {
+        report.echecs += 1
+        // Consigné **à l'abandon seulement**, jamais à chaque tentative : un
+        // événement par recul remplirait le journal de bruit sur une panne
+        // réseau de dix minutes, et noierait l'échec définitif qui, lui,
+        // demande une action.
+        aConsigner = async () =>
+          appendAudit({
+            ...(await actorOf(row.userId)),
+            action: 'synchro.echec',
+            entityType: row.entityType,
+            entityId: row.entityId,
+            payload: {
+              provider: row.provider,
+              operation: row.operation,
+              tentatives: suite.attempts,
+              erreur,
+            },
+          })
+      }
     }
+
+    if (aConsigner !== null) await aConsigner()
   }
 
   return report

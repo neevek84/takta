@@ -448,8 +448,16 @@ dézippée hors du dépôt, jamais depuis l'arbre de développement :
 
 - `donnees/` **absent** du listing juste après dézippage ; créé au premier
   démarrage ;
-- démarrage, migrations appliquées, `PRAGMA journal_mode` = `wal` et
-  `PRAGMA synchronous` = `2` (FULL), relus sur une connexion neuve ;
+- démarrage, migrations appliquées, `PRAGMA journal_mode` = `wal` relu sur une
+  connexion neuve. **`PRAGMA synchronous` ne se relit pas de cette façon** : à la
+  différence du mode de journalisation, c'est une propriété *de connexion*, pas
+  du fichier. Le relire sur une connexion neuve ne mesurait que la valeur par
+  défaut compilée de SQLite — la mesure restait à `2` avec la ligne qui la pose
+  purement et simplement supprimée. Elle est désormais posée là où le serveur
+  s'en sert (`src/instrumentation.ts` → `src/db/durabilite.ts`), sur une
+  connexion **unique** (`connection_limit=1`, sans quoi le pool en laisse à leur
+  valeur par défaut — mesuré), relue, et le démarrage échoue si elle ne vaut pas
+  FULL ;
 - `/login` en **200** — ce qui prouve du même coup `AUTH_TRUST_HOST` (sans
   lui Auth.js répond `UntrustedHost`) et le chargement du moteur Prisma
   natif ; `/saisie/2026-08` sans session en **307** ; la feuille de style
@@ -484,20 +492,35 @@ dézippée hors du dépôt, jamais depuis l'arbre de développement :
 | Archives macOS Intel, Windows x64, Linux x64 | Ni ces machines ni ces moteurs Prisma ici | `scripts/empaqueter.mjs` refuse toute archive dont le moteur ne correspond pas à la machine qui construit, et nomme l'archive d'après elle |
 | Exécution des scripts `.cmd` sous Windows | Pas de `cmd.exe` | Test de parité `.sh`/`.cmd` : même outil appelé, même seuil Node 20 **avant** l'appel, CRLF, `CRA_RACINE` |
 | Gatekeeper sur une archive réellement téléchargée | Pas de passage par un navigateur | Attribut `com.apple.quarantine` posé à la main, puis levé par `demarrer.sh` |
-| Docker et Postgres | Jamais exécutés ici, inchangés depuis le lot 0 | Le jeu Postgres et son garde-fou statique restent verts et n'ont pas été touchés |
-| Durabilité après coupure de courant réelle | Pas de coupure provocable | `kill -9` pendant l'exploitation, en WAL + `synchronous=FULL` |
+| Docker et Postgres | Jamais exécutés ici, inchangés depuis le lot 0 | Le jeu Postgres et son garde-fou statique restent verts ; `.dockerignore` n'est pas jugé sur sa lecture mais sur sa sémantique réelle (`filepath.Match` de BuildKit rejouée dans `src/deploy/deployment-config.test.ts`), faute de `docker build` ici |
+| Durabilité après coupure de courant réelle | Pas de coupure provocable | `kill -9` pendant l'exploitation, en WAL + `synchronous=FULL` **posé et relu dans le processus du serveur**, sur une connexion unique — la pose échoue bruyamment si SQLite ne la retient pas |
 | Volume réel (des années de CRA) | Pas de base de cette taille | `VACUUM INTO` mesuré sur une base de recette (308 Ko) |
 | Connexion Google de bout en bout | Pas d'identifiants OAuth ici | L'URL de retour exacte est affichée au démarrage et vérifiée par test |
 
-**Limite connue, mesurée ici.** `outils/lib/port.mjs` sonde la disponibilité
-d'un port en écoutant sur `127.0.0.1` (IPv4) et `outils/lib/processus.mjs`
-teste la vivacité en s'y connectant. Un programme tiers écoutant sur le même
-port en **IPv6** (`*:3000` — ce que fait `npm run dev` de ce dépôt) est donc
-invisible aux deux : CRA démarre sur un port déjà pris par un autre, et
-`./arreter.sh` attend 10 secondes puis force l'arrêt parce que la sonde reçoit
-la réponse de l'autre programme. Mesuré : sur un port que rien d'autre ne
-tient, `./arreter.sh` rend la main **en 0 à 1 seconde** avec « Application
-arrêtée. » ; sur le 3000 tenu par un `next dev`, **11 secondes** et « arrêt
-forcé ». Aucune donnée n'est perdue dans les deux cas (le `kill -9` ci-dessus
-le prouve), mais le message inquiète pour rien. À corriger en sondant aussi
-`::1`, ou en s'appuyant sur le PID plutôt que sur le port.
+**Corrigé depuis, et mesuré sur l'archive.** `demarrer.sh` et `arreter.sh` ne
+jugeaient que par le port, et se trompaient dans les deux sens : un serveur
+vivant qui n'écoutait pas (encore) passait pour mort — `arreter.sh` effaçait
+alors le repère **sans rien tuer**, et le démarrage suivant lançait un second
+serveur sur la même base — tandis qu'un programme tiers sur le port 3000 passait
+pour CRA. Le repère `donnees/cra.pid` fait désormais foi : c'est le processus
+qu'on interroge, reconnu par son **instant de démarrage** confronté à celui
+inscrit au repère (le seul signal qui résiste au fait que Next renomme son
+propre processus en `next-server (v15.5.23)`, mesuré), et un numéro recyclé par
+le système n'est jamais tué.
+
+**Ce que cela a fait apparaître.** Next installe son propre gestionnaire de
+SIGTERM, qui attend `server.close()` — lequel ne rend la main qu'une fois toutes
+les connexions fermées, et hors développement Next n'appelle jamais
+`closeAllConnections()`. Mesuré sur l'archive réelle : le port se libère
+aussitôt, **le processus était toujours vivant 25 secondes après SIGTERM**.
+L'ancien `arreter.sh` annonçait donc l'arrêt en 0,3 seconde en laissant un
+orphelin — à chaque arrêt, pas seulement dans les cas limites.
+`outils/lancer.mjs` pose maintenant `NEXT_MANUAL_SIG_HANDLE=1` : SIGTERM
+retrouve le comportement par défaut de Node. Mesuré ensuite, bout en bout sur
+l'archive dézippée : arrêt en **0,43 seconde**, processus effectivement mort,
+empreinte SHA-256 de `donnees/cra.db` inchangée, aucun serveur résiduel.
+
+**Limite subsistante.** `outils/lib/port.mjs` sonde encore la disponibilité d'un
+port en écoutant sur `127.0.0.1` (IPv4) : un programme tiers écoutant sur le
+même port en **IPv6** seulement (`*:3000`) reste invisible, et CRA peut démarrer
+sur un port déjà pris. L'arrêt, lui, ne dépend plus du port.

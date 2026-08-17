@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { buildWeeks } from '@/core/month/weeks'
 import { buildCellStates } from '@/core/saisie/cell-state'
 import { colorForLine, couleurDAplat, PREVU_COLOR } from '@/core/saisie/colors'
@@ -158,10 +158,19 @@ function Horloge({ date }: { date?: string }) {
  * par défaut : la même saisie s'affichait « 3h » ici et « 0,38 » dans le
  * tableau, pour la même donnée.
  *
- * En journées, chaque saisie se convertit sous le facteur figé à son écriture
- * — c'est le rôle de `centiemesParFacteur` —, jamais la somme des minutes sous
- * le facteur courant de la ligne : une journée écrite en deux temps à 7 h puis
- * à 8 h vaut 1,07 j, pas 1 j. C'est le chemin exact que `MonthGrid` emprunte.
+ * En journées, chaque saisie se convertit sous le facteur **figé à son
+ * écriture** — c'est le rôle de `centiemesParFacteur` —, jamais la somme des
+ * minutes sous le facteur courant de la ligne : une journée écrite en deux
+ * temps à 7 h puis à 8 h vaut 1,07 j, pas 1 j. C'est le chemin exact que
+ * `MonthGrid` emprunte.
+ *
+ * Les deux crans du cycle, eux, n'ont pas de chiffre à convertir : « 1 » et
+ * « ½ AM » *sont* le classement, et ce classement se fait déjà sous le facteur
+ * figé (`readCellState`). C'est ce qui les tient d'accord avec le tableau :
+ * une saisie de 480 minutes figée à 420 n'est plus une journée entière, elle
+ * tombe en valeur libre et les deux vues affichent « 1,14 ». Ce commentaire a
+ * affirmé le contraire — que ces deux branches passaient par
+ * `centiemesParFacteur` — pendant que le calendrier affichait « 1 ».
  */
 function contenu(
   etat: CellState,
@@ -265,10 +274,12 @@ export function MonthCalendar({
   const semaines = useMemo(() => buildWeeks(days), [days])
   const occupes = useMemo(() => new Set(busyDates), [busyDates])
 
-  const ctx = useMemo(
-    () => ({ minutesParJour: line.minutesParJour, slots }),
-    [line.minutesParJour, slots],
-  )
+  // Le contexte de lecture ne porte que les créneaux : le facteur de
+  // conversion vit sur chaque saisie, figé à son écriture. Le lui donner ici
+  // suffisait à casser le gel — une journée écrite à 420 minutes cessait
+  // d'être une journée dès que la prestation passait à 480, sur un CRA validé
+  // que `recalibrateOpenMonths` laisse pourtant intact.
+  const ctx = useMemo(() => ({ slots }), [slots])
   const options = useMemo(
     () => ({ demiSlotIds: cycleSlotIds(slots, line.allowedSlotIds), displayUnit: line.displayUnit }),
     [slots, line.allowedSlotIds, line.displayUnit],
@@ -433,6 +444,30 @@ export function MonthCalendar({
     if (encours !== null && encours.type === 'ANCRE') drag.clear()
   }, [drag])
 
+  /**
+   * Le relâchement se lit sur la **fenêtre**, jamais sur la seule grille.
+   *
+   * Posé sur le conteneur, il manquait tous les relâchements qui se produisent
+   * ailleurs — sous la dernière semaine, dans la marge, sur la barre de
+   * sélection — et le geste restait armé : chaque case ensuite *survolée*,
+   * sans aucun bouton enfoncé, rejoignait la sélection, puis « 1 jour »
+   * écrivait une journée entière sur des jours que personne n'avait désignés.
+   * Dans un compte-rendu d'activité, c'est de la donnée fabriquée.
+   *
+   * `terminerGeste` est sans effet quand aucun geste ne court : le relâchement
+   * qui remonte depuis une case le traverse donc deux fois sans dommage.
+   */
+  useEffect(() => {
+    const surRelachement = (): void => terminerGeste()
+    const surAnnulation = (): void => abandonnerGeste()
+    window.addEventListener('pointerup', surRelachement)
+    window.addEventListener('pointercancel', surAnnulation)
+    return () => {
+      window.removeEventListener('pointerup', surRelachement)
+      window.removeEventListener('pointercancel', surAnnulation)
+    }
+  }, [terminerGeste, abandonnerGeste])
+
   const rangParDate = useMemo(() => new Map(days.map((d, i) => [d.date, i])), [days])
 
   /**
@@ -578,10 +613,10 @@ export function MonthCalendar({
         // pas dans les 327 points que la page laisse — la grille débordait,
         // ou les cases tombaient sous la cible tactile. Voir le test de budget.
         className="grid grid-cols-7 gap-0.5"
-        // Sur le conteneur et non sur chaque case : au doigt, le pointeur est
-        // relâché là où il se trouve, qui n'est pas la case d'où il est parti.
-        onPointerUp={terminerGeste}
-        onPointerCancel={abandonnerGeste}
+        // Ni ici ni sur les cases : le relâchement et l'annulation sont
+        // écoutés sur la fenêtre (voir l'effet plus haut). Au doigt comme à la
+        // souris, le pointeur est relâché là où il se trouve — et ce n'est pas
+        // toujours la case d'où il est parti, ni même la grille.
       >
         {EN_TETES.map((e) => (
           <div
@@ -616,6 +651,7 @@ export function MonthCalendar({
                 consommerGlissement={consommerGlissement}
                 onClick={() => void cliquer(jour.date)}
                 onFormulaire={() => onFormulaire(jour.date, etatDe(jour.date))}
+                onGesteAbandon={abandonnerGeste}
                 onGesteDebut={() => debuterGeste(jour.date)}
                 onGesteSurvol={() => survolerPendantGeste(jour.date)}
                 onEtendreClavier={(pas) => etendreAuClavier(jour.date, pas)}
@@ -710,6 +746,7 @@ function Case({
   consommerGlissement,
   onClick,
   onFormulaire,
+  onGesteAbandon,
   onGesteDebut,
   onGesteSurvol,
   onEtendreClavier,
@@ -736,12 +773,21 @@ function Case({
   consommerGlissement: () => boolean
   onClick: () => void
   onFormulaire: () => void
+  /** termine le geste de pointeur en cours et efface ce qu'il avait posé */
+  onGesteAbandon: () => void
   onGesteDebut: () => void
   onGesteSurvol: () => void
   onEtendreClavier: (pas: number) => void
   onAbandonner: () => void
 }) {
-  const appuiLong = useLongPress(onFormulaire)
+  // L'appui long **termine** le geste qu'il interrompt : le doigt qui continue
+  // sa route après l'ouverture du formulaire étendait sinon une sélection
+  // derrière la boîte — « 2 jours sélectionnés » sous un formulaire qui ne
+  // s'applique qu'à une seule date.
+  const appuiLong = useLongPress(() => {
+    onGesteAbandon()
+    onFormulaire()
+  })
 
   // Week-ends et fériés : grisés, jamais interdits.
   const jourDit = etatJour(jour)

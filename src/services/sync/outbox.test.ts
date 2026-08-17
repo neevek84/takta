@@ -845,3 +845,67 @@ describe('drainage par gestionnaire', () => {
     expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(3)
   })
 })
+
+/**
+ * Le catalogue promettait `temps.pousses` et `synchro.echec` à l'abonnement
+ * sans que personne ne les émette. L'acte, lui, existe : une ligne de file
+ * dont la cible est un CRA porte les temps d'un mois arrêté — `transitionCra`
+ * est le seul endroit qui en met en file, et seulement à la validation.
+ */
+describe('journal de preuve — ce que le drainage générique consigne', () => {
+  const NOW = new Date('2026-03-20T10:00:00.000Z')
+
+  it('CONSIGNE `temps.pousses` quand la ligne d un CRA aboutit', async () => {
+    await prisma.auditEvent.deleteMany({})
+    await enfiler({ userId, entityId: 'cra-journal' })
+
+    await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire({ ok: true }) },
+      now: NOW,
+    })
+
+    const entrees = await prisma.auditEvent.findMany({ where: { action: 'temps.pousses' } })
+    expect(entrees, 'aucune entrée `temps.pousses`').toHaveLength(1)
+    expect(entrees[0]!.entityId).toBe('cra-journal')
+    expect(entrees[0]!.actorId).toBe(userId)
+    const payload = JSON.parse(entrees[0]!.payloadJson) as Record<string, unknown>
+    expect(payload.provider).toBe(DOLIBARR)
+  })
+
+  it('ne consigne rien pour une cible qui n est pas un CRA', async () => {
+    await prisma.auditEvent.deleteMany({})
+    await enfiler({ userId, entityType: 'TimeEntry', entityId: 'te-1', provider: 'AUTRE' })
+
+    await flushOutbox({ userId, handlers: { AUTRE: gestionnaire({ ok: true }) }, now: NOW })
+
+    expect(await prisma.auditEvent.count({ where: { action: 'temps.pousses' } })).toBe(0)
+  })
+
+  it('CONSIGNE `synchro.echec` à l abandon, et rien à un simple recul', async () => {
+    await prisma.auditEvent.deleteMany({})
+    await enfiler({ userId, entityId: 'cra-recul' })
+
+    // Rejouable : la ligne recule, personne n'a rien à faire.
+    await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: gestionnaire({ ok: false, retriable: true, message: 'panne' }) },
+      now: NOW,
+    })
+    expect(await prisma.auditEvent.count({ where: { action: 'synchro.echec' } })).toBe(0)
+
+    // Définitif : la ligne part en `FAILED`, et cela demande une action.
+    await flushOutbox({
+      userId,
+      handlers: {
+        [DOLIBARR]: gestionnaire({ ok: false, retriable: false, message: 'projet inconnu' }),
+      },
+      now: new Date(NOW.getTime() + 3_600_000),
+    })
+
+    const entrees = await prisma.auditEvent.findMany({ where: { action: 'synchro.echec' } })
+    expect(entrees, 'aucune entrée `synchro.echec`').toHaveLength(1)
+    expect(entrees[0]!.entityId).toBe('cra-recul')
+    expect(JSON.parse(entrees[0]!.payloadJson)).toMatchObject({ erreur: 'projet inconnu' })
+  })
+})

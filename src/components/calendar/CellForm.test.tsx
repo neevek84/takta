@@ -90,7 +90,44 @@ describe('CellForm', () => {
     expect(creneau().value).toBe('')
   })
 
-  it('pré-remplit les bornes d une journée entière', () => {
+  // M1 — les horaires se figent à l'écriture, exactement comme le facteur.
+  // Le formulaire les **recalculait** depuis la plage journée courante : une
+  // saisie écrite de 8 h à 16 h s'ouvrait sur 10 h – 18 h le jour où
+  // l'administrateur déplaçait la journée de travail, et l'enregistrer sans
+  // rien changer écrivait ces heures-là. Le gel avait tenu en base jusqu'à ce
+  // que le lecteur le casse.
+  it('pré-remplit les bornes figées d une journée entière', () => {
+    renderForm({ etat: { kind: 'JOURNEE', bornes: { startMinute: 480, endMinute: 960 } } })
+    expect([debut().value, fin().value]).toEqual(['08:00', '16:00'])
+  })
+
+  it('pré-remplit les bornes figées d une demi-journée', () => {
+    renderForm({
+      etat: { kind: 'DEMI', slotId: 'matin', bornes: { startMinute: 480, endMinute: 720 } },
+    })
+    expect([debut().value, fin().value]).toEqual(['08:00', '12:00'])
+    expect(creneau().value).toBe('matin')
+  })
+
+  // « Un CRA validé rend les mêmes chiffres après un changement de réglage » :
+  // ici, les mêmes heures. Seule la plage journée courante change entre les
+  // deux rendus — et le formulaire n'a rien à en tirer.
+  it('affiche les mêmes heures quel que soit le réglage courant de la journée', () => {
+    const etat = { kind: 'JOURNEE', bornes: { startMinute: 480, endMinute: 960 } } as const
+
+    renderForm({ etat, journeeDebutMinute: 540, journeeFinMinute: 1080 })
+    const avant = [debut().value, fin().value]
+    cleanup()
+
+    renderForm({ etat, journeeDebutMinute: 600, journeeFinMinute: 1140 })
+    expect([debut().value, fin().value]).toEqual(avant)
+    expect(avant).toEqual(['08:00', '16:00'])
+  })
+
+  // L'état que la cinématique vient de poser n'a pas encore d'heures : elles
+  // n'existeront qu'à l'écriture, et c'est la plage journée courante qui les
+  // donnera. C'est le seul cas où le formulaire a le droit de les calculer.
+  it('retombe sur la plage journée pour un cran que le clic vient de poser', () => {
     renderForm({ etat: { kind: 'JOURNEE' } })
     // 8 h saisies dans une plage de 9 h : le bloc s'arrête à 17 h.
     expect([debut().value, fin().value]).toEqual(['09:00', '17:00'])
@@ -111,7 +148,7 @@ describe('CellForm', () => {
     expect(creneau().value).toBe('nuit')
   })
 
-  it('pré-remplit une demi-journée avec les bornes de son créneau', () => {
+  it('pré-remplit une demi-journée que le clic vient de poser avec les bornes de son créneau', () => {
     renderForm({ etat: { kind: 'DEMI', slotId: 'matin' } })
     expect([debut().value, fin().value]).toEqual(['09:00', '13:00'])
     expect(creneau().value).toBe('matin')

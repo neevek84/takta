@@ -129,7 +129,7 @@ const ENCRE_SOMBRE = {
   "info": "#16242a",
   "infoInk": "#a2c7d0",
   "infoEdge": "#2d454e",
-  "prevu": "#7c4f2c",
+  "prevu": "#743a20",
   "prevuInk": "#f3e3cf",
   "prevuEdge": "#dcaf64",
   "catA": "#804a4d",

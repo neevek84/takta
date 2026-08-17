@@ -12,10 +12,12 @@ import { enqueueSync, flushOutbox } from '@/services/sync/outbox'
 import type { SyncJob } from '@/services/sync/types'
 import { FakeDolibarr } from './fake'
 import { DOLIBARR, DolibarrMappingError, DolibarrUnavailableError } from './api'
+import { attachClient, attachMission, detachEntity } from './import'
 import { pushCraTimes, createDolibarrHandler } from './push'
 
 let userId = ''
 let autreId = ''
+let clientId = ''
 let missionId = ''
 let lineId = ''
 /** Seconde prestation de la même mission : deux lignes, deux tâches Dolibarr. */
@@ -69,6 +71,7 @@ beforeAll(async () => {
   autreId = a.id
 
   const c = await createClient('PUSH client')
+  clientId = c.id
   const m = await createMission({ clientId: c.id, label: 'PUSH mission' })
   missionId = m.id
   lineId = (
@@ -641,18 +644,192 @@ describe('push des temps', () => {
     expect(api.timespents).toEqual([])
   })
 
-  // Le même cloisonnement, du côté destructeur : le CRA a déjà été poussé, et
-  // un push lancé par un autre compte ne doit pas voir ses correspondances —
-  // il conclurait que plus rien n'a de saisie locale et viderait Dolibarr.
-  it('ne retire pas les temps déjà poussés d un CRA qui n est pas le sien', async () => {
+  // Le même cloisonnement, du côté destructeur. Un push lancé par un autre
+  // compte sort **avant** de lire les correspondances — le CRA ne lui
+  // appartient pas — et n'a donc rien à retirer : c'est le premier test.
+  it('ne retire rien, et n appelle même pas Dolibarr, sur le CRA d un autre', async () => {
+    await saveEntry({ userId, lineId, date: '2026-05-04', minutes: 480, kind: 'REALISE' })
+    const craId = await craValide('2026-05')
+    await pushCraTimes({ userId, craId, api })
+    const appelsAvant = { ...api.appels }
+
+    await pushCraTimes({ userId: autreId, craId, api })
+
+    expect(api.appels).toEqual(appelsAvant)
+    expect(api.timespents).toHaveLength(1)
+  })
+
+  // Le filtre `userId` de la relecture des correspondances, lui, ne peut pas
+  // se vérifier par ce chemin : le push d'un autre compte sort bien avant de
+  // l'atteindre, et le test ci-dessus le laissait donc supprimer sans que
+  // rien ne bouge. Ce qu'il protège vraiment est ici : une correspondance de
+  // temps consommé posée sous un AUTRE compte, sur le même CRA. Sans le
+  // filtre, la réconciliation ne lui trouve aucune saisie locale et demande à
+  // Dolibarr de retirer un temps qui ne la regarde pas.
+  it('ne retire pas un temps consommé poussé sous un autre compte', async () => {
+    await saveEntry({ userId, lineId, date: '2026-05-04', minutes: 480, kind: 'REALISE' })
+    const craId = await craValide('2026-05')
+    await pushCraTimes({ userId, craId, api })
+    const taskId = api.timespents[0]!.taskId
+    const etranger = await api.addTimeSpent({
+      taskId,
+      dolibarrUserId: 7,
+      date: '2026-05-06',
+      durationSeconds: 3600,
+      note: '',
+    })
+    await prisma.externalLink.create({
+      data: {
+        userId: autreId,
+        entityType: 'CraTimeSpent',
+        entityId: `${craId}|${lineId}|2026-05-06|`,
+        provider: DOLIBARR,
+        externalId: `${taskId}:${etranger.timespentId}`,
+        syncState: 'SYNCED',
+      },
+    })
+
+    const r = await pushCraTimes({ userId, craId, api })
+
+    expect(r.supprimees).toBe(0)
+    expect(api.appels.deleteTimeSpent).toBe(0)
+    expect(api.timespents.map((t) => t.date).sort()).toEqual(['2026-05-04', '2026-05-06'])
+    expect(
+      await prisma.externalLink.count({ where: { userId: autreId, entityType: 'CraTimeSpent' } }),
+    ).toBe(1)
+  })
+})
+
+/**
+ * Repointer une mission vers un autre projet.
+ *
+ * Le danger : la correspondance `mission → projet` se repointe, mais celles
+ * qu'elle a engendrées — `prestation → tâche` et `cellule → temps passé` —
+ * désignent des objets de l'**ancien** projet. Sans rupture, tous les temps
+ * suivants continuent d'y atterrir, y compris ceux de mois neufs, et le
+ * nouveau projet reste vide. Si le client a lui aussi été repointé, ils
+ * partent chez l'ancien tiers : exactement ce que `verifierCoherenceTiers`
+ * existe pour fermer, et qu'elle ne peut pas voir puisqu'elle ne s'exécute
+ * qu'à l'instant du rattachement.
+ */
+describe('repointage de la mission vers un autre projet', () => {
+  /** Projet de chaque temps consommé, tel que Dolibarr le rangerait. */
+  function projetDesTemps(): Array<{ date: string; projet: number | undefined }> {
+    const projetDeLaTache = new Map(api.tasks.map((t) => [t.id, t.projectId]))
+    return api.timespents.map((t) => ({ date: t.date, projet: projetDeLaTache.get(t.taskId) }))
+  }
+
+  it('envoie les temps suivants dans le NOUVEAU projet, chez le NOUVEAU tiers', async () => {
+    await attachClient({ userId, clientId, dolibarrThirdpartyId: 1 })
     await saveEntry({ userId, lineId, date: '2026-05-04', minutes: 480, kind: 'REALISE' })
     const craId = await craValide('2026-05')
     await pushCraTimes({ userId, craId, api })
 
-    await pushCraTimes({ userId: autreId, craId, api })
+    // Le porteur constate que la mission pointe sur le mauvais projet : il
+    // repointe le client sur son vrai tiers, détache la mission, la rattache.
+    const tiersB = api.seedThirdparty('PUSH client chez B')
+    const projetB = api.seedProject({ ref: 'PJ002', title: 'PUSH mission', socid: tiersB.id })
+    await attachClient({ userId, clientId, dolibarrThirdpartyId: tiersB.id })
+    await detachEntity({ userId, entityType: 'Mission', entityId: missionId })
+    await attachMission({
+      userId,
+      missionId,
+      dolibarrProjectId: projetB.id,
+      projectRef: 'PJ002',
+      projectSocid: tiersB.id,
+    })
 
+    // Un jour neuf, sur un CRA revalidé.
+    await rouvrir(craId)
+    await saveEntry({ userId, lineId, date: '2026-05-05', minutes: 480, kind: 'REALISE' })
+    await revalider(craId)
+    await pushCraTimes({ userId, craId, api })
+
+    // Tout le CRA vit désormais chez le nouveau tiers — le jour neuf comme
+    // celui d'avant le repointage.
+    expect(
+      projetDesTemps()
+        .filter((t) => t.projet === projetB.id)
+        .map((t) => t.date)
+        .sort(),
+    ).toEqual(['2026-05-04', '2026-05-05'])
+    // L'ancien projet garde ce qu'on lui a livré — l'application ne détruit pas
+    // chez le client ce qu'elle y a poussé — mais **plus rien ne s'y écrit** :
+    // ni jour neuf, ni réécriture d'un jour ancien. Une mise à jour partant là
+    // -bas serait une écriture chez le tiers précédent, exactement le danger
+    // que le refus de cohérence existe pour fermer.
+    expect(projetDesTemps().filter((t) => t.projet === projectId).map((t) => t.date)).toEqual([
+      '2026-05-04',
+    ])
+    expect(api.appels.updateTimeSpent).toBe(0)
     expect(api.appels.deleteTimeSpent).toBe(0)
-    expect(api.timespents).toHaveLength(1)
+    // La tâche est adoptée ou créée dans le nouveau projet, pas empruntée à
+    // l'ancien : `tachesCreees: 0` était la signature du défaut.
+    expect(api.tasks.filter((t) => t.projectId === projetB.id)).toHaveLength(1)
+  })
+
+  // Une correspondance `prestation → tâche` posée avant que le repointage
+  // sache les rompre désigne une tâche d'un projet auquel la mission n'est
+  // plus rattachée. Le push ne doit pas s'en servir : elle ne dit pas de quel
+  // projet elle vient, et la croire sur parole est ce qui envoyait les temps
+  // chez l'ancien tiers.
+  it('n emprunte pas la tâche d un autre projet, même sur une correspondance héritée', async () => {
+    const ailleurs = api.seedProject({ ref: 'PJ003', title: 'Ailleurs', socid: 9 })
+    const tacheAilleurs = await api.createTask({
+      projectId: ailleurs.id,
+      label: 'Développement',
+    })
+    await prisma.externalLink.create({
+      data: {
+        userId,
+        entityType: 'MissionLine',
+        entityId: lineId,
+        provider: DOLIBARR,
+        externalId: String(tacheAilleurs.id),
+      },
+    })
+
+    await saveEntry({ userId, lineId, date: '2026-05-04', minutes: 480, kind: 'REALISE' })
+    const craId = await craValide('2026-05')
+    await pushCraTimes({ userId, craId, api })
+
+    expect(projetDesTemps()).toEqual([{ date: '2026-05-04', projet: projectId }])
+  })
+
+  // Variante intra-tiers, la plus courante : un projet Dolibarr neuf par année
+  // civile pour le même client. Le refus de cohérence ne se déclenche pas du
+  // tout — les deux projets appartiennent bien au même tiers — et l'année N+1
+  // se remplissait silencieusement dans le projet de l'année N.
+  it('suit le projet neuf du même tiers, sans passer par un détachement', async () => {
+    await attachClient({ userId, clientId, dolibarrThirdpartyId: 1 })
+    await saveEntry({ userId, lineId, date: '2026-05-04', minutes: 480, kind: 'REALISE' })
+    const mai = await craValide('2026-05')
+    await pushCraTimes({ userId, craId: mai, api })
+
+    const projet2027 = api.seedProject({ ref: 'PJ2027', title: 'PUSH mission 2027', socid: 1 })
+    await attachMission({
+      userId,
+      missionId,
+      dolibarrProjectId: projet2027.id,
+      projectRef: 'PJ2027',
+      projectSocid: 1,
+    })
+
+    // Le mois de mai est rouvert, complété, revalidé : ses cellules portent
+    // déjà des correspondances vers l'ancien projet.
+    await rouvrir(mai)
+    await saveEntry({ userId, lineId, date: '2026-05-05', minutes: 480, kind: 'REALISE' })
+    await revalider(mai)
+    await pushCraTimes({ userId, craId: mai, api })
+
+    expect(
+      projetDesTemps()
+        .filter((t) => t.projet === projet2027.id)
+        .map((t) => t.date)
+        .sort(),
+    ).toEqual(['2026-05-04', '2026-05-05'])
+    expect(api.appels.updateTimeSpent).toBe(0)
+    expect(api.appels.deleteTimeSpent).toBe(0)
   })
 })
 

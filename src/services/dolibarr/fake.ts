@@ -60,8 +60,18 @@ export class FakeDolibarr implements DolibarrApi {
   readonly timespents: FakeTimeSpent[] = []
   setup: Record<string, string> = {}
 
-  /** Compteurs d'appels, pour les tests d'idempotence. */
-  readonly appels = { createTask: 0, addTimeSpent: 0, updateTimeSpent: 0, deleteTimeSpent: 0 }
+  /**
+   * Compteurs d'appels, pour les tests d'idempotence — et pour ceux qui
+   * vérifient qu'une garde a bien tranché **avant** d'appeler Dolibarr : un
+   * refus qui parle après coup a déjà lu, et parfois écrit, à distance.
+   */
+  readonly appels = {
+    createTask: 0,
+    addTimeSpent: 0,
+    updateTimeSpent: 0,
+    deleteTimeSpent: 0,
+    getProposal: 0,
+  }
 
   private sequence = 0
 
@@ -165,6 +175,7 @@ export class FakeDolibarr implements DolibarrApi {
 
   async getProposal(id: number): Promise<DolibarrProposal> {
     this.garde()
+    this.appels.getProposal += 1
     const p = this.proposals.find((x) => x.id === id)
     if (p === undefined) {
       // Non rejouable : une propale absente ne réapparaît pas d'elle-même.

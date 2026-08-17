@@ -294,6 +294,41 @@ describe('signature du CRA', () => {
     expect(screen.getByRole('button', { name: /lancer les relances/i })).toBeTruthy()
   })
 
+  it('OFFRE LES RELANCES DÈS QU UNE SIGNATURE EST EN ATTENTE, sans souffrance préalable', async () => {
+    // La boucle morte que ce test ferme : le bouton vivait à l'intérieur de
+    // `{souffrance.length > 0 && …}`, et `souffrance` n'est alimentée que par
+    // `abandoned`, que seul `runSignatureReminders` pose — le travail que ce
+    // bouton déclenche. Sur une instance neuve, aucune demande n'était
+    // abandonnée, donc le bouton n'existait pas, donc rien n'abandonnait
+    // jamais : « trois relances puis abandon » était inatteignable.
+    await rendre({
+      cras: [unCra('ENVOYE', 'cra-1', { signature: uneSignature() })],
+      souffrance: [],
+    })
+
+    expect(screen.queryByRole('heading', { name: /en souffrance/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /lancer les relances/i })).toBeTruthy()
+  })
+
+  it('n offre pas les relances quand aucune signature n est en attente', async () => {
+    // Un bouton qui ne peut rien faire n'a rien à dire : sans aucune demande
+    // ouverte, le déclencher ne relancerait personne.
+    await rendre({ cras: [unCra('BROUILLON'), unCra('VALIDE', 'cra-2')] })
+    expect(screen.queryByRole('button', { name: /lancer les relances/i })).toBeNull()
+  })
+
+  it('offre encore les relances quand seule la liste des souffrances est peuplée', async () => {
+    // Le cas d'un CRA déjà abandonné dont la carte n'est pas sur le mois
+    // affiché : la section de souffrance porte alors le bouton à elle seule.
+    await rendre({
+      cras: [],
+      souffrance: [
+        unCra('ENVOYE', 'cra-9', { signature: uneSignature({ relances: 3, abandoned: true }) }),
+      ],
+    })
+    expect(screen.getByRole('button', { name: /lancer les relances/i })).toBeTruthy()
+  })
+
   it('affiche le motif d échec remonté par l action', async () => {
     await rendre({ cras: [unCra('BROUILLON')], erreur: 'PAS_DE_CONNECTEUR' })
     expect(document.body.textContent).toContain('Aucun outil de signature')

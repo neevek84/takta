@@ -29,6 +29,25 @@ export function migrationsDisponibles(dossier) {
 }
 
 /**
+ * L'URL Prisma d'une base portable, avec la connexion unique qu'exige la
+ * durabilité.
+ *
+ * `PRAGMA synchronous` est une propriété **de connexion**, et le pool SQLite de
+ * Prisma en ouvre plusieurs : mesuré, un pragma posé — même soixante-quatre fois
+ * en parallèle — en laissait à leur valeur par défaut. Une seule connexion est
+ * donc la condition pour que la pose signifie quelque chose. Sans coût ici :
+ * une seule personne se sert de l'application, et SQLite n'écrit de toute façon
+ * que l'un après l'autre.
+ *
+ * Cette URL est aussi celle que le serveur hérite : `src/db/durabilite.ts`
+ * (`urlSqliteDurable`) en donne l'exacte contrepartie côté application, et
+ * `src/distribution/migrations.test.ts` vérifie que les deux ne divergent pas.
+ */
+export function urlBaseDurable(fichier) {
+  return `file:${fichier}?connection_limit=1`
+}
+
+/**
  * Pose la journalisation WAL et vérifie qu'elle a bien pris.
  *
  * Hors transaction : SQLite refuse un changement de mode de journalisation à
@@ -52,8 +71,13 @@ async function poserWal(prisma) {
   // forcément à une coupure de courant, SQLite n'attendant plus la confirmation
   // du disque. Prisma laisse aujourd'hui la valeur par défaut FULL (mesuré : 2)
   // — mais c'est une valeur par défaut, pas un engagement. On la pose donc
-  // explicitement. Le coût, un fsync par transaction, est sans objet pour une
-  // application de bureau à un seul utilisateur.
+  // explicitement, ET on la relit : la poser sans la relire ne valait que par
+  // la valeur par défaut qu'on déclarait justement ne pas vouloir croire.
+  //
+  // Portée exacte : cette connexion-ci, celle du LANCEUR, qui écrit les
+  // migrations et la sauvegarde. Elle meurt au `$disconnect()` d'avant le
+  // `spawn`. Le serveur est un autre processus et pose la sienne au démarrage
+  // (`src/instrumentation.ts`, via `src/db/durabilite.ts`).
   await prisma.$executeRawUnsafe('PRAGMA synchronous=FULL')
 
   const relu = await prisma.$queryRawUnsafe('PRAGMA journal_mode')
@@ -65,6 +89,15 @@ async function poserWal(prisma) {
         "La durabilité annoncée dans le LISEZMOI ne serait plus garantie : démarrage interrompu.\n" +
         "Cause la plus fréquente : le dossier est sur un partage réseau (SMB, NFS, Dropbox,\n" +
         'OneDrive…), où SQLite ne peut pas poser WAL. Déplace le dossier sur un disque local.',
+    )
+  }
+
+  const attente = Number((await prisma.$queryRawUnsafe('PRAGMA synchronous'))?.[0]?.synchronous ?? -1)
+  if (attente !== 2) {
+    throw new Error(
+      `SQLite n'a pas retenu « synchronous=FULL » (valeur obtenue : ${attente}).\n` +
+        "Le LISEZMOI promet qu'une coupure de courant ne perd aucune saisie enregistrée : mieux\n" +
+        'vaut interrompre le démarrage que de le promettre sans le tenir.',
     )
   }
 }

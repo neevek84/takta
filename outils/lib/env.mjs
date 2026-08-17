@@ -22,6 +22,48 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 export const SECRETS_ENGENDRES = ['AUTH_SECRET', 'CREDENTIALS_KEY', 'SYNC_FLUSH_TOKEN']
 
 /**
+ * Une déclaration `CLE=valeur`, ou `null` si la ligne n'en est pas une.
+ *
+ * Ce fichier n'est modifié que par la main de la personne : c'est donc à ses
+ * habitudes qu'il faut s'adapter, et non l'inverse. Trois d'entre elles étaient
+ * mal lues, chacune avec la même conséquence — la ligne n'était pas reconnue,
+ * le secret passait pour absent, et il était **régénéré** :
+ *
+ *  1. **Les fins de ligne Windows.** Le LISEZMOI vise explicitement le
+ *     Bloc-notes ; l'y enregistrer convertit tout le fichier en CRLF. Or, en
+ *     JavaScript, `.` ne correspond pas à `\r` : `AUTH_SECRET=valeur\r` ne
+ *     correspondait à rien. `\s*$` avale désormais le retour chariot.
+ *  2. **Les guillemets**, qui sont la convention écrite de `.env.example`
+ *     (`AUTH_SECRET="…"`). Recopiés ici, ils faisaient partie de la valeur :
+ *     mot de passe SMTP refusé sans explication, `CREDENTIALS_KEY` rejetée par
+ *     `parseKey`.
+ *  3. **Le préfixe `export`**, réflexe de qui a l'habitude du shell.
+ *
+ * Régénérer `CREDENTIALS_KEY` rend **définitivement illisibles** les jetons
+ * Google et la clé Dolibarr déjà chiffrés : ces trois cas n'ont donc rien de
+ * cosmétique.
+ *
+ * Les guillemets sont retirés, sans interprétation d'échappement : ce fichier
+ * porte des secrets et des identifiants, pas du texte à mettre en forme.
+ *
+ * @param {string} ligne
+ * @returns {{ nom: string, valeur: string } | null}
+ */
+function analyserLigne(ligne) {
+  const m = ligne.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$/)
+  if (!m) return null
+  return { nom: m[1], valeur: retirerGuillemets(m[2]) }
+}
+
+function retirerGuillemets(valeur) {
+  const q = valeur[0]
+  if (valeur.length >= 2 && (q === '"' || q === "'") && valeur.endsWith(q)) {
+    return valeur.slice(1, -1)
+  }
+  return valeur
+}
+
+/**
  * Lignes `CLE=valeur` d'un fichier d'environnement, commentaires ignorés.
  * @param {string} contenu
  * @returns {Record<string, string>}
@@ -29,9 +71,9 @@ export const SECRETS_ENGENDRES = ['AUTH_SECRET', 'CREDENTIALS_KEY', 'SYNC_FLUSH_
 function lireValeurs(contenu) {
   /** @type {Record<string, string>} */
   const valeurs = {}
-  for (const ligne of contenu.split('\n')) {
-    const m = ligne.match(/^([A-Z0-9_]+)=(.*)$/)
-    if (m) valeurs[m[1]] = m[2]
+  for (const ligne of contenu.split(/\r?\n/)) {
+    const d = analyserLigne(ligne)
+    if (d) valeurs[d.nom] = d.valeur
   }
   return valeurs
 }
@@ -66,20 +108,26 @@ export function chargerOuCreerEnv(cheminEnv) {
   }
 
   if (ajouts.length > 0) {
+    // On complète le fichier dans les fins de ligne où il a été enregistré :
+    // ajouter des lignes en LF à un fichier passé en CRLF le rendrait mixte,
+    // donc illisible dans les éditeurs Windows les plus anciens — ceux-là mêmes
+    // qui viennent de le convertir.
+    const finDeLigne = contenu.includes('\r\n') ? '\r\n' : '\n'
+
     // Les déclarations vides (`SYNC_FLUSH_TOKEN=`) laissées par une version
     // antérieure sont retirées : gardées, elles écraseraient la valeur
     // engendrée selon l'ordre de lecture.
     const conserve = contenu
-      .split('\n')
+      .split(/\r?\n/)
       .filter((ligne) => {
-        const m = ligne.match(/^([A-Z0-9_]+)=(.*)$/)
-        return !(m && SECRETS_ENGENDRES.includes(m[1]) && m[2].trim() === '')
+        const d = analyserLigne(ligne)
+        return !(d && SECRETS_ENGENDRES.includes(d.nom) && d.valeur.trim() === '')
       })
-      .join('\n')
-      .replace(/\n*$/, '')
+      .join(finDeLigne)
+      .replace(/(\r?\n)*$/, '')
 
-    const corps = conserve === '' ? '' : `${conserve}\n`
-    writeFileSync(cheminEnv, `${corps}${ajouts.join('\n')}\n`, { mode: 0o600 })
+    const corps = conserve === '' ? '' : `${conserve}${finDeLigne}`
+    writeFileSync(cheminEnv, `${corps}${ajouts.join(finDeLigne)}${finDeLigne}`, { mode: 0o600 })
   }
 
   // `writeFileSync` n'applique `mode` qu'à la création : un fichier venu d'une

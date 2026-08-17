@@ -21,7 +21,15 @@ export type WebhookOutcome =
  *    aval. Jamais un jeton dans l'URL — il fuit dans les journaux d'accès et
  *    ne prouve rien sur le contenu reçu.
  * 2. **La lecture de la charge**, propre au prestataire.
- * 3. **L'unicité de l'événement.** Consignée *avant* d'agir : c'est ce qui
+ * 3. **La résolution du lien externe.** Une lecture, aucun effet — et c'est
+ *    pourquoi elle précède la barrière suivante. Consigner l'identifiant
+ *    d'abord brûlait définitivement une livraison arrivée pendant que
+ *    `sendCraForSignature` n'avait pas encore écrit son `ExternalLink` : toute
+ *    relivraison rendait `REJOUE`, et la route traduit `LIEN_INCONNU` en 202
+ *    pour que le prestataire cesse de réessayer. Les deux barrières
+ *    s'annulaient au lieu de se compléter, et le CRA restait `ENVOYE` sans
+ *    rattrapage.
+ * 4. **L'unicité de l'événement.** Consignée *avant* d'agir : c'est ce qui
  *    garantit qu'un rejeu n'a aucun effet, même si l'application redémarre
  *    entre deux livraisons. La contrepartie assumée est qu'un événement dont
  *    le traitement échoue ne sera pas rejoué automatiquement — le
@@ -46,15 +54,9 @@ export async function handleSignatureWebhook(args: {
   const lu = parseDocumensoWebhook(args.rawBody)
   if (lu === null) return { ok: false, raison: 'CHARGE_ILLISIBLE' }
 
-  try {
-    await prisma.signatureWebhookEvent.create({
-      data: { provider: PROVIDER_DOCUMENSO, eventId: lu.eventId },
-    })
-  } catch {
-    // L'unicité (provider, eventId) a parlé : cet événement a déjà été traité.
-    return { ok: true, effet: 'REJOUE', craId: null }
-  }
-
+  // **Avant la consignation de l'identifiant** : une résolution qui échoue ne
+  // doit rien consommer, sans quoi la relivraison du même événement — une fois
+  // le lien enfin écrit — serait rejetée comme un rejeu.
   const lien = await prisma.externalLink.findFirst({
     where: {
       entityType: ENTITY_CRA,
@@ -64,6 +66,15 @@ export async function handleSignatureWebhook(args: {
     select: { entityId: true },
   })
   if (lien === null) return { ok: false, raison: 'LIEN_INCONNU' }
+
+  try {
+    await prisma.signatureWebhookEvent.create({
+      data: { provider: PROVIDER_DOCUMENSO, eventId: lu.eventId },
+    })
+  } catch {
+    // L'unicité (provider, eventId) a parlé : cet événement a déjà été traité.
+    return { ok: true, effet: 'REJOUE', craId: null }
+  }
 
   const connector =
     args.connector !== undefined ? args.connector : await getSignatureConnector()

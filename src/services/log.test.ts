@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { journalAvertissement, journalErreur, journalInfo , confierSecret, oublierSecretsConfies } from './log'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { estCleSensible } from '@/core/log/redact'
+import {
+  journalAvertissement,
+  journalErreur,
+  journalInfo,
+  confierSecret,
+  oublierSecretsConfies,
+  VARIABLES_SECRETES,
+} from './log'
 
 let erreurs: string[]
 let avertissements: string[]
@@ -150,5 +160,53 @@ describe('aucun secret ne sort', () => {
     journalErreur('google.oauth', new Error('réponse: {"refresh_token":"1//05aBcDeFgHiJk"}'))
 
     expect(erreurs[0]).not.toContain('1//05aBcDeFgHiJk')
+  })
+})
+
+// Le journal est devenu bavard — un evenement par saisie poussee — et il part
+// desormais vers des URL tierces par les webhooks sortants. Quatre secrets de
+// l'environnement n'etaient pas dans la liste expurgee : celui qui signe les
+// webhooks, la cle Documenso, le jeton d'API et le mot de passe SMTP. Un
+// message d'erreur les recopiant les aurait emportes chez le destinataire.
+describe('tous les secrets de l environnement sont expurges', () => {
+  const CAS = [
+    ['SIGNATURE_WEBHOOK_SECRET', 'secret-webhook-de-test-0123456789'],
+    ['DOCUMENSO_API_KEY', 'api-documenso-de-test-0123456789'],
+    ['CRA_API_TOKEN', 'jeton-api-de-test-0123456789'],
+    ['SMTP_PASSWORD', 'motdepasse-smtp-de-test-01234567'],
+  ] as const
+
+  for (const [nom, valeur] of CAS) {
+    it(`efface la valeur de ${nom} recopiee dans un message`, () => {
+      const ancienne = process.env[nom]
+      process.env[nom] = valeur
+      try {
+        journalErreur('essai', new Error(`echec avec ${valeur} refuse`))
+      } finally {
+        if (ancienne === undefined) delete process.env[nom]
+        else process.env[nom] = ancienne
+      }
+
+      expect(erreurs[0]).not.toContain(valeur)
+      expect(erreurs[0]).toContain('[secret]')
+    })
+  }
+})
+
+// Le vrai garde-fou : la liste ci-dessus se maintient a la main, et c'est
+// exactement ainsi que ces quatre-la ont manque. Le test derive donc les noms
+// depuis .env.example plutot que de les enumerer.
+describe('la liste expurgee suit .env.example', () => {
+  it('couvre toute variable dont le nom annonce un secret', () => {
+    const exemple = readFileSync(join(process.cwd(), '.env.example'), 'utf8')
+    const noms = [...new Set(exemple.match(/^[A-Z][A-Z0-9_]*(?==)/gm) ?? [])]
+    const sensibles = noms.filter((n) => estCleSensible(n))
+
+    const oublies = sensibles.filter((n) => !VARIABLES_SECRETES.includes(n as never))
+
+    expect(
+      oublies,
+      `${oublies.join(', ')} nomment un secret dans .env.example sans etre expurges du journal`,
+    ).toEqual([])
   })
 })

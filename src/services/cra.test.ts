@@ -123,6 +123,38 @@ describe('CRA', () => {
     expect(r.paidAt).toBeNull()
   })
 
+  // Le suivi de facturation engage : « cette prestation est facturée, à ce
+  // numéro, payée à cette date ». Sans la lecture scopée qui précède
+  // l'écriture, tout compte authentifié pouvait l'inscrire sur le CRA d'un
+  // autre consultant — et rien dans la suite ne s'en apercevait.
+  it('refuse d inscrire un suivi de facturation sur le CRA d un autre', async () => {
+    const cra = await getOrCreateCra(userId, missionId, '2026-03')
+    const autre = await prisma.user.create({
+      data: { email: 'facture-autre@test.local', name: 'A', passwordHash: 'x' },
+    })
+
+    await expect(
+      updateInvoiceTracking(autre.id, cra.id, {
+        invoiceNumber: 'FA-INTRUS',
+        invoicedAt: new Date('2026-04-02T00:00:00Z'),
+        paidAt: new Date('2026-04-30T00:00:00Z'),
+      }),
+    ).rejects.toThrow()
+
+    const relu = await prisma.cra.findUniqueOrThrow({ where: { id: cra.id } })
+    expect(relu.invoiceNumber).toBeNull()
+    expect(relu.invoicedAt).toBeNull()
+    expect(relu.paidAt).toBeNull()
+    // Rien n'a eu lieu, donc rien n'est consigné : un journal qui atteste d'un
+    // acte refusé raconte une facturation qui n'existe pas.
+    const entrees = (await readAuditSince({ since: 0 })).filter(
+      (e) => e.entityId === cra.id && e.action === 'facturation.renseignee',
+    )
+    expect(entrees).toHaveLength(0)
+
+    await prisma.user.delete({ where: { id: autre.id } })
+  })
+
   it('liste les CRA d un mois', async () => {
     await getOrCreateCra(userId, missionId, '2026-03')
     const list = await listCras(userId, '2026-03')

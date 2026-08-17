@@ -1,7 +1,32 @@
+# Attention : ces motifs n'obeissent PAS aux regles de .gitignore.
+#
+# Ils sont ancres a la racine du contexte, et `*` ne franchit jamais un `/`
+# (BuildKit applique filepath.Match segment par segment ; `**` est le seul
+# joker qui traverse les dossiers). `*.db` protegeait donc correctement le
+# depot git, ou le meme motif vaut a toute profondeur, et laissait entrer
+# `prisma/dev.db` dans le contexte — puis dans l'image finale, par le
+# `COPY --from=builder /app/prisma ./prisma` du Dockerfile. Mesure : 320 Ko de
+# base de developpement, avec un utilisateur et ses donnees reelles.
+#
+# D'ou les `**/` ci-dessous. src/deploy/deployment-config.test.ts rejoue cette
+# semantique sur les motifs reels de ce fichier.
 node_modules
-.next
-.next-dist
-distribution
 .git
-*.db
-.env
+distribution
+
+# `distDir` est arbitraire (CRA_DIST_DIR, voir next.config.ts) : enumerer
+# `.next` et `.next-dist` par leur nom laissait entrer `.next-rev56/`, et avec
+# lui le `.env` que `next build` recopie dans sa sortie standalone.
+.next*
+
+# Bases SQLite, a toute profondeur, avec les fichiers compagnons du mode WAL.
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.db-journal
+
+# Secrets : `.env` du depot, ses variantes, et le dossier d'exploitation de
+# l'installation portable.
+**/.env
+**/.env.*
+**/donnees

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readCellState, cellStateToWrite, buildCellStates } from './cell-state'
-import type { CellContext, CellEntry } from './cell-state'
+import type { CellContext, CellEntry, CellReadContext } from './cell-state'
 import type { Slot } from '../time/slots'
 
 const SLOTS: Slot[] = [
@@ -17,16 +17,22 @@ const CTX: CellContext = {
 }
 
 /**
- * Une saisie telle qu'elle sort de la base : ses bornes y sont **figées**, et
- * ne se recalculent donc jamais depuis les réglages courants.
+ * Une saisie telle qu'elle sort de la base : ses bornes **et son facteur** y
+ * sont figés, et ne se recalculent donc jamais depuis les réglages courants.
  */
 function saisie(
   minutes: number,
   slotId: string,
   startMinute: number,
   endMinute: number,
+  minutesParJour = 480,
 ): CellEntry {
-  return { minutes, slotId, startMinute, endMinute }
+  return { minutes, slotId, startMinute, endMinute, minutesParJour }
+}
+
+/** Les bornes que `readCellState` reporte sur une journée ou une demi-journée. */
+function bornes(startMinute: number, endMinute: number): { startMinute: number; endMinute: number } {
+  return { startMinute, endMinute }
 }
 
 describe('readCellState', () => {
@@ -39,18 +45,24 @@ describe('readCellState', () => {
   })
 
   it('lit une journée pleine sans créneau comme JOURNEE', () => {
-    expect(readCellState([saisie(480, '', 540, 1020)], CTX)).toEqual({ kind: 'JOURNEE' })
+    expect(readCellState([saisie(480, '', 540, 1020)], CTX)).toEqual({
+      kind: 'JOURNEE',
+      bornes: bornes(540, 1020),
+    })
   })
 
   it('lit une journée pleine à facteur court comme JOURNEE', () => {
-    const court: CellContext = { ...CTX, minutesParJour: 432 }
-    expect(readCellState([saisie(432, '', 540, 972)], court)).toEqual({ kind: 'JOURNEE' })
+    expect(readCellState([saisie(432, '', 540, 972, 432)], CTX)).toEqual({
+      kind: 'JOURNEE',
+      bornes: bornes(540, 972),
+    })
   })
 
   it('lit la valeur nominale d un créneau comme une demi-journée', () => {
     expect(readCellState([saisie(240, 'matin', 540, 780)], CTX)).toEqual({
       kind: 'DEMI',
       slotId: 'matin',
+      bornes: bornes(540, 780),
     })
   })
 
@@ -128,12 +140,70 @@ describe('readCellState', () => {
     ).toMatchObject({ startMinute: 540, endMinute: 1080, eclatee: true })
   })
 
+  /**
+   * C2 — le gel du facteur se casse **en lecture**.
+   *
+   * La colonne `minutesParJour` peut rester parfaitement intacte en base
+   * pendant qu'un lecteur classe la case sous le réglage *courant* : une
+   * journée pleine écrite à 420 minutes cessait d'être une journée dès que
+   * l'administrateur passait la prestation à 480, et le calendrier affichait
+   * « 1 » là où le tableau affichait « 1,14 » — deux vues du même écran, deux
+   * valeurs, sur un CRA validé, sans qu'aucune donnée n'ait bougé.
+   *
+   * Le facteur courant n'entre plus dans `CellReadContext` : une lecture qui
+   * aurait de quoi reconvertir finirait par le faire.
+   */
+  describe('le facteur est celui de la saisie, jamais le réglage courant', () => {
+    it('lit une journée figée à 420 comme une journée entière', () => {
+      expect(readCellState([saisie(420, '', 480, 900, 420)], CTX)).toEqual({
+        kind: 'JOURNEE',
+        bornes: bornes(480, 900),
+      })
+    })
+
+    it('ne lit pas une saisie de 480 figée à 420 comme une journée entière', () => {
+      // 480 minutes sous un facteur de 420, c'est 1,14 jour : ni une journée,
+      // ni une demi-journée — une valeur libre, que les deux vues affichent
+      // avec le même chiffre.
+      expect(readCellState([saisie(480, '', 540, 1020, 420)], CTX)).toEqual({
+        kind: 'LIBRE',
+        minutes: 480,
+        slotId: '',
+        startMinute: 540,
+        endMinute: 1020,
+        eclatee: false,
+      })
+    })
+
+    it('lit une demi-journée sous le facteur figé de sa saisie', () => {
+      // 210 minutes = la moitié de 420. Sous le facteur courant (480), la
+      // moitié vaudrait 240 : la case tombait alors en valeur libre.
+      expect(readCellState([saisie(210, 'matin', 540, 750, 420)], CTX)).toEqual({
+        kind: 'DEMI',
+        slotId: 'matin',
+        bornes: bornes(540, 750),
+      })
+    })
+
+    // Le contexte de lecture ne porte que les créneaux : il n'y a plus de
+    // facteur courant à consulter. Le contrôle de comportement — « un CRA
+    // validé rend les mêmes chiffres après un changement de réglage » — vit
+    // là où le facteur existe encore, dans `MonthCalendar.test.tsx`.
+    it('ne demande rien d autre que les créneaux pour lire une case', () => {
+      const lecture: CellReadContext = { slots: SLOTS }
+      expect(readCellState([saisie(420, '', 480, 900, 420)], lecture)).toEqual({
+        kind: 'JOURNEE',
+        bornes: bornes(480, 900),
+      })
+    })
+  })
+
   it('ne compte pas les saisies à zéro dans le total d une case éclatée', () => {
     const etat = readCellState(
       [saisie(240, 'matin', 540, 780), saisie(0, 'apres-midi', 840, 1080)],
       CTX,
     )
-    expect(etat).toEqual({ kind: 'DEMI', slotId: 'matin' })
+    expect(etat).toEqual({ kind: 'DEMI', slotId: 'matin', bornes: bornes(540, 780) })
   })
 })
 
@@ -155,7 +225,7 @@ describe('cellStateToWrite', () => {
   it('écrit une demi-journée au facteur figé de la prestation', () => {
     const court: CellContext = { ...CTX, minutesParJour: 420 }
     expect(cellStateToWrite({ kind: 'DEMI', slotId: 'apres-midi' }, court)).toEqual([
-      saisie(210, 'apres-midi', 840, 1080),
+      saisie(210, 'apres-midi', 840, 1080, 420),
     ])
   })
 
@@ -201,13 +271,16 @@ describe('cellStateToWrite', () => {
     expect(() => cellStateToWrite({ kind: 'DEMI', slotId: 'inconnu' }, CTX)).toThrow()
   })
 
+  // L'aller-retour rend l'état **et ses bornes** : ce que l'écriture a figé,
+  // la lecture le reporte. Sans elles, le formulaire les recalculerait depuis
+  // les réglages courants — le défaut M1.
   it('fait l aller-retour sans perte pour les états du cycle', () => {
-    for (const etat of [
-      { kind: 'JOURNEE' } as const,
-      { kind: 'DEMI', slotId: 'matin' } as const,
-      { kind: 'DEMI', slotId: 'apres-midi' } as const,
-    ]) {
-      expect(readCellState(cellStateToWrite(etat, CTX), CTX)).toEqual(etat)
+    for (const [etat, attendues] of [
+      [{ kind: 'JOURNEE' } as const, bornes(540, 1020)],
+      [{ kind: 'DEMI', slotId: 'matin' } as const, bornes(540, 780)],
+      [{ kind: 'DEMI', slotId: 'apres-midi' } as const, bornes(840, 1080)],
+    ] as const) {
+      expect(readCellState(cellStateToWrite(etat, CTX), CTX)).toEqual({ ...etat, bornes: attendues })
     }
   })
 })
@@ -221,15 +294,30 @@ describe('buildCellStates', () => {
 
   it('indexe les états par date pour la seule prestation demandée', () => {
     const etats = buildCellStates(entries, 'l1', CTX)
-    expect(etats.get('2026-03-02')).toEqual({ kind: 'JOURNEE' })
-    expect(etats.get('2026-03-03')).toEqual({ kind: 'DEMI', slotId: 'matin' })
+    expect(etats.get('2026-03-02')).toEqual({ kind: 'JOURNEE', bornes: bornes(540, 1020) })
+    expect(etats.get('2026-03-03')).toEqual({
+      kind: 'DEMI',
+      slotId: 'matin',
+      bornes: bornes(540, 780),
+    })
     expect(etats.size).toBe(2)
   })
 
   it('ne mêle jamais les saisies d une autre prestation', () => {
     const etats = buildCellStates(entries, 'l2', CTX)
     expect(etats.size).toBe(1)
-    expect(etats.get('2026-03-02')).toEqual({ kind: 'JOURNEE' })
+    expect(etats.get('2026-03-02')).toEqual({ kind: 'JOURNEE', bornes: bornes(540, 1020) })
+  })
+
+  // Le facteur figé traverse `buildCellStates` : le laisser tomber en
+  // recopiant la saisie était le chemin exact du défaut C2.
+  it('reporte le facteur figé de chaque saisie jusqu au classement', () => {
+    const etats = buildCellStates(
+      [{ lineId: 'l1', date: '2026-03-05', ...saisie(420, '', 480, 900, 420) }],
+      'l1',
+      CTX,
+    )
+    expect(etats.get('2026-03-05')).toEqual({ kind: 'JOURNEE', bornes: bornes(480, 900) })
   })
 
   it('regroupe plusieurs créneaux du même jour dans une seule case', () => {

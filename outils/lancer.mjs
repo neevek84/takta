@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { racineDeLInstallation, chemins, creerDossierDonnees } from './lib/chemins.mjs'
 import { chargerOuCreerEnv } from './lib/env.mjs'
 import { resoudrePort, messageBascule } from './lib/port.mjs'
-import { lireFichierPid, quelquUnEcoute } from './lib/processus.mjs'
-import { appliquerMigrations } from './lib/migrations.mjs'
+import { lireFichierPid, quelquUnEcoute, etatDuProcessus } from './lib/processus.mjs'
+import { appliquerMigrations, urlBaseDurable } from './lib/migrations.mjs'
 import { sauvegarderBase } from './lib/sauvegarde.mjs'
 import { FICHIERS_ENV_PARASITES } from './lib/paquet.mjs'
 
@@ -20,9 +20,31 @@ function echoue(message) {
 }
 
 // ── 1. Déjà démarré ? ────────────────────────────────────────────────────────
+// La question se pose au PROCESSUS inscrit dans le repère, jamais au port.
+// Juger par le port se trompait dans les deux sens : un serveur CRA vivant qui
+// n'écoute pas encore passait pour mort — d'où un SECOND serveur démarré sur le
+// port voisin, sur la même base — et le serveur d'un autre programme sur le
+// port 3000 passait pour le nôtre, si bien que `demarrer.sh` envoyait la
+// personne vers l'application de quelqu'un d'autre sans lui laisser aucune
+// commande pour démarrer CRA.
+const marqueurServeur = path.join(c.app, 'server.js')
 const enCours = lireFichierPid(c.pid)
-if (enCours && (await quelquUnEcoute(enCours.port))) {
-  console.log(`L'application tourne déjà : http://127.0.0.1:${enCours.port}`)
+const etatEnCours = enCours
+  ? etatDuProcessus(enCours.pid, {
+      marqueur: marqueurServeur,
+      demarreLe: enCours.demarreLe,
+    })
+  : 'absent'
+if (etatEnCours === 'notre' || etatEnCours === 'indetermine') {
+  if (await quelquUnEcoute(enCours.port)) {
+    console.log(`L'application tourne déjà : http://127.0.0.1:${enCours.port}`)
+  } else {
+    console.log(
+      `L'application est déjà lancée (processus ${enCours.pid}) mais ne répond pas encore sur\n` +
+        `le port ${enCours.port} : elle est probablement en train de démarrer. Patiente, puis\n` +
+        `ouvre http://127.0.0.1:${enCours.port}.`,
+    )
+  }
   console.log("Pour l'arrêter : ./arreter.sh")
   process.exit(0)
 }
@@ -31,7 +53,11 @@ rmSync(c.pid, { force: true })
 // ── 2. Environnement ─────────────────────────────────────────────────────────
 // Chemin ABSOLU : Prisma résout un `file:` relatif par rapport au schéma, pas
 // au dossier courant. Un chemin relatif créerait une base au mauvais endroit.
-process.env.DATABASE_URL = `file:${c.base}`
+//
+// `urlBaseDurable` y ajoute la connexion unique sans laquelle `synchronous=FULL`
+// ne couvrirait qu'une partie du pool — ici pour les migrations, et, par
+// héritage de l'environnement, dans le serveur qui va être lancé.
+process.env.DATABASE_URL = urlBaseDurable(c.base)
 const secrets = chargerOuCreerEnv(c.env)
 
 // `next build` recopie le `.env` du dépôt dans sa sortie `standalone` : une
@@ -134,6 +160,24 @@ const enfant = spawn(process.execPath, [serveur], {
     // Auth.js v5 refuse un hôte non déclaré hors Vercel dès que NODE_ENV vaut
     // production : sans cette ligne, la page de connexion tombe en UntrustedHost.
     AUTH_TRUST_HOST: 'true',
+    // Sans cela, `./arreter.sh` n'arrête pas l'application.
+    //
+    // Next pose son propre gestionnaire de SIGTERM
+    // (node_modules/next/dist/server/lib/start-server.js) qui attend
+    // `server.close()` — lequel ne rend la main qu'une fois **toutes** les
+    // connexions fermées, et hors développement Next n'appelle jamais
+    // `closeAllConnections()`. Mesuré sur l'archive réelle : le port se libère
+    // aussitôt, mais le processus était **toujours vivant après 25 secondes**.
+    // L'ancien `arreter.sh`, qui jugeait par le port, annonçait donc « Application
+    // arrêtée » en 0,3 seconde en laissant un orphelin — à chaque arrêt, pas
+    // seulement dans les cas limites.
+    //
+    // La variable demande à Next de ne poser aucun gestionnaire : SIGTERM
+    // retrouve le comportement par défaut de Node, l'arrêt immédiat. Mesuré :
+    // 0,03 seconde. Aucune saisie validée n'est perdue — c'est exactement la
+    // situation du `kill -9`, que la journalisation WAL et `synchronous=FULL`
+    // couvrent (voir src/db/durabilite.ts).
+    NEXT_MANUAL_SIG_HANDLE: '1',
   },
 })
 enfant.unref()

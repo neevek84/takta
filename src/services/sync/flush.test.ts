@@ -809,3 +809,83 @@ describe('drainage de tous les comptes', () => {
     expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
   })
 })
+
+/**
+ * Le catalogue d'événements promet `agenda.bloc.pousse`,
+ * `agenda.conflit.detecte` et `synchro.echec` à l'abonnement. Personne ne les
+ * émettait : un intégrateur s'y abonnait et attendait indéfiniment.
+ */
+describe('journal de preuve — ce que le drainage de l agenda consigne', () => {
+  async function journal(): Promise<string[]> {
+    return (await prisma.auditEvent.findMany({ orderBy: { seq: 'asc' } })).map((e) => e.action)
+  }
+
+  it('CONSIGNE `agenda.bloc.pousse` quand un bloc part vraiment', async () => {
+    await prisma.auditEvent.deleteMany({})
+    const entryId = await saisir('2026-03-12')
+
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    const entrees = await prisma.auditEvent.findMany({ where: { action: 'agenda.bloc.pousse' } })
+    expect(entrees, 'aucune entrée `agenda.bloc.pousse`').toHaveLength(1)
+    expect(entrees[0]!.entityId).toBe(entryId)
+    // Rattaché au propriétaire : c'est sa journée, et lui seul doit la relire.
+    expect(entrees[0]!.actorId).toBe(userId)
+  })
+
+  it('ne consigne aucune poussée pour une suppression ni pour une ligne sans objet', async () => {
+    // Un retrait n'écrit aucun bloc, et une saisie disparue avant le drainage
+    // n'en écrit pas non plus. Consigner ici ferait attendre un abonné devant
+    // un événement qui n'a rien changé.
+    await saisir('2026-03-12')
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    await prisma.auditEvent.deleteMany({})
+
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 0, kind: 'REALISE' })
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(await journal()).not.toContain('agenda.bloc.pousse')
+  })
+
+  it('CONSIGNE `agenda.conflit.detecte`, avec la nature de la divergence', async () => {
+    const entryId = await saisir('2026-03-12')
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const link = await lien(entryId)
+    api.toucherEvenement(link?.externalId as string, { summary: 'Déplacé à la main' })
+    await saisir('2026-03-12', 480)
+    await prisma.auditEvent.deleteMany({})
+
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    const entrees = await prisma.auditEvent.findMany({
+      where: { action: 'agenda.conflit.detecte' },
+    })
+    expect(entrees, 'aucune entrée `agenda.conflit.detecte`').toHaveLength(1)
+    const payload = JSON.parse(entrees[0]!.payloadJson) as Record<string, unknown>
+    expect(payload.nature).toBe('REMOTE_MODIFIED')
+  })
+
+  it('CONSIGNE `synchro.echec` à l abandon, et rien à un simple recul', async () => {
+    await saisir('2026-03-12')
+    api.failNext('RESEAU')
+    await prisma.auditEvent.deleteMany({})
+
+    // Recul : la ligne repartira, il n'y a rien à signaler à personne.
+    const recul = await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    expect(recul.echecs).toBe(0)
+    expect(await journal()).not.toContain('synchro.echec')
+
+    // Abandon : celui-là demande une action, et il est consigné.
+    api.failNext('REQUETE')
+    const perdu = await flushSyncOutbox({
+      userId,
+      now: new Date(NOW.getTime() + 3_600_000),
+      connector: connector(),
+    })
+    expect(perdu.echecs).toBe(1)
+
+    const entrees = await prisma.auditEvent.findMany({ where: { action: 'synchro.echec' } })
+    expect(entrees, 'aucune entrée `synchro.echec`').toHaveLength(1)
+    expect(entrees[0]!.actorId).toBe(userId)
+  })
+})

@@ -26,11 +26,21 @@ const PREFIXE = '[cra]'
  * bibliothèque tierce dans un message d'erreur. Effacées par égalité exacte,
  * ce qui en fait la seule garantie stricte du rédacteur.
  */
-const VARIABLES_SECRETES = [
+export const VARIABLES_SECRETES = [
   'CREDENTIALS_KEY',
   'AUTH_SECRET',
   'SYNC_FLUSH_TOKEN',
   'DATABASE_URL',
+  // Ajoutés après coup, et la raison mérite d'être écrite : le journal est
+  // devenu bavard — un événement par saisie poussée — et il part désormais
+  // vers des URL tierces par les webhooks sortants. Un message d'erreur
+  // recopiant l'un de ces quatre secrets l'aurait emporté chez le
+  // destinataire. Toute variable de `.env.example` qui nomme un secret doit
+  // figurer ici ; un test le vérifie.
+  'SIGNATURE_WEBHOOK_SECRET',
+  'DOCUMENSO_API_KEY',
+  'CRA_API_TOKEN',
+  'SMTP_PASSWORD',
 ] as const
 
 // Le client OAuth Google n'y figure plus : il ne vit plus dans l'environnement

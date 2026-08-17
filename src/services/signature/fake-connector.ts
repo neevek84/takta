@@ -9,6 +9,8 @@ export interface FakeSignatureConnector extends SignatureConnector {
   readonly envois: SignatureEnvoi[]
   readonly relances: string[]
   readonly telechargements: string[]
+  /** références dont l'état a été demandé, dans l'ordre */
+  readonly interrogations: string[]
   /** force l'état que `status()` rendra pour cette référence */
   regler(externalId: string, statut: SignatureStatus): void
   /** pose le document signé que `download()` rendra */
@@ -36,6 +38,7 @@ export function createFakeSignatureConnector(): FakeSignatureConnector {
   const envois: SignatureEnvoi[] = []
   const relances: string[] = []
   const telechargements: string[] = []
+  const interrogations: string[] = []
   const statuts = new Map<string, SignatureStatus>()
   const signes = new Map<string, Uint8Array>()
   let echecEnvoi: string | null = null
@@ -47,6 +50,7 @@ export function createFakeSignatureConnector(): FakeSignatureConnector {
     envois,
     relances,
     telechargements,
+    interrogations,
 
     regler(externalId, statut) {
       statuts.set(externalId, statut)
@@ -85,6 +89,7 @@ export function createFakeSignatureConnector(): FakeSignatureConnector {
     },
 
     async status(externalId) {
+      interrogations.push(externalId)
       return statuts.get(externalId) ?? 'EN_ATTENTE'
     },
 

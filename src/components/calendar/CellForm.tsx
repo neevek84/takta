@@ -32,11 +32,32 @@ function timeInputToMinutes(value: string): number | null {
 }
 
 /**
+ * Les heures **déjà écrites** de la case, quand elle en a.
+ *
+ * Une valeur libre les porte directement ; une journée entière et une
+ * demi-journée les portent depuis que `readCellState` les reporte. C'est le
+ * défaut M1 : sans elles, le formulaire les **recalculait** depuis la plage
+ * journée et les créneaux *courants*. Une saisie écrite de 8 h à 16 h
+ * s'ouvrait sur 10 h – 18 h le jour où l'administrateur déplaçait la journée
+ * de travail, les heures réellement enregistrées n'étaient montrées nulle
+ * part, et valider sans rien changer les écrasait par celles-là. Le gel avait
+ * tenu en base jusqu'à ce que le lecteur le casse.
+ */
+function bornesFigees(etat: CellState): { startMinute: number; endMinute: number } | undefined {
+  if (etat.kind === 'LIBRE') {
+    return { startMinute: etat.startMinute, endMinute: etat.endMinute }
+  }
+  return etat.kind === 'VIDE' ? undefined : etat.bornes
+}
+
+/**
  * Les deux bornes que le formulaire affiche à l'ouverture.
  *
- * Elles viennent de ce que la case porte déjà — `cellStateToWrite` calcule
- * exactement ce qui partirait en base —, et de la plage journée pour une case
- * vide. Jamais d'heure inventée : le défaut que ce lot corrige était
+ * D'abord celles que la case porte déjà, figées à son écriture. À défaut
+ * seulement — une case vide, ou le cran que le clic vient de poser et dont les
+ * heures n'existeront qu'à l'écriture —, celles que `cellStateToWrite`
+ * calculerait des réglages courants, c'est-à-dire exactement ce qui partirait
+ * en base. Jamais d'heure inventée : le défaut que ce lot corrige était
  * précisément que l'application décidait seule d'un début que rien n'affichait.
  */
 function bornesInitiales(
@@ -46,6 +67,9 @@ function bornesInitiales(
   journeeDebutMinute: number,
   journeeFinMinute: number,
 ): { startMinute: number; endMinute: number } {
+  const figees = bornesFigees(etat)
+  if (figees !== undefined) return figees
+
   if (etat.kind === 'VIDE') {
     return { startMinute: journeeDebutMinute, endMinute: journeeFinMinute % 1440 }
   }

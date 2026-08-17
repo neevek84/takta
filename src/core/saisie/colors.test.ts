@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { PREVU_COLOR, SAISIE_COLOR, colorForLine, couleurDAplat, LINE_COLORS } from './colors'
 import {
+  APLAT_BACKGROUNDS,
+  DISTINCTION_PAIRS,
+  FONDS_DE_TEXTE,
+  MIN_CATEGORY_DISTANCE,
   TEXT_PAIRS,
   THEME_PRESETS,
   THEME_TOKEN_KEYS,
+  colorDistance,
   type ThemeTokens,
 } from '@/core/theme/tokens'
 import { AA_TEXT_RATIO, contrastRatio } from '@/core/theme/contrast'
@@ -130,6 +135,44 @@ describe('toute teinte d’aplat tient sous l’encre du chiffre', () => {
         const fond = JETON_PAR_CLASSE.get(aplat.bg)!
         const ratio = contrastRatio(preset.tokens.ink, preset.tokens[fond])
         expect(ratio, `ink sur ${fond} (${aplat.bg})`).toBeGreaterThanOrEqual(AA_TEXT_RATIO)
+      }
+    })
+  }
+
+  /**
+   * Le second garde-fou, dérivé du même endroit : une teinte d'aplat doit se
+   * **distinguer** de la surface qui la porte, et pas seulement laisser lire le
+   * chiffre posé dessus. C'est le défaut C1 — `DISTINCTION_PAIRS` ne se dérivait
+   * que des six teintes catégorielles, si bien qu'une palette dont l'aplat de
+   * saisie valait `#fdfdfd` s'enregistrait sans une anomalie : le contraste du
+   * chiffre restait excellent, et une journée pleine devenait indistinguable
+   * d'une case vide.
+   *
+   * La liste reste dérivée des deux côtés : ce que `colors.ts` peut peindre,
+   * et ce que `tokens.ts` mesure. Une septième teinte d'aplat fera tomber ce
+   * test tant qu'elle ne sera pas entrée dans les deux.
+   */
+  it('confronte chaque teinte d’aplat aux fonds qui la portent', () => {
+    for (const aplat of APLATS) {
+      const fond = JETON_PAR_CLASSE.get(aplat.bg)!
+      expect(APLAT_BACKGROUNDS, `${fond} parmi les aplats`).toContain(fond)
+      for (const surface of FONDS_DE_TEXTE) {
+        expect(DISTINCTION_PAIRS, `${fond} contre ${surface}`).toContainEqual({
+          a: fond,
+          b: surface,
+        })
+      }
+    }
+  })
+
+  for (const preset of THEME_PRESETS) {
+    it(`${preset.label} : chaque teinte d’aplat se distingue des fonds qui la portent`, () => {
+      for (const aplat of APLATS) {
+        const fond = JETON_PAR_CLASSE.get(aplat.bg)!
+        for (const surface of FONDS_DE_TEXTE) {
+          const distance = colorDistance(preset.tokens[fond], preset.tokens[surface])
+          expect(distance, `${fond} sur ${surface}`).toBeGreaterThanOrEqual(MIN_CATEGORY_DISTANCE)
+        }
       }
     })
   }

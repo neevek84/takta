@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '@/db/client'
 import {
   abandon,
+  ENTITY_CRA,
   ENTITY_TIME_ENTRY,
   MAX_PASSES,
   nextAttempt,
@@ -9,6 +10,7 @@ import {
   TAILLE_LOT,
   type SyncOperation,
 } from '@/core/sync/policy'
+import { actorOf, appendAudit } from '@/services/audit'
 import type { SyncHandler, SyncJob, SyncOutcome } from './types'
 
 /**
@@ -271,6 +273,26 @@ export async function flushOutbox(args: {
     if (resultat.ok) {
       await prisma.syncOutbox.delete({ where: { id: ligne.id } })
       rapport.reussies += 1
+
+      // `temps.pousses`, et depuis ici plutôt que depuis le connecteur.
+      //
+      // Le catalogue promet ce nom à l'abonnement ; personne ne l'émettait.
+      // Ce drainage-ci ne connaît ni Google ni Dolibarr, et il n'a pas à les
+      // connaître pour cela : une ligne de file dont la cible est un **CRA**
+      // porte, par construction, les temps consommés d'un mois arrêté —
+      // `transitionCra` est le seul endroit du dépôt qui en met en file, et il
+      // ne le fait qu'à la validation. Sa réussite *est* « les temps sont
+      // partis ». Le fournisseur figure dans la charge utile, pour que
+      // l'abonné sache chez qui.
+      if (ligne.entityType === ENTITY_CRA) {
+        await appendAudit({
+          ...(await actorOf(ligne.userId)),
+          action: 'temps.pousses',
+          entityType: ligne.entityType,
+          entityId: ligne.entityId,
+          payload: { provider: ligne.provider, operation: ligne.operation },
+        })
+      }
       continue
     }
 
@@ -291,8 +313,24 @@ export async function flushOutbox(args: {
       },
     })
 
-    if (suite.state === 'FAILED') rapport.echouees += 1
-    else rapport.replanifiees += 1
+    if (suite.state === 'FAILED') {
+      rapport.echouees += 1
+      // À l'abandon seulement, jamais à chaque recul : un événement par
+      // tentative remplirait le journal de bruit sur une panne de dix minutes
+      // et noierait l'échec définitif, qui, lui, demande une action.
+      await appendAudit({
+        ...(await actorOf(ligne.userId)),
+        action: 'synchro.echec',
+        entityType: ligne.entityType,
+        entityId: ligne.entityId,
+        payload: {
+          provider: ligne.provider,
+          operation: ligne.operation,
+          tentatives: suite.attempts,
+          erreur: borner(resultat.message),
+        },
+      })
+    } else rapport.replanifiees += 1
   }
 
   return rapport

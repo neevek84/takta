@@ -173,8 +173,8 @@ export default async function CraPage({
         <section className="mt-10">
           <h2 className="mb-3 text-lg">CRA en souffrance</h2>
           <p className="mb-3 text-sm text-muted">
-            Trois relances sans réponse. Ces CRA restent envoyés : à reprendre à la main avec le
-            client, ou à renvoyer après réouverture.
+            Relances épuisées, ou demande expirée chez le prestataire. Ces CRA restent envoyés : à
+            reprendre à la main avec le client, ou à renvoyer après réouverture.
           </p>
           {souffrance.map((cra: CraView) => (
             <p key={cra.id} className="text-sm">
@@ -182,13 +182,35 @@ export default async function CraPage({
               {cra.signature?.sentAt.toISOString().slice(0, 10)}
             </p>
           ))}
-          {/* Ce bouton est ce qui rend l'ordonnanceur facultatif : sans cron ni
-              n8n, le porteur du produit relance depuis l'écran. */}
-          <form action={lancerRelances} className="mt-3">
-            <input type="hidden" name="month" value={month} />
-            <Button>Lancer les relances échues</Button>
-          </form>
         </section>
+      )}
+
+      {/* Ce bouton est ce qui rend l'ordonnanceur facultatif : sans cron ni
+          n8n, le porteur du produit relance depuis l'écran.
+
+          **Hors de la section « en souffrance », et c'est le correctif.** Il y
+          vivait, à l'intérieur de `{souffrance.length > 0 && …}` — or cette
+          liste n'est alimentée que par `abandoned`, que seul
+          `runSignatureReminders` pose, c'est-à-dire le travail que ce bouton
+          déclenche. Sur une instance neuve, aucune demande abandonnée, donc pas
+          de section, donc pas de bouton, donc rien n'était jamais relancé :
+          « trois relances puis abandon » était inatteignable dans le produit
+          livré.
+
+          La condition porte désormais sur ce que le bouton peut faire — une
+          signature encore en attente, ou une souffrance à reprendre — et non
+          sur le résultat de son propre effet. */}
+      {(souffrance.length > 0 ||
+        cras.some((cra) => cra.signature !== null && cra.signature.status === 'EN_ATTENTE')) && (
+        <form action={lancerRelances} className="mt-6">
+          <input type="hidden" name="month" value={month} />
+          <Button>Lancer les relances échues</Button>
+          <p className="mt-2 text-xs text-muted">
+            Relance les signatures dont le délai est écoulé, et abandonne au-delà de trois relances
+            sans réponse. Le travail « Relance de signature » le fait aussi tout seul, s’il est
+            activé dans Administration · Supervision.
+          </p>
+        </form>
       )}
     </PageShell>
   )

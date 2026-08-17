@@ -144,6 +144,39 @@ describe('authentification', () => {
       raison: 'LIEN_INCONNU',
     })
   })
+
+  it('UN LIEN INCONNU NE BRÛLE PAS L IDENTIFIANT D ÉVÉNEMENT', async () => {
+    // La course réelle : le prestataire livre `DOCUMENT_COMPLETED` pendant que
+    // `sendCraForSignature` n'a pas encore écrit son `ExternalLink` — son
+    // `connector.send` a déjà déclenché le courriel côté Documenso. Consigner
+    // l'événement avant de résoudre le lien rendait cette livraison
+    // définitivement perdue : toute relivraison rendait `REJOUE`, et la route
+    // répond 202 pour que le prestataire cesse de réessayer. Deux barrières
+    // conçues pour se compléter s'annulaient.
+    const corps = charge('DOCUMENT_COMPLETED', '7777')
+
+    expect(await recevoir(corps)).toEqual({ ok: false, raison: 'LIEN_INCONNU' })
+    expect(
+      await prisma.signatureWebhookEvent.count(),
+      'l’identifiant a été consigné alors que rien n’a été fait',
+    ).toBe(0)
+
+    // Le lien arrive — l'envoi a fini de s'écrire — et le prestataire relivre.
+    await prisma.externalLink.updateMany({
+      where: { entityType: ENTITY_CRA, entityId: craId, provider: PROVIDER_DOCUMENSO },
+      data: { externalId: '7777' },
+    })
+
+    const relivraison = await recevoir(corps)
+    expect(relivraison).toEqual({ ok: true, effet: 'VALIDE', craId })
+    const cra = await prisma.cra.findUniqueOrThrow({ where: { id: craId } })
+    expect(cra.status).toBe('VALIDE')
+  })
+
+  it('une charge illisible ne brûle pas non plus d identifiant', async () => {
+    await recevoir('ceci n est pas du json')
+    expect(await prisma.signatureWebhookEvent.count()).toBe(0)
+  })
 })
 
 describe('effet', () => {

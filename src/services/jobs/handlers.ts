@@ -10,6 +10,8 @@ import {
 } from '@/core/notify/templates'
 import { distributeWebhooks } from '@/services/webhooks/delivery'
 import { flushAllProviders } from '@/services/sync/drain'
+import { refreshPendingSignatures } from '@/services/signature/refresh'
+import { runSignatureReminders } from '@/services/signature/reminders'
 import type { JobContext, JobHandler } from './registry'
 
 /**
@@ -17,6 +19,14 @@ import type { JobContext, JobHandler } from './registry'
  * Ils signalent, ils poussent, ils consignent — **ils ne décident pas**.
  * `handlers.test.ts` le vérifie travail par travail, et balaie en plus cette
  * source pour qu'aucune écriture n'y soit réintroduite.
+ *
+ * **Une exception, et une seule : le rafraîchissement des signatures.** Il
+ * fait changer un CRA d'état, mais il ne le décide pas — il applique ce que le
+ * prestataire rapporte, par le même `applySignatureStatus` que le webhook. La
+ * règle du projet dit « seuls un geste humain **ou un retour de signature**
+ * franchissent une transition de CRA » : c'est le second cas, et c'est ce
+ * travail qui le rattrape quand le webhook s'est perdu. Le balayage à la
+ * source reste vrai à la lettre — rien ici n'écrit en base directement.
  */
 
 function isoDate(d: Date): string {
@@ -173,6 +183,44 @@ export const distributionRappels: JobHandler = async ({ now, fetchFn }) => {
  * signature plus étroite (`{ method, headers, body? }`) que celle des appels
  * sortants, et les confondre ne tiendrait qu'au hasard des champs utilisés.
  */
+/**
+ * Relance les signatures échues, puis abandonne au-delà du seuil.
+ *
+ * **Sans `userId`** : un réveil externe n'a pas de session, et une demande
+ * appartient au compte de son CRA. Se scoper sur le « propriétaire de
+ * l'instance » laisserait les CRA d'un second consultant sans jamais une seule
+ * relance, avec un cron qui aurait l'air de tourner. Le bouton de l'écran CRA,
+ * lui, se scope — c'est le moyen de se passer d'ordonnanceur, pas
+ * l'ordonnanceur.
+ */
+export const relanceSignatures: JobHandler = async ({ now }) => {
+  const r = await runSignatureReminders({ now })
+
+  return {
+    message:
+      `${r.relancees} relance(s), ${r.abandonnees} abandon(s), ` +
+      `${r.echecs} en échec, ${r.sansConnecteur} sans connecteur.`,
+  }
+}
+
+/**
+ * Interroge le prestataire sur les signatures en cours et applique ce qu'il
+ * rapporte : **le rattrapage des webhooks perdus**.
+ *
+ * Sans lui, une livraison manquée laissait le CRA `ENVOYE` pour toujours, sauf
+ * à ce que quelqu'un remarque le problème et clique « Rafraîchir l'état ».
+ */
+export const rafraichissementSignatures: JobHandler = async () => {
+  const r = await refreshPendingSignatures()
+
+  return {
+    message:
+      `${r.examinees} demande(s) examinée(s) : ${r.valides} signée(s), ` +
+      `${r.refusees} refusée(s), ${r.expirees} expirée(s), ` +
+      `${r.inchangees} sans changement, ${r.echecs} en échec.`,
+  }
+}
+
 export const vidageFileSortie: JobHandler = async ({ now }) => {
   const r = await flushAllProviders(undefined, { now })
 

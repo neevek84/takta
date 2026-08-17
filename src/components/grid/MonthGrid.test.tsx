@@ -802,6 +802,35 @@ describe('MonthGrid', () => {
       expect(aplat.style.height).toBe('100%')
     })
 
+    /**
+     * C2 — la forme d'une cellule passe par `readCellState`, qui classait la
+     * journée sous le facteur **courant** de la prestation. Un CRA validé
+     * changeait donc de dessin quand l'administration bougeait le réglage :
+     * l'aplat plein d'une journée figée à 420 minutes devenait un aplat
+     * proportionnel, et le chiffre passait de « 1 » à « 1,14 » d'un côté sans
+     * bouger de l'autre. Le tableau et le calendrier portent chacun ce
+     * contrôle, parce que chacun est un lecteur de temps.
+     */
+    it('garde la forme et le chiffre d une journée figée quand le réglage change', () => {
+      const validee: MonthEntry[] = [
+        { id: 'v', lineId: 'l1', date: '2026-03-16', minutes: 420, kind: 'REALISE', slotId: '', startMinute: 480, endMinute: 900, minutesParJour: 420 },
+      ]
+      const rendu = (minutesParJour: number): [string | null, string, string] => {
+        renderGrid({ lines: [{ ...lines[0]!, minutesParJour }], entries: validee })
+        const aplat = remplissage('l1', '2026-03-16')!
+        const sortie: [string | null, string, string] = [
+          aplat.getAttribute('data-forme'),
+          aplat.style.height,
+          cell('Consultant ITSM', '2026-03-16').value,
+        ]
+        cleanup()
+        return sortie
+      }
+
+      expect(rendu(480)).toEqual(rendu(420))
+      expect(rendu(480)).toEqual(['PLEINE', '100%', '1'])
+    })
+
     it('taille la demi-journée du matin en diagonale, comme le calendrier', () => {
       renderGrid({
         slots: DEFAULT_SLOTS,

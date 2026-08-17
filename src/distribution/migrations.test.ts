@@ -7,8 +7,10 @@ import {
   decouperSql,
   migrationsDisponibles,
   appliquerMigrations,
+  urlBaseDurable,
 } from '../../outils/lib/migrations.mjs'
 import { sauvegarderBase, horodatage } from '../../outils/lib/sauvegarde.mjs'
+import { urlSqliteDurable } from '@/db/durabilite'
 
 const RACINE_DEPOT = path.resolve(__dirname, '../..')
 const JEU_REEL = path.join(RACINE_DEPOT, 'prisma/migrations-sqlite')
@@ -16,9 +18,13 @@ const JEU_REEL = path.join(RACINE_DEPOT, 'prisma/migrations-sqlite')
 let bac = ''
 let clients: PrismaClient[] = []
 
-/** Ouvre un client Prisma sur un fichier SQLite précis, hors de la base de développement. */
+/**
+ * Ouvre un client Prisma sur un fichier SQLite précis, hors de la base de
+ * développement — avec l'URL du lanceur, connexion unique comprise : c'est ce
+ * qui rend `PRAGMA synchronous` observable, donc testable.
+ */
 function ouvrir(fichier: string): PrismaClient {
-  const c = new PrismaClient({ datasources: { db: { url: `file:${fichier}` } } })
+  const c = new PrismaClient({ datasources: { db: { url: urlBaseDurable(fichier) } } })
   clients.push(c)
   return c
 }
@@ -111,13 +117,50 @@ describe('appliquerMigrations', () => {
     // « couper l'ordinateur » : avec synchronous=NORMAL, SQLite n'attend plus
     // le disque et une coupure de courant peut perdre les dernières
     // transactions. 2 = FULL.
+    //
+    // La connexion part de OFF : lire le pragma sans cela ne mesurait que la
+    // valeur par défaut compilée de SQLite, et le test restait vert quand on
+    // supprimait purement et simplement la ligne qu'il prétendait garder.
     const prisma = ouvrir(path.join(bac, 'cra.db'))
+    await prisma.$executeRawUnsafe('PRAGMA synchronous=OFF')
+
     await appliquerMigrations({ prisma, dossier: jeuJouet() })
 
     const s = await prisma.$queryRawUnsafe<{ synchronous: bigint | number }[]>(
       'PRAGMA synchronous',
     )
     expect(Number(s[0]!.synchronous)).toBe(2)
+  })
+
+  it("refuse de démarrer si SQLite n'a pas retenu synchronous=FULL", async () => {
+    // Une construction de SQLite avec SQLITE_DEFAULT_WAL_SYNCHRONOUS=1 ramène
+    // le pragma à NORMAL sans rien dire. La promesse « couper l'ordinateur ne
+    // perd rien » tomberait alors en silence : on préfère la panne bruyante.
+    const faux = {
+      $queryRawUnsafe: async (sql: string) =>
+        /journal_mode/.test(sql) ? [{ journal_mode: 'wal' }] : [{ synchronous: 1 }],
+      $executeRawUnsafe: async () => 0,
+      $transaction: async () => [],
+    }
+    await expect(appliquerMigrations({ prisma: faux, dossier: jeuJouet() })).rejects.toThrow(
+      /synchronous/i,
+    )
+  })
+})
+
+describe('urlBaseDurable', () => {
+  it("ne diverge pas de l'URL que le serveur se construit de son côté", () => {
+    // Le lanceur (JavaScript) et l'application (TypeScript) ne peuvent pas
+    // partager de code : deux mises en page, deux langages. Ce test est le lien
+    // — sans lui, l'une des deux pourrait perdre la connexion unique dont
+    // dépend toute la durabilité, sans que rien ne bronche.
+    for (const fichier of ['/donnees/cra.db', '/Users/moi/Mon Dossier/cra/donnees/cra.db']) {
+      expect(urlBaseDurable(fichier)).toBe(urlSqliteDurable(`file:${fichier}`))
+    }
+  })
+
+  it('impose une connexion unique, sur laquelle seule le pragma vaut', () => {
+    expect(urlBaseDurable('/d/cra.db')).toContain('connection_limit=1')
   })
 
   it('laisse un fichier -wal à côté de la base, signe visible du mode', async () => {

@@ -22,6 +22,7 @@ import {
   FONDS_DE_TEXTE,
   ENCRES_ETAT,
   CATEGORY_BACKGROUNDS,
+  APLAT_BACKGROUNDS,
   DISTINCTION_PAIRS,
   MIN_CATEGORY_DISTANCE,
   colorDistance,
@@ -479,6 +480,59 @@ describe('distinction de la palette catégorielle', () => {
     expect(CATEGORY_BACKGROUNDS).toEqual(['catA', 'catB', 'catC', 'catD', 'catE', 'catF'])
   })
 
+  /**
+   * C1 — la liste dérivée s'arrêtait aux six teintes catégorielles, alors que
+   * le lot 1g avait mis **deux aplats de plus** en service : `saisie`, la
+   * teinte d'une case remplie en portée « Cette prestation » — la portée par
+   * défaut, donc celle que tout le monde voit — et `prevu`, celle du
+   * prévisionnel. Ils portent exactement le même sens que les six autres :
+   * « cette case est remplie » contre « cette case est vide ».
+   *
+   * Conséquence mesurée : `findContrastIssues` acceptait sans une anomalie une
+   * palette dont l'aplat de saisie était à ΔE*ab ≈ 1,6 du blanc de la surface.
+   * Le contraste du chiffre restait excellent, la polarité était bonne,
+   * l'étagement de la grille intact : rien ne tombait, et une journée pleine
+   * devenait indistinguable d'une case vide.
+   */
+  describe('les deux aplats du lot 1g entrent dans la même liste', () => {
+    it('déclare les huit aplats, les six catégoriels compris', () => {
+      expect(APLAT_BACKGROUNDS).toEqual([...CATEGORY_BACKGROUNDS, 'prevu', 'saisie'])
+    })
+
+    it('refuse une palette dont l’aplat de saisie se confond avec la surface', () => {
+      const fautive: ThemeTokens = { ...THEME_ENCRE_CLAIR, saisie: '#fdfdfd' }
+      const trouve = distinctions(findContrastIssues(fautive)).find(
+        (d) =>
+          (d.a === 'saisie' && d.b === 'surface') || (d.a === 'surface' && d.b === 'saisie'),
+      )
+      expect(trouve, 'un défaut saisie/surface').toBeDefined()
+      expect(trouve!.required).toBe(MIN_CATEGORY_DISTANCE)
+    })
+
+    it('refuse un prévisionnel indistinct du fond des jours non ouvrés', () => {
+      const fautive: ThemeTokens = { ...THEME_ENCRE_CLAIR, prevu: '#dbe8e3' }
+      const couples = distinctions(findContrastIssues(fautive)).map((d) => `${d.a}/${d.b}`)
+      expect(couples).toContain('prevu/off')
+    })
+
+    // Les deux aplats se peignent côte à côte : le prévisionnel d'une
+    // prestation contre les teintes catégorielles de ses voisines en portée
+    // « Toutes les prestations », contre l'aplat de saisie en portée « Cette
+    // prestation ». Le premier couple était à 11,8 sur deux préréglages
+    // sombres et 13,2 sur un troisième, sous le seuil que le projet s'impose.
+    it('refuse un prévisionnel indistinct d’une teinte catégorielle', () => {
+      const fautive: ThemeTokens = { ...THEME_ENCRE_CLAIR, prevu: THEME_ENCRE_CLAIR.catB }
+      const couples = distinctions(findContrastIssues(fautive)).map((d) => `${d.a}/${d.b}`)
+      expect(couples).toContain('catB/prevu')
+    })
+
+    it('refuse un aplat de saisie indistinct du prévisionnel', () => {
+      const fautive: ThemeTokens = { ...THEME_ENCRE_CLAIR, saisie: THEME_ENCRE_CLAIR.prevu }
+      const couples = distinctions(findContrastIssues(fautive)).map((d) => `${d.a}/${d.b}`)
+      expect(couples).toContain('prevu/saisie')
+    })
+  })
+
   for (const [nom, palette] of PALETTES) {
     it(`${nom} : les six fonds se distinguent deux à deux (ΔE*ab ≥ ${MIN_CATEGORY_DISTANCE})`, () => {
       for (let i = 0; i + 1 < CATEGORY_BACKGROUNDS.length; i++) {
@@ -504,11 +558,11 @@ describe('distinction de la palette catégorielle', () => {
       pires.set(nom, Math.round(pire * 100) / 100)
     }
     expect(Object.fromEntries(pires)).toEqual({
-      'Encre clair': 34.78,
-      'Encre sombre': 24.11,
-      Clair: 38.8,
-      Sombre: 24.11,
-      KreativPM: 33.49,
+      'Encre clair': 25.58,
+      'Encre sombre': 20.12,
+      Clair: 17.27,
+      Sombre: 20.12,
+      KreativPM: 18.44,
     })
   })
 
@@ -562,13 +616,13 @@ describe('distinction de la palette catégorielle', () => {
       return (Math.floor(valeur * 100) / 100).toFixed(2).replace('.', ',')
     }
 
-    it('mesure 24,11 au pire couple, sur les versants sombres', () => {
+    it('mesure 17,27 au pire couple, sur le neutre clair', () => {
       const { distance, ou } = pireCouple()
-      expect(auCentieme(distance)).toBe('24,11')
+      expect(auCentieme(distance)).toBe('17,27')
       // Nommés, et tous : une valeur juste sur le mauvais couple ne dirait
       // rien, et n'en nommer qu'un parmi deux ex æquo ne mesurerait que
       // l'ordre de `THEME_PRESETS`. Trié, donc insensible à cet ordre.
-      expect(ou).toEqual(['ENCRE_SOMBRE catA/catF', 'SOMBRE catA/catF'])
+      expect(ou).toEqual(['CLAIR saisie/offStrong'])
       expect(distance).toBeGreaterThanOrEqual(MIN_CATEGORY_DISTANCE)
     })
 
@@ -730,20 +784,38 @@ describe('la palette catégorielle est une famille', () => {
  * résultat sur les palettes du jour.
  */
 describe('les paires de distinction se dérivent des deux listes', () => {
-  it('couvre les six teintes deux à deux et chacune contre les quatre fonds', () => {
+  it('couvre les aplats simultanés deux à deux et chacun contre les quatre fonds', () => {
     const attendu = new Set<string>()
-    for (let i = 0; i < CATEGORY_BACKGROUNDS.length; i++) {
-      for (let j = i + 1; j < CATEGORY_BACKGROUNDS.length; j++) {
-        attendu.add(`${CATEGORY_BACKGROUNDS[i]}/${CATEGORY_BACKGROUNDS[j]}`)
+    // Portée « Toutes les prestations » : les six teintes et le prévisionnel.
+    const ensemble = [...CATEGORY_BACKGROUNDS, 'prevu']
+    for (let i = 0; i < ensemble.length; i++) {
+      for (let j = i + 1; j < ensemble.length; j++) {
+        attendu.add(`${ensemble[i]}/${ensemble[j]}`)
       }
     }
-    for (const c of CATEGORY_BACKGROUNDS) for (const f of FONDS_DE_TEXTE) attendu.add(`${c}/${f}`)
+    // Portée « Cette prestation » : l'aplat de saisie et le prévisionnel.
+    attendu.add('prevu/saisie')
+    for (const a of APLAT_BACKGROUNDS) for (const f of FONDS_DE_TEXTE) attendu.add(`${a}/${f}`)
 
     expect(new Set(DISTINCTION_PAIRS.map((p) => `${p.a}/${p.b}`))).toEqual(attendu)
-    // 15 paires entre teintes, 24 teinte-contre-fond. Le cardinal est ici une
-    // *conséquence* vérifiée, pas la promesse : l'assertion qui compte est
-    // celle du contenu au-dessus.
-    expect(DISTINCTION_PAIRS).toHaveLength(39)
+    // 21 paires entre aplats simultanés (21 pour les sept de la portée
+    // « toutes », plus `prevu`/`saisie`), 32 aplat-contre-fond. Le cardinal est
+    // ici une *conséquence* vérifiée, pas la promesse : l'assertion qui compte
+    // est celle du contenu au-dessus.
+    expect(DISTINCTION_PAIRS).toHaveLength(54)
+  })
+
+  // Les six teintes catégorielles et l'aplat de saisie ne se peignent jamais
+  // dans la même grille : la portée « Cette prestation » n'en montre aucune,
+  // la portée « Toutes les prestations » n'y emploie pas `saisie`. Exiger un
+  // écart entre deux aplats qui ne peuvent pas se voir contraindrait la
+  // palette au nom d'une confusion impossible.
+  it('ne confronte pas l’aplat de saisie aux teintes catégorielles', () => {
+    const cles = new Set(DISTINCTION_PAIRS.map((p) => `${p.a}/${p.b}`))
+    for (const cat of CATEGORY_BACKGROUNDS) {
+      expect(cles.has(`${cat}/saisie`), `${cat}/saisie`).toBe(false)
+      expect(cles.has(`saisie/${cat}`), `saisie/${cat}`).toBe(false)
+    }
   })
 
   it('n’exige jamais deux fonds de texte l’un de l’autre', () => {

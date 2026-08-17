@@ -248,6 +248,47 @@ describe('applySignatureStatus', () => {
     ).toBe('AUCUN')
   })
 
+  it('CONSIGNE `signature.recue` sur une signature, et rien sur un rejeu', async () => {
+    await prisma.auditEvent.deleteMany({})
+
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', connector: null })
+    const apresUn = (await prisma.auditEvent.findMany({})).filter(
+      (e) => e.action === 'signature.recue',
+    )
+    expect(apresUn, 'aucune entrée `signature.recue`').toHaveLength(1)
+    expect(apresUn[0]!.entityId).toBe(craId)
+
+    // Le rejeu n'a aucun effet : il ne doit pas non plus produire une seconde
+    // entrée, sans quoi un abonné facturerait deux fois le même mois.
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', connector: null })
+    expect(
+      (await prisma.auditEvent.findMany({})).filter((e) => e.action === 'signature.recue'),
+    ).toHaveLength(1)
+  })
+
+  it('CONSIGNE `signature.refusee` sur un refus', async () => {
+    await prisma.auditEvent.deleteMany({})
+
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'REFUSE', connector: null })
+
+    const entrees = (await prisma.auditEvent.findMany({})).filter(
+      (e) => e.action === 'signature.refusee',
+    )
+    expect(entrees, 'aucune entrée `signature.refusee`').toHaveLength(1)
+    expect(entrees[0]!.entityId).toBe(craId)
+  })
+
+  it('ne consigne aucun événement de signature sur une expiration ni une attente', async () => {
+    await prisma.auditEvent.deleteMany({})
+
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'EN_ATTENTE', connector: null })
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'EXPIRE', connector: null })
+
+    const actions = (await prisma.auditEvent.findMany({})).map((e) => e.action)
+    expect(actions).not.toContain('signature.recue')
+    expect(actions).not.toContain('signature.refusee')
+  })
+
   it('MET LES TEMPS EN FILE VERS DOLIBARR, comme la validation manuelle', async () => {
     // Une signature du client **est** une validation. Écrire le statut à la
     // main ici court-circuiterait la seule mise en file du dépôt : le mois

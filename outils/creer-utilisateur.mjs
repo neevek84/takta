@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { racineDeLInstallation, chemins, creerDossierDonnees } from './lib/chemins.mjs'
+import { urlBaseDurable } from './lib/migrations.mjs'
 
 const [email, nom, motDePasse] = process.argv.slice(2)
 if (!email || !nom || !motDePasse) {
@@ -21,8 +22,9 @@ if (!existsSync(c.base)) {
 }
 
 // Chemin ABSOLU : Prisma résout un `file:` relatif par rapport au schéma, pas
-// au dossier courant.
-process.env.DATABASE_URL = `file:${c.base}`
+// au dossier courant. Connexion unique, comme le lanceur : c'est la condition
+// pour que « synchronous=FULL » couvre réellement ce qui est écrit ici.
+process.env.DATABASE_URL = urlBaseDurable(c.base)
 const { PrismaClient } = await import('@prisma/client')
 const { hash } = await import('@node-rs/argon2')
 

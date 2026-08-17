@@ -191,6 +191,37 @@ describe('runSignatureReminders', () => {
     expect(relue.relances).toBe(0)
   })
 
+  it('NE RELANCE PAS UN CRA QUI A QUITTÉ L ÉTAT ENVOYE', async () => {
+    // Le trou : `applySignatureStatus` rend `AUCUN` **avant** de marquer la
+    // demande quand la transition n'est plus franchissable. Un CRA validé à la
+    // main pendant que la signature courait gardait donc une demande
+    // `EN_ATTENTE`, `completedAt: null`, `abandoned: false` — et la relance,
+    // qui ne joignait jamais le CRA, envoyait trois « merci de signer » sur un
+    // mois déjà arrêté avant de le déclarer en souffrance.
+    await demande()
+    await prisma.cra.update({ where: { id: craId }, data: { status: 'VALIDE' } })
+    const connector = createFakeSignatureConnector()
+
+    const rapport = await runSignatureReminders({ now: MAINTENANT, connector })
+
+    expect(rapport).toMatchObject({ relancees: 0, abandonnees: 0 })
+    expect(connector.relances).toEqual([])
+  })
+
+  it('n abandonne pas non plus un CRA refusé à la main', async () => {
+    await demande({ relances: RELANCES_MAX, lastRelanceAt: IL_Y_A_DIX_JOURS })
+    await prisma.cra.update({ where: { id: craId }, data: { status: 'REFUSE' } })
+
+    const rapport = await runSignatureReminders({
+      now: MAINTENANT,
+      connector: createFakeSignatureConnector(),
+    })
+
+    expect(rapport).toMatchObject({ abandonnees: 0 })
+    const relue = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
+    expect(relue.abandoned).toBe(false)
+  })
+
   it('se scope sur un utilisateur quand on le lui demande', async () => {
     await demande()
     const connector = createFakeSignatureConnector()
@@ -218,5 +249,28 @@ describe('listCrasEnSouffrance', () => {
   it('ne remonte pas les CRA d un autre utilisateur', async () => {
     await demande({ relances: RELANCES_MAX, abandoned: true })
     expect(await listCrasEnSouffrance(autreUserId)).toEqual([])
+  })
+
+  it('REMONTE UNE DEMANDE EXPIRÉE, comme le commentaire d `apply.ts` l annonce', async () => {
+    // Une expiration pose `status: 'EXPIRE'` et laisse le CRA en `ENVOYE`
+    // « pour qu'il remonte dans la liste des CRA en souffrance ». Il n'y
+    // remontait pas : la liste exigeait `abandoned: true` ET
+    // `status: 'EN_ATTENTE'`. La relance, elle, ne regarde que `EN_ATTENTE` —
+    // le CRA sortait donc de tous les filets à la fois.
+    await demande({ status: 'EXPIRE' })
+
+    const souffrance = await listCrasEnSouffrance(userId)
+    expect(souffrance.map((c) => c.id)).toEqual([craId])
+    expect(souffrance[0]!.signature?.status).toBe('EXPIRE')
+  })
+
+  it('NE REMONTE PAS UN CRA QUI A QUITTÉ L ÉTAT ENVOYE', async () => {
+    // Un CRA validé à la main sous une demande abandonnée n'est pas « en
+    // souffrance » : le mois est arrêté. L'afficher enverrait le porteur
+    // relancer un client sur un CRA déjà clos.
+    await demande({ relances: RELANCES_MAX, abandoned: true })
+    await prisma.cra.update({ where: { id: craId }, data: { status: 'VALIDE' } })
+
+    expect(await listCrasEnSouffrance(userId)).toEqual([])
   })
 })

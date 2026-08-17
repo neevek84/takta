@@ -347,6 +347,57 @@ describe('MonthCalendar', () => {
       expect(valeurDu('2026-03-10').textContent).toBe('1,07')
     })
 
+    /**
+     * C2 — « si changement du nombre d'heures, IL NE FAUT SURTOUT PAS QUE LES
+     * CRA VALIDÉS CHANGENT DE CALCUL. »
+     *
+     * `recalibrateOpenMonths` saute les mois verrouillés : un CRA validé garde
+     * son facteur figé pendant que le réglage de la prestation bouge. Le
+     * calendrier classait pourtant la case sous le réglage **courant**, si
+     * bien qu'un même jour se lisait « 1 » ici et « 1,14 » dans le tableau, et
+     * qu'une semaine soudée en un bloc se disloquait en cases isolées.
+     *
+     * Le même rendu est donc demandé deux fois, avec pour seule différence le
+     * réglage courant de la prestation : chiffre, nom accessible et fusion des
+     * plages doivent être identiques.
+     */
+    describe('un CRA validé rend les mêmes chiffres après un changement de réglage', () => {
+      /** Deux jours pleins contigus, écrits et figés à 420 minutes par jour. */
+      const validees: MonthEntry[] = [
+        entree({ id: 'a', date: '2026-03-09', minutes: 420, startMinute: 480, endMinute: 900, minutesParJour: 420 }),
+        entree({ id: 'b', date: '2026-03-10', minutes: 420, startMinute: 480, endMinute: 900, minutesParJour: 420 }),
+      ]
+
+      function rendu(minutesParJour: number): {
+        valeurs: (string | null)[]
+        noms: (string | null)[]
+        plages: (string | null)[]
+      } {
+        renderCalendar({ line: { ...ligneJour, minutesParJour }, entries: validees })
+        const dates = ['2026-03-09', '2026-03-10']
+        const sortie = {
+          valeurs: dates.map((d) => valeurDu(d).textContent),
+          noms: dates.map((d) => caseDu(d).getAttribute('aria-label')),
+          plages: dates.map((d) => caseDu(d).getAttribute('data-plage')),
+        }
+        cleanup()
+        return sortie
+      }
+
+      it('affiche la même chose sous l ancien et sous le nouveau réglage', () => {
+        const avant = rendu(420)
+        const apres = rendu(480)
+        expect(apres).toEqual(avant)
+      })
+
+      it('lit deux journées pleines figées à 420 comme des journées, et les soude', () => {
+        const { valeurs, noms, plages } = rendu(480)
+        expect(valeurs).toEqual(['1', '1'])
+        expect(noms[0]).toContain('Journée entière')
+        expect(plages).toEqual(['DEBUT', 'FIN'])
+      })
+    })
+
     it('distingue le prévisionnel du réalisé', () => {
       renderCalendar({ entries: [entree({ kind: 'PREVISIONNEL' })] })
       expect(classes(caseDu('2026-03-10'))).toContain('italic')
@@ -931,6 +982,77 @@ describe('MonthCalendar', () => {
               { kind: 'DEMI', slotId: 'apres-midi' },
             ),
           )
+        })
+
+        /**
+         * C3 — le glissement fabriquait des données.
+         *
+         * `onPointerUp` n'était posé que sur le conteneur de la grille :
+         * relâcher le bouton **ailleurs** — sous la dernière semaine, dans la
+         * marge, sur la barre de sélection — laissait le geste armé. Chaque
+         * case ensuite *survolée*, sans aucun bouton enfoncé, rejoignait la
+         * sélection ; le bouton « 1 jour » écrivait alors une journée entière
+         * sur des jours que personne n'avait désignés, dans un document qui
+         * sert de preuve au client.
+         *
+         * Le relâchement se lit donc sur la fenêtre. Trois survols après coup :
+         * un seul suffirait à voir le défaut, trois disent qu'il s'aggrave.
+         */
+        it('désarme le glissement relâché hors de la grille', () => {
+          renderCalendar()
+
+          fireEvent.pointerDown(caseDu('2026-03-09'), {
+            pointerId: 1, pointerType: 'mouse', clientX: 10, clientY: 10,
+          })
+          fireEvent.pointerEnter(caseDu('2026-03-10'), {
+            pointerId: 1, pointerType: 'mouse', clientX: 40, clientY: 10,
+          })
+          fireEvent.pointerEnter(caseDu('2026-03-11'), {
+            pointerId: 1, pointerType: 'mouse', clientX: 70, clientY: 10,
+          })
+          // Hors de la grille : le bouton se relâche là où le pointeur se
+          // trouve, et ce n'est pas toujours une case.
+          fireEvent.pointerUp(document.body, { pointerId: 1, pointerType: 'mouse' })
+          expect(screen.getByTestId('barre-selection').textContent).toContain('3 jours')
+
+          for (const date of ['2026-03-13', '2026-03-16']) {
+            fireEvent.pointerEnter(caseDu(date), {
+              pointerId: 1, pointerType: 'mouse', clientX: 10, clientY: 60,
+            })
+            expect(screen.getByTestId('barre-selection').textContent).toContain('3 jours')
+          }
+        })
+
+        /**
+         * m4 — l'appui long ouvre le formulaire, le doigt continue sa route.
+         *
+         * Le geste de sélection restait vivant derrière la boîte : la barre
+         * annonçait « 2 jours sélectionnés » sous un formulaire qui ne
+         * s'applique qu'à une seule date. L'appui long termine donc le geste
+         * qu'il interrompt.
+         */
+        it('un appui long puis un glissement ne laisse aucune sélection derrière le formulaire', () => {
+          vi.useFakeTimers()
+          try {
+            const onFormulaire = vi.fn()
+            renderCalendar({ onFormulaire })
+
+            fireEvent.pointerDown(caseDu('2026-03-09'), {
+              pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10,
+            })
+            act(() => {
+              vi.advanceTimersByTime(500)
+            })
+            expect(onFormulaire).toHaveBeenCalledWith('2026-03-09', { kind: 'VIDE' })
+
+            fireEvent.pointerEnter(caseDu('2026-03-10'), {
+              pointerId: 1, pointerType: 'touch', clientX: 40, clientY: 10,
+            })
+
+            expect(screen.queryByTestId('barre-selection')).toBeNull()
+          } finally {
+            vi.useRealTimers()
+          }
         })
 
         it('Maj+Entrée sur une case sélectionnée ouvre le formulaire et garde la plage', () => {

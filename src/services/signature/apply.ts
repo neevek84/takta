@@ -2,6 +2,8 @@ import { prisma } from '@/db/client'
 import { canTransition, type CraTransition } from '@/core/cra/state-machine'
 import type { SignatureConnector, SignatureStatus } from '@/core/signature/connector'
 import type { CraStatus } from '@/core/types'
+import type { AuditAction } from '@/core/audit/events'
+import { ACTEUR_SYSTEME, appendAudit } from '@/services/audit'
 import { transitionCra } from '@/services/cra'
 
 export type SignatureEffet = 'VALIDE' | 'REFUSE' | 'EXPIRE' | 'AUCUN'
@@ -9,6 +11,20 @@ export type SignatureEffet = 'VALIDE' | 'REFUSE' | 'EXPIRE' | 'AUCUN'
 const TRANSITION_PAR_STATUT: Partial<Record<SignatureStatus, CraTransition>> = {
   SIGNE: 'VALIDER',
   REFUSE: 'REFUSER',
+}
+
+/**
+ * Le retour du client, au journal de preuve. Le catalogue promet ces deux noms
+ * à l'abonnement (`core/audit/events.ts`) : sans émetteur, un intégrateur qui
+ * coche `signature.recue` pour déclencher sa facturation attend indéfiniment.
+ *
+ * Émis **sous l'acteur système**, et non sous le propriétaire du CRA : ce
+ * n'est pas lui qui a signé. `transitionCra`, lui, porte bien son nom sur
+ * `cra.valide` — c'est son CRA qui change d'état.
+ */
+const EVENEMENT_PAR_STATUT: Partial<Record<SignatureStatus, AuditAction>> = {
+  SIGNE: 'signature.recue',
+  REFUSE: 'signature.refusee',
 }
 
 /**
@@ -68,6 +84,18 @@ export async function applySignatureStatus(args: {
   await marquerDemande(args.craId, { status: args.statut, completedAt: maintenant })
 
   await transitionCra(cra.userId, args.craId, transition)
+
+  // Après la transition, et sous la garde d'idempotence qui précède : un rejeu
+  // rend `AUCUN` bien avant d'arriver ici, donc aucune seconde entrée. Un
+  // abonné qui facture sur `signature.recue` ne facture pas deux fois le même
+  // mois parce que le prestataire a relivré son webhook.
+  await appendAudit({
+    ...ACTEUR_SYSTEME,
+    action: EVENEMENT_PAR_STATUT[args.statut]!,
+    entityType: 'Cra',
+    entityId: args.craId,
+    payload: { statut: args.statut, statutAvant: statut },
+  })
 
   return args.statut === 'SIGNE' ? 'VALIDE' : 'REFUSE'
 }

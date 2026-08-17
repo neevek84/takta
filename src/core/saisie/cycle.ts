@@ -3,17 +3,38 @@ import type { Slot } from '../time/slots'
 import type { DisplayUnit } from '../types'
 
 /**
+ * Les heures d'une saisie, telles qu'elles ont été **figées à son écriture**.
+ *
+ * Une journée entière et une demi-journée en portent autant qu'une valeur
+ * libre : le formulaire les affiche, et il les réécrit telles quelles. Sans
+ * elles, il les recalculait depuis la plage journée *courante* — une saisie
+ * écrite de 8 h à 16 h s'ouvrait sur 10 h – 18 h le jour où l'administrateur
+ * déplaçait la journée de travail, et l'enregistrer sans rien changer écrivait
+ * ces heures-là. Le gel avait tenu en base jusqu'à ce que le lecteur le casse.
+ */
+export interface BornesFigees {
+  /** début du bloc, minutes depuis minuit */
+  startMinute: number
+  /** fin du bloc, minutes depuis minuit */
+  endMinute: number
+}
+
+/**
  * Les quatre états qu'une case peut porter.
  *
  * `LIBRE` n'appartient pas au cycle : c'est le fourre-tout de tout ce que la
  * cinématique n'a pas produit — durée en heures, créneau hors des trois
  * prédéfinis, journée éclatée en plusieurs créneaux. Le distinguer est la
  * seule façon d'empêcher un clic distrait d'écraser une saisie fine.
+ *
+ * `bornes` est absent des états que la **cinématique** produit — un cran à
+ * venir n'a pas encore d'heures, c'est l'écriture qui les lui donnera — et
+ * présent sur ceux que la **lecture** rend, qui les tiennent de la base.
  */
 export type CellState =
   | { kind: 'VIDE' }
-  | { kind: 'JOURNEE' }
-  | { kind: 'DEMI'; slotId: string }
+  | { kind: 'JOURNEE'; bornes?: BornesFigees }
+  | { kind: 'DEMI'; slotId: string; bornes?: BornesFigees }
   | {
       kind: 'LIBRE'
       minutes: number

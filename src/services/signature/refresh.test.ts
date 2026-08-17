@@ -7,7 +7,7 @@ import { getOrCreateCra, transitionCra } from '@/services/cra'
 import { updateSettings } from '@/services/settings'
 import { createFakeSignatureConnector } from './fake-connector'
 import { ENTITY_CRA } from './constants'
-import { refreshSignatureStatus } from './refresh'
+import { refreshPendingSignatures, refreshSignatureStatus } from './refresh'
 
 let userId = ''
 let autreUserId = ''
@@ -232,5 +232,85 @@ describe('refreshSignatureStatus', () => {
       where: { entityType: ENTITY_CRA, entityId: craId },
     })
     expect(lien.syncState).toBe('EXPIRE')
+  })
+})
+
+describe('refreshPendingSignatures', () => {
+  it('BALAIE LES DEMANDES EN COURS DE L INSTANCE, sans session', async () => {
+    // C'est ce que l'ordonnanceur appelle : un réveil externe n'a pas de
+    // session, et une demande appartient au compte du CRA, pas à l'appelant.
+    await demandeEnCours()
+    const connector = createFakeSignatureConnector()
+    connector.regler('ext-1', 'SIGNE')
+
+    const rapport = await refreshPendingSignatures({ connector })
+
+    expect(rapport).toMatchObject({ examinees: 1, valides: 1 })
+    const cra = await prisma.cra.findUniqueOrThrow({ where: { id: craId } })
+    expect(cra.status).toBe('VALIDE')
+  })
+
+  it('n interroge pas le prestataire sur une demande déjà achevée', async () => {
+    await demandeEnCours()
+    await prisma.signatureRequest.update({
+      where: { craId },
+      data: { status: 'SIGNE', completedAt: new Date() },
+    })
+    const connector = createFakeSignatureConnector()
+
+    const rapport = await refreshPendingSignatures({ connector })
+
+    expect(rapport.examinees).toBe(0)
+    expect(connector.interrogations).toEqual([])
+  })
+
+  it('N INTERROGE PAS le prestataire sur un CRA qui a quitté l état ENVOYE', async () => {
+    // Le pendant de la relance : un CRA validé à la main garde une demande
+    // `EN_ATTENTE`. Le balayage n'a rien à y appliquer, et interroger le
+    // prestataire à son sujet n'apprendrait rien à personne.
+    await demandeEnCours()
+    await prisma.cra.update({ where: { id: craId }, data: { status: 'VALIDE' } })
+    const connector = createFakeSignatureConnector()
+
+    expect((await refreshPendingSignatures({ connector })).examinees).toBe(0)
+    expect(connector.interrogations).toEqual([])
+  })
+
+  it('SANS CONNECTEUR, ne compte rien et n échoue pas', async () => {
+    await demandeEnCours()
+    expect(await refreshPendingSignatures({ connector: null })).toEqual({
+      examinees: 0,
+      valides: 0,
+      refusees: 0,
+      expirees: 0,
+      inchangees: 0,
+      echecs: 0,
+    })
+  })
+
+  it('un prestataire injoignable compte un échec sans arrêter le balayage', async () => {
+    await demandeEnCours()
+    const connector = createFakeSignatureConnector()
+    const enPanne = {
+      ...connector,
+      status: async () => {
+        throw new Error('injoignable')
+      },
+    }
+
+    const rapport = await refreshPendingSignatures({ connector: enPanne })
+    expect(rapport).toMatchObject({ examinees: 1, echecs: 1 })
+
+    const cra = await prisma.cra.findUniqueOrThrow({ where: { id: craId } })
+    expect(cra.status).toBe('ENVOYE')
+  })
+
+  it('se scope sur un utilisateur quand on le lui demande', async () => {
+    await demandeEnCours()
+    const connector = createFakeSignatureConnector()
+    connector.regler('ext-1', 'SIGNE')
+
+    expect((await refreshPendingSignatures({ userId: autreUserId, connector })).examinees).toBe(0)
+    expect((await refreshPendingSignatures({ userId, connector })).examinees).toBe(1)
   })
 })

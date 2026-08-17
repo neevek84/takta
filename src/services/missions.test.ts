@@ -14,7 +14,7 @@ import { readAuditSince } from './audit'
 import { attachPropalLine } from './dolibarr/propal'
 import { attachClient } from './dolibarr/import'
 import { FakeDolibarr } from './dolibarr/fake'
-import { DOLIBARR } from './dolibarr/api'
+import { DOLIBARR, DolibarrRequestError } from './dolibarr/api'
 import { saveEntry, getLineEngagementTotals } from './time-entries'
 
 let userId = ''
@@ -718,24 +718,41 @@ describe('engagement issu d une propale', () => {
     expect(relue.soldCentiemes).toBe(1000)
   })
 
+  // Le cloisonnement, et il ne se vérifie pas par un motif de message : la
+  // source de `propal.ts` porte le mot « affectée » dans un commentaire, que
+  // Prisma recopie dans l'extrait de source accompagnant ses erreurs. Un
+  // `/affect/i` était donc satisfait par l'échec en P2025 d'un `update` que la
+  // garde aurait dû empêcher d'atteindre — le test passait sans elle.
+  //
+  // Ce qui distingue vraiment les deux : la garde refuse **avant** l'appel
+  // distant, avec le refus du connecteur, et laisse l'affectation intacte.
   it('refuse de reprendre une propale sur une prestation qui ne vous est pas affectée', async () => {
     const autre = await prisma.user.create({
       data: { email: 'propale-autre@test.local', name: 'A', passwordHash: 'x' },
     })
     const d = await decor({ nom: 'PROPALE intrus' })
 
-    await expect(
-      attachPropalLine({
-        userId: autre.id,
-        lineId: d.ligne.id,
-        proposalId: d.propale.id,
-        propalLineId: d.propale.lines[0]!.id,
-        api: d.api,
-      }),
-    ).rejects.toThrow(/affect/i)
+    const erreur = await attachPropalLine({
+      userId: autre.id,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    }).catch((e: unknown) => e)
+
+    expect(erreur).toBeInstanceOf(DolibarrRequestError)
+    expect((erreur as Error).message).toBe('Cette prestation ne vous est pas affectée.')
+    // Rien n'a été lu chez Dolibarr : le refus tranche sur la base locale.
+    expect(d.api.appels.getProposal).toBe(0)
 
     const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
     expect(relue.soldCentiemes).toBe(0)
+    expect(relue.engagementSource).toBe('MANUEL')
+    // L'affectation de celui à qui la prestation appartient n'a pas bougé.
+    const affectation = await prisma.assignment.findUniqueOrThrow({
+      where: { lineId_userId: { lineId: d.ligne.id, userId } },
+    })
+    expect(affectation.soldCentiemes).toBe(0)
     await prisma.user.delete({ where: { id: autre.id } })
   })
 
