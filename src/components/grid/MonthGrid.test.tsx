@@ -1069,15 +1069,24 @@ describe('MonthGrid', () => {
       // c'est-à-dire prenant `currentColor`, l'encre du champ — passait, et les
       // deux vues divergeaient à nouveau sans que rien ne le dise. Les valeurs
       // absentes sont donc retirées de la liste, et la teinte exigée.
-      const licites = (rendu: Rendu): (string | undefined)[] =>
-        [rendu.contour.teinte, PREVU_COLOR.border].filter((t) => t !== undefined)
-
+      // Confronter chaque vue à *son propre* jeu de valeurs licites ne ferme
+      // toujours rien : le calendrier gardait son filet neutre et le tableau
+      // peignait l'ambre, chacun dans sa liste, et les deux vues divergeaient
+      // en restant vertes. C'est le défaut même que ce bloc doit interdire.
+      //
+      // La seule assertion qui le ferme est l'égalité entre les deux, plus la
+      // valeur exigée : le prévisionnel a une teinte de contour, c'est la
+      // sienne, et elle est la même de part et d'autre de la bascule.
       expect(calendrier.contour.teinte, 'le calendrier ne peint aucune teinte de contour')
         .toBeDefined()
-      expect(licites(calendrierMuet)).toContain(calendrier.contour.teinte)
-
       expect(tableau.contour.teinte, 'le tableau ne peint aucune teinte de contour').toBeDefined()
-      expect(licites(tableauMuet)).toContain(tableau.contour.teinte)
+      expect(tableau.contour.teinte).toBe(calendrier.contour.teinte)
+      expect(tableau.contour.teinte).toBe(PREVU_COLOR.border)
+
+      // Et le contour muet reste ce qu'il était : le lot ne repeint que le
+      // prévisionnel, jamais le filet ordinaire d'une case ou d'un champ.
+      expect(calendrierMuet.contour.teinte).not.toBe(PREVU_COLOR.border)
+      expect(tableauMuet.contour.teinte).not.toBe(PREVU_COLOR.border)
     })
 
     it('laisse le réalisé à la teinte de sa prestation, des deux côtés', () => {
@@ -1352,6 +1361,46 @@ describe('MonthGrid', () => {
             contrastRatio(preset.tokens[encre], preset.tokens[fond]),
             `${preset.label} : ${encre} sur ${fond}`,
           ).toBeGreaterThanOrEqual(AA_TEXT_RATIO)
+        }
+      }
+    })
+
+    it('tient le plancher sur les DEUX encres que la cellule peut rendre', () => {
+      // Le test au-dessus mesure l'encre d'une cellule *remplie*, qui est la
+      // seule qu'il rencontre. Or `encreCellule` en rend deux quand un coin est
+      // dessiné : `ink` si la cellule porte une forme, `warningInk` si elle
+      // agrège un créneau sans rien remplir. Le coin prenant `currentColor`,
+      // c'est-à-dire l'encre de sa cellule, la seconde branche peut le rendre
+      // invisible sans qu'aucune mesure ne s'en aperçoive.
+      //
+      // L'invariant est donc posé sur les deux jetons plutôt que sur la seule
+      // branche qu'un rendu donné emprunte : c'est ce qui le rend insensible à
+      // la fixture, et ce qui le fait tomber si `encreCellule` se met un jour à
+      // rendre autre chose.
+      const encres: (keyof ThemeTokens)[] = ['ink', 'warningInk']
+
+      // Les fonds que ces deux branches rencontrent réellement. `warningInk`
+      // n'est rendue que sur une cellule non remplie, donc jamais sur un
+      // aplat : ses fonds sont les trois états de jour, et eux seuls.
+      const fondsSansAplat: (keyof ThemeTokens)[] = ['surface', 'off', 'offStrong']
+      const fondsAvecAplat: (keyof ThemeTokens)[] = [
+        ...fondsSansAplat,
+        'prevu',
+        ...LINE_COLORS.map((c) => jetonDe(c.bg)),
+      ]
+
+      for (const preset of THEME_PRESETS) {
+        for (const [encre, fonds] of [
+          ['ink', fondsAvecAplat],
+          ['warningInk', fondsSansAplat],
+        ] as const) {
+          expect(encres).toContain(encre)
+          for (const fond of fonds) {
+            expect(
+              contrastRatio(preset.tokens[encre], preset.tokens[fond]),
+              `${preset.label} : ${encre} sur ${fond}`,
+            ).toBeGreaterThanOrEqual(AA_TEXT_RATIO)
+          }
         }
       }
     })

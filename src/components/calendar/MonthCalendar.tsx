@@ -859,7 +859,17 @@ function Case({
           aujourdhui ? 'border-2 border-ink' : 'border border-rule',
           // Le tireté dit le prévisionnel sans la teinte : deux aplats opaques
           // ne se distingueraient pas en vision monochrome.
-          previsionnel && 'border-dashed',
+          //
+          // La teinte du filet accompagne le tireté, et c'est `prevuEdge` — la
+          // même que le tableau, la légende et la barre d'engagement posent par
+          // `SEGMENT_PREVU_BORDURE`. Le calendrier gardait ici son filet neutre :
+          // les deux vues du *même* écran peignaient donc le même fait de deux
+          // couleurs, ce que ce lot existe pour supprimer.
+          //
+          // Sauf aujourd'hui : le trait épais d'encre est le repère qui sépare
+          // le réalisé du prévisionnel, et rien ne doit le repeindre. Un jour
+          // courant prévisionnel garde donc son encre, et le tireté suffit.
+          previsionnel && (aujourdhui ? 'border-dashed' : 'border-dashed border-prevu-edge'),
           // Anneau **intérieur** et non `ring-*` : `ring-1 ring-warning-edge`
           // et le `ring-2 ring-focus` de la sélection tombent dans les mêmes
           // groupes `ring-w` et `ring-color`, et `cn()` ne garde alors que le
