@@ -16,6 +16,11 @@ import type { CapacityMode, TimeEntryKind } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
 import { Aplat } from '@/components/ui/Aplat'
+// Le même tracé que le calendrier, pris au même endroit : le liseré
+// `warning-edge` portait seul l'avertissement d'éclatement, et il ne s'écarte
+// que de 1,63 en L* de `prevu` en Encre clair — le préréglage par défaut — pour
+// un plancher de 4. Le coin, lui, est peint de l'encre de la cellule.
+import { CoinEclate } from '@/components/ui/CoinEclate'
 // `SEGMENT_PREVU_BORDURE` et non un tireté réécrit ici : la légende, les
 // bandeaux d'engagement et cette cellule doivent porter **les mêmes classes**,
 // sinon l'un des trois dérive sans que rien ne le dise.
@@ -476,6 +481,11 @@ export function MonthGrid({
                 const parCreneaux = slotDe(l.id) === '' && cells.get(key)?.hasSlots === true
                 const forme = formeDeLaCellule(cell, l, slots)
                 const previsionnel = etatSaisie(cell) === 'previsionnel'
+                // Une seule encre pour la cellule, et le champ la reprend :
+                // c'est elle que `CoinEclate` prend par `currentColor`, et deux
+                // encres divergentes feraient peindre le tracé d'une couleur
+                // que rien ne mesure.
+                const encre = encreCellule(forme.kind !== 'AUCUNE', previsionnel, parCreneaux)
                 return (
                   <td
                     key={d.date}
@@ -483,10 +493,14 @@ export function MonthGrid({
                     onMouseDown={() => drag.handlers.onMouseDown(l.id, d.date)}
                     onMouseEnter={() => drag.handlers.onMouseEnter(l.id, d.date)}
                     onMouseUp={drag.handlers.onMouseUp}
-                    // `relative` : l'aplat est posé en absolu dans la cellule,
-                    // et n'ajoute donc aucune largeur — le budget des sept
-                    // colonnes à 375 points n'en bouge pas.
-                    className={`relative ${FOND_JOUR[etatJour(d)]} ${
+                    // `relative` : l'aplat et le coin d'éclatement sont posés en
+                    // absolu dans la cellule, et n'ajoutent donc aucune largeur
+                    // — le budget des sept colonnes à 375 points n'en bouge pas.
+                    //
+                    // L'encre est portée ici et non seulement par le champ : la
+                    // cellule est la case, et le tracé d'éclatement s'y peint en
+                    // `currentColor`.
+                    className={`relative ${FOND_JOUR[etatJour(d)]} ${encre} ${
                       drag.isSelected(l.id, d.date) ? 'ring-2 ring-inset ring-focus' : ''
                     }`}
                   >
@@ -501,6 +515,15 @@ export function MonthGrid({
                       forme={forme}
                       couleur={previsionnel ? PREVU_COLOR : colorForLine(l.id)}
                     />
+
+                    {/* Après l'aplat, jamais avant : sans z-index, c'est
+                        l'ordre du document qui décide, et le coin doit se poser
+                        par-dessus la teinte qu'il traverse. Le liseré du champ
+                        reste, comme renfort là où il se voit — mais il ne porte
+                        plus seul l'avertissement, ce qu'une teinte à 1,63 de
+                        L* du prévisionnel ne pouvait pas faire. */}
+                    {parCreneaux && <CoinEclate cle={`${l.id}-${d.date}`} />}
+
                     <input
                       aria-label={`${l.label} ${d.date}`}
                       data-saisie={etatSaisie(cell)}
@@ -539,11 +562,9 @@ export function MonthGrid({
                       // cellule — le champ la recouvre exactement, et la
                       // bordure reste alors *dans* les 44 points (`box-sizing:
                       // border-box`), sans rien coûter au budget des colonnes.
-                      className={`touch-target relative w-11 bg-transparent text-center text-xs ${encreCellule(
-                        forme.kind !== 'AUCUNE',
-                        previsionnel,
-                        parCreneaux,
-                      )} ${previsionnel ? `${SEGMENT_PREVU_BORDURE} italic` : 'border-0'} ${
+                      className={`touch-target relative w-11 bg-transparent text-center text-xs ${encre} ${
+                        previsionnel ? `${SEGMENT_PREVU_BORDURE} italic` : 'border-0'
+                      } ${
                         parCreneaux ? 'ring-1 ring-inset ring-warning-edge' : ''
                       }`}
                     />

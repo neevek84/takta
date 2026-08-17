@@ -5,7 +5,15 @@ import { MonthGrid } from './MonthGrid'
 // L'autre vue du même écran : ce test-ci compare ce que les deux peignent du
 // prévisionnel, il ne la modifie pas.
 import { MonthCalendar } from '@/components/calendar/MonthCalendar'
-import { colorForLine, PREVU_COLOR } from '@/core/saisie/colors'
+import { colorForLine, LINE_COLORS, PREVU_COLOR } from '@/core/saisie/colors'
+import {
+  lightness,
+  MIN_LIGHTNESS_GAP,
+  THEME_PRESETS,
+  THEME_TOKEN_KEYS,
+  type ThemeTokens,
+} from '@/core/theme/tokens'
+import { AA_TEXT_RATIO, contrastRatio } from '@/core/theme/contrast'
 import { DEFAULT_SLOTS } from '@/services/settings'
 import { buildMonthDays } from '@/core/month/build'
 import type { LineForGrid } from '@/services/missions'
@@ -731,20 +739,24 @@ describe('MonthGrid', () => {
    * le composant : la teinte vient de `colorForLine`, la forme de
    * `formeDeLaCase`.
    */
-  describe('le code couleur, comme au calendrier', () => {
-    /** Les classes `text-*` qui ne portent pas d'encre : taille et alignement. */
-    const SANS_ENCRE = new Set([
-      'text-xs',
-      'text-sm',
-      'text-base',
-      'text-lg',
-      'text-xl',
-      'text-2xl',
-      'text-center',
-      'text-left',
-      'text-right',
-    ])
+  /**
+   * Les classes `text-*` qui ne portent pas d'encre : taille et alignement.
+   * Déclarée au niveau du fichier parce que deux blocs la lisent — celui du
+   * code couleur et celui du marqueur d'éclatement.
+   */
+  const SANS_ENCRE = new Set([
+    'text-xs',
+    'text-sm',
+    'text-base',
+    'text-lg',
+    'text-xl',
+    'text-2xl',
+    'text-center',
+    'text-left',
+    'text-right',
+  ])
 
+  describe('le code couleur, comme au calendrier', () => {
     function remplissage(lineId: string, date: string): HTMLElement | null {
       return screen.queryByTestId(`remplissage-${lineId}-${date}`)
     }
@@ -1048,10 +1060,24 @@ describe('MonthGrid', () => {
       // elle ne dit rien, ou la teinte propre du prévisionnel. Toute autre —
       // `danger`, un état, une catégorielle — ferait porter au contour le sens
       // d'un autre fait.
-      expect([calendrierMuet.contour.teinte, PREVU_COLOR.border]).toContain(
-        calendrier.contour.teinte,
-      )
-      expect([tableauMuet.contour.teinte, PREVU_COLOR.border]).toContain(tableau.contour.teinte)
+      //
+      // Le contour doit d'abord **exister**, et c'est là que ce test ne fermait
+      // que la moitié du défaut : le tableau ne pose aucun filet quand il ne
+      // dit rien, si bien que `tableauMuet.contour.teinte` vaut `undefined` et
+      // que la liste des valeurs licites acceptait l'absence de teinte. Un
+      // tireté peint en teinte fausse tombait ; un tireté peint en **rien** —
+      // c'est-à-dire prenant `currentColor`, l'encre du champ — passait, et les
+      // deux vues divergeaient à nouveau sans que rien ne le dise. Les valeurs
+      // absentes sont donc retirées de la liste, et la teinte exigée.
+      const licites = (rendu: Rendu): (string | undefined)[] =>
+        [rendu.contour.teinte, PREVU_COLOR.border].filter((t) => t !== undefined)
+
+      expect(calendrier.contour.teinte, 'le calendrier ne peint aucune teinte de contour')
+        .toBeDefined()
+      expect(licites(calendrierMuet)).toContain(calendrier.contour.teinte)
+
+      expect(tableau.contour.teinte, 'le tableau ne peint aucune teinte de contour').toBeDefined()
+      expect(licites(tableauMuet)).toContain(tableau.contour.teinte)
     })
 
     it('laisse le réalisé à la teinte de sa prestation, des deux côtés', () => {
@@ -1068,6 +1094,266 @@ describe('MonthGrid', () => {
       expect(calendrier.contour.style).toBeUndefined()
       expect(tableau.contour.teinte).not.toBe(PREVU_COLOR.border)
       expect(calendrier.contour.teinte).not.toBe(PREVU_COLOR.border)
+    })
+  })
+
+  /**
+   * Le marqueur d'une journée éclatée — celle que la cellule agrège depuis
+   * plusieurs créneaux, et qu'elle refuse pour cela de réécrire à la journée.
+   *
+   * Le tableau la marquait par `ring-1 ring-inset ring-warning-edge` **et rien
+   * d'autre** : une teinte seule, c'est-à-dire exactement le marqueur
+   * chromatique que le calendrier a cessé d'employer. Mesuré entre
+   * `warningEdge` et `prevu` : ΔL\* = 1,63 en Encre clair — le préréglage par
+   * défaut — quand le projet s'impose `MIN_LIGHTNESS_GAP` = 4 pour qu'un état
+   * se lise **sans distinguer les teintes**. Aucune valeur de bordure ne peut
+   * le sauver : elle aurait à tenir contre dix fonds inconnus d'avance, dont un
+   * ambre et six teintes catégorielles.
+   *
+   * Les deux vues sont le même écran, `/saisie/[month]` : le tableau ne peut
+   * pas rester défaillant là où le calendrier ne l'est plus. Il porte donc le
+   * même tracé, `CoinEclate`, partagé dans `components/ui/` à côté d'`Aplat`.
+   *
+   * Ce que ce test exige n'est pas la présence du tracé mais **sa mesure** :
+   * l'encre qui le peint doit tenir le plancher de clarté et 4,5:1 sur tous les
+   * fonds qu'une cellule du tableau peut prendre, dans les cinq préréglages.
+   * Le liseré reste, comme renfort là où il se voit — jamais comme le seul
+   * porteur de l'information.
+   */
+  describe('le marqueur d une journée éclatée', () => {
+    /** Mars 2026 avec un férié : le jeu d'essai commun n'en porte aucun. */
+    const joursAvecFerie = buildMonthDays('2026-03', [1, 2, 3, 4, 5], ['2026-03-02'])
+
+    /**
+     * Deux créneaux le même jour : ce qui fait qu'une cellule agrège au lieu de
+     * porter une saisie, et donc ce qui déclenche le marqueur.
+     */
+    function eclateeLe(date: string, prefixe: string, over: Partial<MonthEntry> = {}): MonthEntry[] {
+      const base = { lineId: 'l1', date, minutes: 120, kind: 'REALISE' as const, ...BORNES, minutesParJour: 480 }
+      return [
+        { ...base, id: `${prefixe}1`, slotId: 'matin', ...over },
+        { ...base, id: `${prefixe}2`, slotId: 'apres-midi', ...over },
+      ]
+    }
+
+    function classes(el: Element): string[] {
+      return el.className.split(/\s+/).filter((c) => c !== '')
+    }
+
+    /** La cellule elle-même : le champ la recouvre, elle est son parent. */
+    function caseDu(date: string): HTMLElement {
+      return cell('Consultant ITSM', date).parentElement as HTMLElement
+    }
+
+    function marqueurDu(date: string): SVGElement | null {
+      return screen.queryByTestId(`eclatement-l1-${date}`) as SVGElement | null
+    }
+
+    /**
+     * La signature du dessin : ce qui doit rester identique d'un fond à
+     * l'autre. Le `data-testid` en est exclu — il porte la date, qui change
+     * d'un cas au suivant et masquerait un tracé qui, lui, aurait bougé.
+     */
+    function traceDu(date: string): string {
+      const marqueur = marqueurDu(date)
+      expect(marqueur, `aucun marqueur d’éclatement sur ${date}`).not.toBeNull()
+      const chemin = marqueur!.querySelector('path')
+      expect(chemin, `le marqueur du ${date} ne dessine aucun tracé`).not.toBeNull()
+      return [
+        marqueur!.getAttribute('width'),
+        marqueur!.getAttribute('height'),
+        marqueur!.getAttribute('viewBox'),
+        chemin!.getAttribute('d'),
+        chemin!.getAttribute('fill'),
+      ].join(' ')
+    }
+
+    /** La classe de fond de l'aplat, celle qui change de teinte selon l'état. */
+    function fondDeLAplat(date: string): string | undefined {
+      return classes(screen.getByTestId(`remplissage-l1-${date}`)).find((c) => c.startsWith('bg-'))
+    }
+
+    /** L'encre déclarée par la cellule, isolée des tailles et des alignements. */
+    function encreDeLaCase(date: string): string | undefined {
+      return classes(caseDu(date)).find((c) => c.startsWith('text-') && !SANS_ENCRE.has(c))
+    }
+
+    const JETON_PAR_CLASSE = new Map<string, keyof ThemeTokens>(
+      THEME_TOKEN_KEYS.flatMap((k) => {
+        const classe = k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
+        return [
+          [`bg-${classe}`, k],
+          [`text-${classe}`, k],
+        ] as [string, keyof ThemeTokens][]
+      }),
+    )
+
+    function jetonDe(classe: string | undefined): keyof ThemeTokens {
+      expect(classe, 'aucune classe de jeton lue sur la cellule').toBeDefined()
+      const jeton = JETON_PAR_CLASSE.get(classe!)
+      expect(jeton, `${classe} n’est pas un jeton du thème`).toBeDefined()
+      return jeton!
+    }
+
+    /**
+     * Les cas qui font varier la teinte sous le marqueur, et rien d'autre.
+     * Le 1er mars 2026 est un dimanche, le 2 est le férié du jeu d'essai.
+     */
+    const CAS: { nom: string; date: string; props: Partial<React.ComponentProps<typeof MonthGrid>> }[] = [
+      {
+        nom: 'un jour ouvré',
+        date: '2026-03-10',
+        props: { entries: eclateeLe('2026-03-10', 'a'), slots: DEFAULT_SLOTS },
+      },
+      {
+        nom: 'un jour prévisionnel, qui prend sa propre teinte',
+        date: '2026-03-10',
+        props: { entries: eclateeLe('2026-03-10', 'b', { kind: 'PREVISIONNEL' }), slots: DEFAULT_SLOTS },
+      },
+      {
+        nom: 'un dimanche',
+        date: '2026-03-01',
+        props: { entries: eclateeLe('2026-03-01', 'c'), slots: DEFAULT_SLOTS },
+      },
+      {
+        nom: 'un jour férié',
+        date: '2026-03-02',
+        props: { entries: eclateeLe('2026-03-02', 'd'), slots: DEFAULT_SLOTS, days: joursAvecFerie },
+      },
+    ]
+
+    /**
+     * Le marqueur suit **exactement** la condition qui rend la cellule non
+     * modifiable, et rien d'autre : en vue journée, dès qu'un créneau est
+     * agrégé. Ce lot ne déplace pas cette frontière — il donne au marqueur
+     * qu'elle déclenche un porteur qui ne soit pas une teinte seule. Le
+     * calendrier, lui, réserve son coin aux journées à plusieurs créneaux :
+     * lui n'agrège rien, une case y montre déjà l'état exact du jour.
+     */
+    it('dessine un tracé là où la cellule agrège des créneaux, et là seulement', () => {
+      renderGrid({
+        slots: DEFAULT_SLOTS,
+        entries: [
+          ...eclateeLe('2026-03-10', 'a'),
+          { id: 'seul', lineId: 'l1', date: '2026-03-11', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+          { id: 'plein', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480 },
+        ],
+      })
+
+      const marqueur = marqueurDu('2026-03-10')
+      expect(marqueur).not.toBeNull()
+      expect(marqueur!.tagName.toLowerCase()).toBe('svg')
+      expect(marqueur!.querySelector('path')).not.toBeNull()
+
+      // Le marqueur et le refus d'écriture disent le même fait : l'un ne va
+      // jamais sans l'autre, sinon l'écran refuserait une saisie sans le dire.
+      expect(cell('Consultant ITSM', '2026-03-10').readOnly).toBe(true)
+      expect(marqueurDu('2026-03-11')).not.toBeNull()
+      expect(cell('Consultant ITSM', '2026-03-11').readOnly).toBe(true)
+
+      // Une saisie à la journée, et une cellule vide : rien n'est agrégé, rien
+      // n'est refusé, rien n'est signalé.
+      expect(marqueurDu('2026-03-12')).toBeNull()
+      expect(cell('Consultant ITSM', '2026-03-12').readOnly).toBe(false)
+      expect(marqueurDu('2026-03-13')).toBeNull()
+    })
+
+    it('retire le tracé dès qu un créneau est choisi : la cellule redevient modifiable', () => {
+      renderGrid({ slots: DEFAULT_SLOTS, entries: eclateeLe('2026-03-10', 'a') })
+      expect(marqueurDu('2026-03-10')).not.toBeNull()
+
+      fireEvent.change(screen.getByLabelText('Créneau — Consultant ITSM'), {
+        target: { value: 'matin' },
+      })
+
+      expect(cell('Consultant ITSM', '2026-03-10').readOnly).toBe(false)
+      expect(marqueurDu('2026-03-10')).toBeNull()
+    })
+
+    it('pose le tracé hors du flux : il ne coûte rien à la cellule de 44 points', () => {
+      // La cellule fait 44 points et le champ la recouvre exactement. Un glyphe
+      // dans ce flux élargirait la colonne, et la grille en compte trente et
+      // une. Le coin est posé en absolu dans la cellule, comme l'aplat.
+      renderGrid({ slots: DEFAULT_SLOTS, entries: eclateeLe('2026-03-10', 'a') })
+      const marqueur = marqueurDu('2026-03-10')!
+      expect(classes(marqueur)).toContain('absolute')
+      expect(marqueur.parentElement).toBe(caseDu('2026-03-10'))
+    })
+
+    it('garde exactement le même tracé quand la teinte de la cellule change', () => {
+      // Le cœur du correctif : ce n'est pas un rapport de clarté contre un fond
+      // inconnu qui porte l'avertissement, c'est une forme. Elle doit donc
+      // survivre au changement de teinte — et les teintes doivent bien changer,
+      // sans quoi ce test ne mesurerait rien.
+      const traces = new Set<string>()
+      const fonds = new Set<string>()
+
+      for (const cas of CAS) {
+        renderGrid(cas.props)
+        traces.add(traceDu(cas.date))
+        const fond = fondDeLAplat(cas.date)
+        expect(fond, `aucun aplat sous ${cas.nom}`).toBeDefined()
+        fonds.add(`${fond} sur ${classes(caseDu(cas.date)).find((c) => c.startsWith('bg-'))}`)
+        cleanup()
+      }
+
+      expect(fonds.size, 'les cas balayés ne font pas varier la teinte').toBeGreaterThan(1)
+      expect([...traces], 'le tracé change avec la teinte').toHaveLength(1)
+    })
+
+    it('ne déclare aucune teinte à lui : il prend l encre de la cellule', () => {
+      renderGrid({ slots: DEFAULT_SLOTS, entries: eclateeLe('2026-03-10', 'a') })
+      const marqueur = marqueurDu('2026-03-10')!
+
+      // `currentColor` et non un jeton : un marqueur qui porterait sa propre
+      // couleur retomberait dans le défaut qu'il corrige — une teinte figée
+      // confrontée à dix fonds dont elle ne sait rien.
+      expect(marqueur.querySelector('path')!.getAttribute('fill')).toBe('currentColor')
+      expect(classes(marqueur).filter((c) => /^(text|fill|stroke)-/.test(c))).toEqual([])
+    })
+
+    it('tient le plancher de clarté sur les dix fonds, dans les cinq préréglages', () => {
+      // La mesure, pas l'affirmation. L'encre est lue sur la cellule rendue,
+      // les fonds sur le DOM pour les trois états de jour et sur `colors.ts`
+      // pour les sept aplats — jamais recopiés à la main.
+      renderGrid({ slots: DEFAULT_SLOTS, entries: eclateeLe('2026-03-10', 'a') })
+      // L'encre mesurée est celle **d'un marqueur rendu**, jamais celle d'une
+      // cellule quelconque : sans cette ancre, retirer le tracé laisserait ce
+      // test mesurer une encre qui ne peint plus rien.
+      traceDu('2026-03-10')
+      const encre = jetonDe(encreDeLaCase('2026-03-10'))
+      cleanup()
+
+      const fonds = new Set<keyof ThemeTokens>()
+      for (const cas of CAS) {
+        renderGrid(cas.props)
+        traceDu(cas.date)
+        fonds.add(jetonDe(classes(caseDu(cas.date)).find((c) => c.startsWith('bg-'))))
+        fonds.add(jetonDe(fondDeLAplat(cas.date)))
+        cleanup()
+      }
+      // Les six teintes catégorielles : une seule sort du hachage à l'écran,
+      // mais l'aplat peut prendre n'importe laquelle des six.
+      for (const couleur of LINE_COLORS) fonds.add(jetonDe(couleur.bg))
+
+      // surface, off, offStrong, prevu et les six catégorielles. `saisie` n'y
+      // est pas : le tableau montre toutes les prestations, sa teinte est donc
+      // toujours catégorielle.
+      expect(fonds.size).toBe(10)
+
+      for (const preset of THEME_PRESETS) {
+        for (const fond of fonds) {
+          const ecart = Math.abs(lightness(preset.tokens[encre]) - lightness(preset.tokens[fond]))
+          expect(
+            ecart,
+            `${preset.label} : ${encre} sur ${fond} n’écarte que ${ecart.toFixed(2)} de L*`,
+          ).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP)
+          expect(
+            contrastRatio(preset.tokens[encre], preset.tokens[fond]),
+            `${preset.label} : ${encre} sur ${fond}`,
+          ).toBeGreaterThanOrEqual(AA_TEXT_RATIO)
+        }
+      }
     })
   })
 
