@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { prisma } from '@/db/client'
 import type { Slot } from '@/core/time/slots'
-import { CAPACITY_MODES, DISPLAY_UNITS } from '@/core/types'
+import { CAPACITY_MODES, DISPLAY_UNITS, ENGAGEMENT_SOURCES } from '@/core/types'
 import type { CapacityMode, DisplayUnit, EngagementSource } from '@/core/types'
 import { frenchHolidays } from '@/core/calendar/holidays-fr'
 import { appendAudit, actorOf } from './audit'
@@ -12,14 +12,11 @@ export const DEFAULT_SLOTS: Slot[] = [
   { id: 'nuit', label: 'Nuit', startMinute: 1320, endMinute: 360, centiemes: 50 },
 ]
 
-// `core/types.ts` n'expose pas de tableau des valeurs pour `EngagementSource`
-// (contrairement à `CAPACITY_MODES` / `DISPLAY_UNITS`) — il est déclaré ici,
-// côté service, pour la validation.
-export const ENGAGEMENT_SOURCES: readonly EngagementSource[] = [
-  'MANUEL',
-  'DOLIBARR_PROPALE',
-  'DOLIBARR_PROJET',
-]
+// `ENGAGEMENT_SOURCES` vit désormais dans `core/types.ts`, avec `CAPACITY_MODES`
+// et `DISPLAY_UNITS`. Elle est réexportée ici pour les appelants serveur qui la
+// nommaient déjà — mais un composant **client** doit la prendre à la source :
+// importer une valeur de ce module emporte Prisma et `node:crypto` avec elle.
+export { ENGAGEMENT_SOURCES } from '@/core/types'
 
 /**
  * Le fuseau de la machine, tel qu'`Intl` le rapporte.
