@@ -23,7 +23,9 @@ import {
   DolibarrRequestError,
   DolibarrUnavailableError,
   type DolibarrApi,
+  type DolibarrOrder,
   type DolibarrProject,
+  type DolibarrProjectCreation,
   type DolibarrProposal,
   type DolibarrTask,
   type DolibarrThirdparty,
@@ -31,6 +33,12 @@ import {
 
 interface FakeProject extends DolibarrProject {
   usageBillTime: boolean
+  refExt: string
+}
+
+interface FakeOrder extends DolibarrOrder {
+  /** statut Dolibarr : 0 brouillon, 1 validée, 2 en cours, 3 livrée, -1 annulée */
+  statut: number
 }
 
 export interface FakeTimeSpent {
@@ -57,6 +65,7 @@ export class FakeDolibarr implements DolibarrApi {
   readonly projects: FakeProject[] = []
   readonly tasks: DolibarrTask[] = []
   readonly proposals: DolibarrProposal[] = []
+  readonly orders: FakeOrder[] = []
   readonly timespents: FakeTimeSpent[] = []
   setup: Record<string, string> = {}
 
@@ -71,6 +80,9 @@ export class FakeDolibarr implements DolibarrApi {
     updateTimeSpent: 0,
     deleteTimeSpent: 0,
     getProposal: 0,
+    getOrder: 0,
+    createProject: 0,
+    linkOrderToProject: 0,
   }
 
   private sequence = 0
@@ -106,9 +118,38 @@ export class FakeDolibarr implements DolibarrApi {
       title: args.title,
       socid: args.socid,
       usageBillTime: args.usageBillTime ?? true,
+      refExt: '',
     }
     this.projects.push(p)
     return { id: p.id, ref: p.ref, title: p.title, socid: p.socid }
+  }
+
+  seedOrder(args: {
+    ref: string
+    socid: number
+    refClient?: string
+    label?: string
+    statut?: number
+    projectId?: number | null
+    lines?: Array<{ label: string; qty: number; subpriceCents: number }>
+  }): FakeOrder {
+    const c: FakeOrder = {
+      id: this.next(),
+      ref: args.ref,
+      refClient: args.refClient ?? '',
+      socid: args.socid,
+      label: args.label ?? '',
+      statut: args.statut ?? 1,
+      projectId: args.projectId ?? null,
+      lines: (args.lines ?? []).map((l) => ({ id: this.next(), ...l })),
+    }
+    this.orders.push(c)
+    return c
+  }
+
+  /** La référence externe posée sur un projet — ce que le report doit prouver. */
+  refExtDuProjet(projectId: number): string {
+    return this.projet(projectId).refExt
   }
 
   seedProposal(args: {
@@ -171,6 +212,57 @@ export class FakeDolibarr implements DolibarrApi {
     }
     this.tasks.push(t)
     return t
+  }
+
+  async createProject(args: DolibarrProjectCreation): Promise<DolibarrProject> {
+    this.garde()
+    this.appels.createProject += 1
+    if (args.title.trim() === '') {
+      throw new DolibarrRequestError('Dolibarr refuse un projet sans titre.')
+    }
+    if (!entierPositif(args.socid)) {
+      throw new DolibarrRequestError('Dolibarr refuse un projet rattaché à un tiers inconnu.')
+    }
+    if (this.thirdparties.find((t) => t.id === args.socid) === undefined) {
+      throw new DolibarrRequestError(`Tiers ${args.socid} introuvable dans Dolibarr.`)
+    }
+
+    const id = this.next()
+    const p: FakeProject = {
+      id,
+      ref: `PJ${String(id).padStart(4, '0')}`,
+      title: args.title,
+      socid: args.socid,
+      // Le port n'expose pas le réglage : un projet créé d'ici est toujours
+      // facturable au temps, et le double doit refléter exactement ça.
+      usageBillTime: true,
+      refExt: args.refExt,
+    }
+    this.projects.push(p)
+    return { id: p.id, ref: p.ref, title: p.title, socid: p.socid }
+  }
+
+  async listOrders(): Promise<DolibarrOrder[]> {
+    this.garde()
+    // Le filtre vit du même côté que dans le client HTTP : un brouillon
+    // n'engage rien, une annulée n'engage plus.
+    return this.orders.filter((c) => c.statut >= 1 && c.statut <= 3).map((c) => ({ ...c }))
+  }
+
+  async getOrder(id: number): Promise<DolibarrOrder> {
+    this.garde()
+    this.appels.getOrder += 1
+    return { ...this.commande(id) }
+  }
+
+  async linkOrderToProject(args: { orderId: number; projectId: number }): Promise<void> {
+    this.garde()
+    this.appels.linkOrderToProject += 1
+    const commande = this.commande(args.orderId)
+    // Dolibarr refuse un `fk_project` qui ne désigne aucun projet : la clé
+    // étrangère existe en base.
+    this.projet(args.projectId)
+    commande.projectId = args.projectId
   }
 
   async getProposal(id: number): Promise<DolibarrProposal> {
@@ -243,6 +335,15 @@ export class FakeDolibarr implements DolibarrApi {
       throw new DolibarrRequestError(`Projet ${projectId} introuvable dans Dolibarr.`)
     }
     return p
+  }
+
+  private commande(orderId: number): FakeOrder {
+    const c = this.orders.find((x) => x.id === orderId)
+    if (c === undefined) {
+      // Non rejouable : une commande absente ne réapparaît pas d'elle-même.
+      throw new DolibarrRequestError(`Commande ${orderId} introuvable dans Dolibarr.`)
+    }
+    return c
   }
 
   private tache(taskId: number): DolibarrTask {

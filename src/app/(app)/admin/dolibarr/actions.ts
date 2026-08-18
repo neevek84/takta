@@ -16,6 +16,7 @@ import {
   detachEntity,
   type ImportEntityType,
 } from '@/services/dolibarr/import'
+import { creerProjetDepuisCommande } from '@/services/dolibarr/commande'
 import { rattraperCraValides } from '@/services/dolibarr/rattrapage'
 import { applyDolibarrSetup } from '@/services/dolibarr/setup'
 
@@ -219,6 +220,72 @@ export async function rattacherProjet(formData: FormData): Promise<void> {
   // Un rattachement ordinaire ne dit rien : la page se réaffiche, la
   // correspondance est visible. Seuls les deux effets invisibles s'annoncent.
   if (resume !== null) redirect(annonce(resume))
+}
+
+/**
+ * Crée le projet Dolibarr d'une commande client, et rattache la mission dessus.
+ *
+ * Tout ce que l'action rend au porteur passe par le bandeau : c'est le seul
+ * endroit où il apprendra que le projet existe **malgré** un rattachement de
+ * commande en échec, ou que sa commande ne portait aucune référence client.
+ * Les taire ferait recommencer l'opération — et naître un second projet pour
+ * le même bon de commande.
+ */
+export async function creerProjetCommande(formData: FormData): Promise<void> {
+  const user = await requireUser()
+  const api = await getDolibarrApi()
+  if (api === null) {
+    redirect(annonce("Dolibarr n'est pas connecté : aucun projet n'a été créé.", 'danger'))
+    return
+  }
+
+  const orderId = Number(formData.get('orderId'))
+  const missionId = String(formData.get('missionId') ?? '')
+  const clientId = String(formData.get('clientId') ?? '')
+
+  // Une mission sans client n'existe pas au modèle : la création échouerait sur
+  // la clé étrangère, après avoir créé le projet chez Dolibarr.
+  if (missionId === '' && clientId === '') {
+    redirect(annonce('Choisissez une mission, ou le client de la mission à créer.', 'danger'))
+    return
+  }
+
+  let resultat: Awaited<ReturnType<typeof creerProjetDepuisCommande>>
+  try {
+    resultat = await creerProjetDepuisCommande({
+      userId: user.id,
+      orderId,
+      cible: missionId === '' ? { type: 'NOUVELLE_MISSION', clientId } : { type: 'MISSION', missionId },
+      api,
+    })
+  } catch (err) {
+    redirect(annonce(err instanceof Error ? err.message : String(err), 'danger'))
+    return
+  }
+
+  const phrases: string[] = [
+    resultat.projetExistant
+      ? `La commande portait déjà le projet « ${resultat.projet.ref} » : aucun second projet n'a été créé.`
+      : `Projet « ${resultat.projet.ref} — ${resultat.projet.title} » créé.`,
+  ]
+  if (resultat.sansReferenceClient) {
+    phrases.push(
+      "Cette commande ne porte aucune référence client : le projet a pris la référence de la " +
+        'commande. Renseignez « Réf. client » dans Dolibarr si la facture doit la porter.',
+    )
+  }
+  if (resultat.commandeNonRattachee !== null) {
+    phrases.push(
+      `Le projet existe, mais la commande n'a pas pu y être rattachée (${resultat.commandeNonRattachee}). ` +
+        'Ouvrez la commande dans Dolibarr et rattachez-la à ce projet, sans quoi la facture ne ' +
+        'retrouvera pas le bon de commande. Ne relancez pas la création : un second projet naîtrait.',
+    )
+  }
+  const suite = resumeRattachement(resultat.rattachement)
+  if (suite !== null) phrases.push(suite)
+
+  revalidatePath(CHEMIN)
+  redirect(annonce(phrases.join(' '), resultat.commandeNonRattachee === null ? 'success' : 'danger'))
 }
 
 export async function detacher(formData: FormData): Promise<void> {

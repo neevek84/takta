@@ -48,6 +48,36 @@ export interface DolibarrProposal {
   lines: DolibarrPropalLine[]
 }
 
+/** Une ligne de commande client. Même forme qu'une ligne de propale, à dessein. */
+export type DolibarrOrderLine = DolibarrPropalLine
+
+/**
+ * Une commande client — le document ferme du flux du porteur, et le seul qui
+ * porte la référence du bon de commande du client (`ref_client`).
+ */
+export interface DolibarrOrder {
+  id: number
+  /** référence Dolibarr, du genre `CO2608-0042` */
+  ref: string
+  /** `ref_client` : la référence du BDC du client, `''` quand elle manque */
+  refClient: string
+  socid: number
+  /** libellé ou objet de la commande, `''` quand il manque */
+  label: string
+  /** projet déjà rattaché à la commande, `null` sinon */
+  projectId: number | null
+  lines: DolibarrOrderLine[]
+}
+
+/** Ce qu'il faut à Dolibarr pour créer un projet facturable au temps. */
+export interface DolibarrProjectCreation {
+  socid: number
+  title: string
+  /** `ref_ext` : la référence client reportée, `''` quand la commande n'en porte pas */
+  refExt: string
+  description: string
+}
+
 /**
  * Le port du connecteur. Tout ce que l'application sait faire avec Dolibarr
  * passe par là — ce qui rend le double suffisant pour tester le lot entier
@@ -67,6 +97,23 @@ export interface DolibarrApi {
   listProjects(): Promise<DolibarrProject[]>
   listTasks(projectId: number): Promise<DolibarrTask[]>
   createTask(args: { projectId: number; label: string }): Promise<DolibarrTask>
+  /**
+   * Crée un projet **facturable au temps**, et rien d'autre.
+   *
+   * `usage_task` et `usage_bill_time` ne sont pas des paramètres : un projet
+   * créé sans eux n'a aucune tâche où pousser un temps, et l'application
+   * viendrait de fabriquer elle-même le cas qu'elle refuse de rattacher.
+   */
+  createProject(args: DolibarrProjectCreation): Promise<DolibarrProject>
+  /** déjà filtrées : ni brouillon, ni annulée */
+  listOrders(): Promise<DolibarrOrder[]>
+  getOrder(id: number): Promise<DolibarrOrder>
+  /**
+   * Pose `fk_project` sur la commande. C'est ce rattachement, et lui seul, qui
+   * fait apparaître la commande sous le projet dans Dolibarr et permet à la
+   * facturation des temps consommés de retrouver le bon de commande.
+   */
+  linkOrderToProject(args: { orderId: number; projectId: number }): Promise<void>
   getProposal(id: number): Promise<DolibarrProposal>
   addTimeSpent(args: {
     taskId: number

@@ -307,6 +307,168 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
       note: 'Le 404 est toléré par le client : lever bloquerait la file sur une cible conforme.',
     },
     {
+      operation: 'Lister les commandes clients utilisables',
+      methode: 'GET',
+      gabarit: '/orders',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · listOrders',
+      parametres: [
+        {
+          nom: 'limit',
+          source: 'CONSTANTE',
+          origine: 'src/services/dolibarr/http.ts · listOrders',
+          exemple: '1000',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible: "L'écran Administration · Dolibarr affiche l'erreur ; aucun projet n'est créé.",
+      },
+      reglagesTiers: [],
+      note:
+        'Les statuts sont filtrés côté client : seules 1 (validée), 2 (en cours) et 3 (livrée) ' +
+        'sont retenues. Un brouillon n’engage rien, une annulée n’engage plus — créer un projet ' +
+        'sur l’une ou l’autre fabriquerait un chantier sans commande.',
+    },
+    {
+      operation: 'Lire une commande client et ses lignes',
+      methode: 'GET',
+      gabarit: '/orders/{orderId}',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · getOrder',
+      parametres: [
+        {
+          nom: 'orderId',
+          source: 'IDENTIFIANT',
+          origine: 'src/services/dolibarr/commande.ts · creerProjetDepuisCommande, attachOrderLine',
+          exemple: '42',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible: "L'écran affiche le refus ; rien n'est créé ni écrit.",
+      },
+      reglagesTiers: [],
+      note:
+        '`ref_client` porte la référence du bon de commande du client — le champ que le lot 2b ' +
+        'reporte sur le projet. Il est nul sur la plupart des commandes, et `ref_customer` en est ' +
+        'l’alias sur certaines versions.',
+    },
+    {
+      operation: 'Créer un projet facturable au temps depuis une commande',
+      methode: 'POST',
+      gabarit: '/projects',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · createProject',
+      parametres: [
+        {
+          nom: 'title',
+          source: 'SAISIE',
+          origine: 'src/core/dolibarr/commande.ts · titreProjetDepuisCommande',
+          exemple: 'BDC-EXEMPLE — Libellé de la commande',
+        },
+        {
+          nom: 'socid',
+          source: 'IDENTIFIANT',
+          origine: 'socid de la commande, via src/services/dolibarr/commande.ts',
+          exemple: '7',
+        },
+        {
+          nom: 'ref_ext',
+          source: 'SAISIE',
+          origine: 'src/core/dolibarr/commande.ts · referenceExterneCommande',
+          exemple: 'BDC-EXEMPLE',
+        },
+        {
+          nom: 'description',
+          source: 'SAISIE',
+          origine: 'src/services/dolibarr/commande.ts · creerProjetDepuisCommande',
+          exemple: 'Ouvert depuis la commande CO-EXEMPLE.',
+        },
+        {
+          nom: 'usage_task',
+          source: 'CONSTANTE',
+          origine: 'src/services/dolibarr/http.ts · createProject',
+          exemple: '1',
+        },
+        {
+          nom: 'usage_bill_time',
+          source: 'CONSTANTE',
+          origine: 'src/services/dolibarr/http.ts · createProject',
+          exemple: '1',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible: "L'écran affiche le refus ; aucune correspondance locale n'est posée.",
+      },
+      reglagesTiers: [],
+      note:
+        '`usage_task` et `usage_bill_time` sont imposés et non paramétrables : sans eux le projet ' +
+        'n’accepte ni tâche ni temps facturable, et `listProjects` le filtrerait aussitôt — ' +
+        'l’application aurait créé ce qu’elle refuse de rattacher. Dolibarr rend un entier nu.',
+    },
+    {
+      operation: 'Relire le projet créé pour connaître la référence attribuée',
+      methode: 'GET',
+      gabarit: '/projects/{projectId}',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · createProject',
+      parametres: [
+        {
+          nom: 'projectId',
+          source: 'IDENTIFIANT',
+          origine: 'identifiant rendu par POST /projects',
+          exemple: '12',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible: "L'écran affiche le refus, alors que le projet, lui, a bien été créé.",
+      },
+      reglagesTiers: [],
+      note:
+        'La référence (`PJxxxx-nnnn`) est attribuée par Dolibarr : la relire évite qu’un refus ' +
+        'ultérieur nomme un projet sous une référence inventée.',
+    },
+    {
+      operation: 'Rattacher la commande au projet créé',
+      methode: 'PUT',
+      gabarit: '/orders/{orderId}',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · linkOrderToProject',
+      parametres: [
+        {
+          nom: 'orderId',
+          source: 'IDENTIFIANT',
+          origine: 'src/services/dolibarr/commande.ts · creerProjetDepuisCommande',
+          exemple: '42',
+        },
+        {
+          nom: 'fk_project',
+          source: 'IDENTIFIANT',
+          origine: 'identifiant du projet créé',
+          exemple: '12',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'TOLERE',
+        visible:
+          "L'écran annonce que le projet existe mais que la commande n'a pas pu y être " +
+          'rattachée, et invite à faire le lien dans Dolibarr.',
+      },
+      reglagesTiers: [],
+      note:
+        'Seul `fk_project` est envoyé. C’est la seule écriture de l’application sur un document ' +
+        'commercial, et c’est elle qui fait remonter la référence du bon de commande jusqu’à la ' +
+        'facture. Renvoyer la commande entière la ferait réenregistrer telle que l’API l’a rendue.',
+    },
+    {
       operation: 'Lire une constante de configuration de l instance',
       methode: 'GET',
       gabarit: '/setup/conf/{constante}',

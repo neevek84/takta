@@ -31,6 +31,13 @@ async function exercerTout(): Promise<string[]> {
     lines: [{ label: 'Conseil', qty: 10, subpriceEuros: 800 }],
   })
   faux.seedSetup('TIMESHEET_DAY_DURATION', '7')
+  const commande = faux.seedOrder({
+    ref: 'CO-EXEMPLE',
+    socid: tiers.id,
+    refClient: 'BDC-EXEMPLE',
+    label: 'Libellé de la commande',
+    lines: [{ label: 'Conseil', qty: 10, subpriceEuros: 800 }],
+  })
 
   await api.listThirdparties()
   await api.createThirdparty('Autre Client Exemple')
@@ -38,6 +45,15 @@ async function exercerTout(): Promise<string[]> {
   await api.listTasks(projet.id)
   const tache = await api.createTask({ projectId: projet.id, label: 'Conseil' })
   await api.getProposal(propale.id)
+  await api.listOrders()
+  await api.getOrder(commande.id)
+  const projetCree = await api.createProject({
+    socid: tiers.id,
+    title: 'BDC-EXEMPLE — Libellé de la commande',
+    refExt: 'BDC-EXEMPLE',
+    description: 'Projet ouvert depuis la commande CO-EXEMPLE.',
+  })
+  await api.linkOrderToProject({ orderId: commande.id, projectId: projetCree.id })
   const { timespentId } = await api.addTimeSpent({
     taskId: tache.id,
     dolibarrUserId: 42,

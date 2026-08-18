@@ -48,6 +48,18 @@ export interface FakeDolibarrHttp {
     socid: number
     lines: Array<{ label: string; qty: number; subpriceEuros: number }>
   }): { id: number }
+  seedOrder(a: {
+    ref: string
+    socid: number
+    refClient?: string
+    label?: string
+    statut?: number
+    projectId?: number | null
+    lines?: Array<{ label: string; qty: number; subpriceEuros: number }>
+  }): { id: number }
+  /** projets créés par l'API, pour vérifier ce que le client a réellement envoyé */
+  projets: Array<{ id: number; ref: string; title: string; refExt: string; usageBillTime: boolean }>
+  commandes: Array<{ id: number; ref: string; projectId: number | null }>
   seedSetup(constante: string, valeur: string): void
   timespents: Array<{
     id: number
@@ -65,6 +77,18 @@ interface FauxProjet {
   title: string
   socid: number | null
   usageBillTime: boolean
+  refExt: string
+}
+
+interface FauxCommande {
+  id: number
+  ref: string
+  refClient: string
+  label: string
+  socid: number
+  statut: number
+  projectId: number | null
+  lines: Array<{ id: number; label: string; qty: number; subpriceEuros: number }>
 }
 
 interface FauxTache {
@@ -116,6 +140,7 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
   const projects: FauxProjet[] = []
   const tasks: FauxTache[] = []
   const proposals: FauxPropale[] = []
+  const orders: FauxCommande[] = []
   const timespents: FakeDolibarrHttp['timespents'] = []
   const setup: Record<string, string> = {}
 
@@ -295,6 +320,91 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
         return json({ success: { code: 200 } })
       }
 
+      case 'POST /projects': {
+        if (!estObjet(corps)) return refus('Body is mandatory')
+        if (String(corps.title ?? '').trim() === '') return refus('Title is mandatory')
+        if (thirdparties.find((t) => t.id === Number(corps.socid)) === undefined) {
+          return refus('Thirdparty not found')
+        }
+        const id = suivant()
+        projects.push({
+          id,
+          // Dolibarr attribue la référence : le client la relit, il ne l'invente pas.
+          ref: `PJ${String(id).padStart(4, '0')}`,
+          title: String(corps.title),
+          socid: Number(corps.socid),
+          // Le client impose les deux drapeaux ; le double refuse un projet qui
+          // n'en porterait pas, sans quoi il validerait un connecteur créant
+          // des projets où aucun temps ne peut aller.
+          usageBillTime: corps.usage_bill_time === 1 || corps.usage_bill_time === '1',
+          refExt: String(corps.ref_ext ?? ''),
+        })
+        if (corps.usage_task !== 1 && corps.usage_task !== '1') {
+          return refus('A project created for time tracking must set usage_task')
+        }
+        return json(id)
+      }
+
+      case 'GET /projects/{projectId}': {
+        const projet = projects.find((p) => p.id === Number(params.projectId))
+        if (projet === undefined) return absent('Project not found')
+        return json({
+          id: projet.id,
+          ref: projet.ref,
+          title: projet.title,
+          socid: projet.socid,
+          ref_ext: projet.refExt,
+          usage_bill_time: projet.usageBillTime ? '1' : '0',
+        })
+      }
+
+      case 'GET /orders': {
+        if (orders.length === 0) return absent('No order found')
+        return json(
+          orders.map((c) => ({
+            id: c.id,
+            ref: c.ref,
+            ref_client: c.refClient === '' ? null : c.refClient,
+            socid: String(c.socid),
+            label: c.label,
+            statut: String(c.statut),
+            fk_project: c.projectId === null ? null : String(c.projectId),
+          })),
+        )
+      }
+
+      case 'GET /orders/{orderId}': {
+        const commande = orders.find((c) => c.id === Number(params.orderId))
+        if (commande === undefined) return absent('Order not found')
+        return json({
+          id: commande.id,
+          ref: commande.ref,
+          ref_client: commande.refClient === '' ? null : commande.refClient,
+          socid: String(commande.socid),
+          label: commande.label,
+          statut: String(commande.statut),
+          fk_project: commande.projectId === null ? null : String(commande.projectId),
+          lines: commande.lines.map((l) => ({
+            id: l.id,
+            desc: l.label,
+            qty: l.qty,
+            subprice: l.subpriceEuros,
+          })),
+        })
+      }
+
+      case 'PUT /orders/{orderId}': {
+        const commande = orders.find((c) => c.id === Number(params.orderId))
+        if (commande === undefined) return absent('Order not found')
+        if (!estObjet(corps)) return refus('Body is mandatory')
+        // Dolibarr refuse une clé étrangère qui ne désigne aucun projet.
+        if (projects.find((p) => p.id === Number(corps.fk_project)) === undefined) {
+          return refus('Project not found')
+        }
+        commande.projectId = Number(corps.fk_project)
+        return json(commande.id)
+      }
+
       case 'GET /setup/conf/{constante}': {
         const valeur = setup[params.constante ?? '']
         if (valeur === undefined) return absent('Constant not found')
@@ -327,6 +437,8 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
     appels,
     gabaritsObserves,
     timespents,
+    projets: projects,
+    commandes: orders,
 
     seedThirdparty(name) {
       const tiers = { id: suivant(), name }
@@ -341,6 +453,7 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
         title: a.title,
         socid: a.socid,
         usageBillTime: a.usageBillTime ?? true,
+        refExt: '',
       }
       projects.push(projet)
       return { id: projet.id }
@@ -361,6 +474,21 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
       }
       proposals.push(propale)
       return { id: propale.id }
+    },
+
+    seedOrder(a) {
+      const commande: FauxCommande = {
+        id: suivant(),
+        ref: a.ref,
+        refClient: a.refClient ?? '',
+        label: a.label ?? '',
+        socid: a.socid,
+        statut: a.statut ?? 1,
+        projectId: a.projectId ?? null,
+        lines: (a.lines ?? []).map((l) => ({ id: suivant(), ...l })),
+      }
+      orders.push(commande)
+      return { id: commande.id }
     },
 
     seedSetup(constante, valeur) {

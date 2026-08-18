@@ -1,5 +1,5 @@
 /**
- * Les cinq natures de correspondance que ce connecteur pose, et le seul
+ * Les six natures de correspondance que ce connecteur pose, et le seul
  * endroit qui les nomme.
  *
  * Elles vivaient dispersées — deux dans `push.ts`, une dans `propal.ts`, deux
@@ -28,6 +28,13 @@ export const LIEN_LIGNE = 'MissionLine'
 export const LIEN_PROPALE = 'MissionLinePropalLine'
 
 /**
+ * Une prestation ↔ une ligne de commande. `externalId` y porte **deux**
+ * identifiants, `commandeId:ligneId`, pour la même raison que la propale :
+ * l'API Dolibarr n'expose les lignes que sous leur document.
+ */
+export const LIEN_COMMANDE = 'MissionLineOrderLine'
+
+/**
  * Une correspondance par **cellule de grille**, pas par saisie : la clé est
  * `craId|lineId|date|slotId`. Une saisie supprimée puis ressaisie retombe donc
  * sur le même temps passé chez Dolibarr au lieu d'en créer un second, et le
@@ -48,6 +55,7 @@ export const LIENS_DOLIBARR = [
   LIEN_MISSION,
   LIEN_LIGNE,
   LIEN_PROPALE,
+  LIEN_COMMANDE,
   LIEN_TEMPS,
 ] as const
 
@@ -77,9 +85,10 @@ export interface RuptureDerivee {
  * rupture est un oubli, pas une destruction — c'est déjà la promesse que porte
  * `detachEntity`.
  *
- * **Ce qu'elle laisse volontairement intact.** Le lien `MissionLinePropalLine`
- * survit : une propale appartient à un tiers, pas à un projet, et repointer le
- * projet ne rend pas faux l'engagement repris.
+ * **Ce qu'elle laisse volontairement intact.** Les liens `MissionLinePropalLine` et
+ * `MissionLineOrderLine` survivent : une propale et une commande appartiennent
+ * à un tiers, pas à un projet, et repointer le projet ne rend pas faux
+ * l'engagement repris.
  */
 export async function rompreLiensDerives(missionId: string): Promise<RuptureDerivee> {
   const lignes = await prisma.missionLine.findMany({

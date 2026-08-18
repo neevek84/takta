@@ -9,19 +9,40 @@ describe('catalogue Dolibarr', () => {
     expect(verifierCatalogue(CATALOGUE_DOLIBARR, AUJOURDHUI)).toEqual([])
   })
 
-  it('déclare exactement les dix appels du client HTTP', () => {
+  it('déclare exactement les quinze appels du client HTTP', () => {
     expect(CATALOGUE_DOLIBARR.appels.map(cleAppel).sort()).toEqual([
       'DELETE /tasks/{taskId}/timespent/{timespentId}',
+      'GET /orders',
+      'GET /orders/{orderId}',
       'GET /projects',
+      'GET /projects/{projectId}',
       'GET /projects/{projectId}/tasks',
       'GET /proposals/{proposalId}',
       'GET /setup/conf/{constante}',
       'GET /thirdparties',
+      'POST /projects',
       'POST /tasks',
       'POST /tasks/{taskId}/addtimespent',
       'POST /thirdparties',
+      'PUT /orders/{orderId}',
       'PUT /tasks/{taskId}/timespent/{timespentId}',
     ])
+  })
+
+  it('n écrit sur un document commercial que le rattachement au projet', () => {
+    // La seule écriture de l'application sur une commande. Un second champ
+    // modifierait un document signé — et c'est ici qu'on s'en apercevrait.
+    const lien = CATALOGUE_DOLIBARR.appels.find((a) => cleAppel(a) === 'PUT /orders/{orderId}')
+    expect(lien?.parametres.map((p) => p.nom).sort()).toEqual(['fk_project', 'orderId'])
+    expect(lien?.echec.comportement).toBe('TOLERE')
+  })
+
+  it('impose au projet créé d être facturable au temps', () => {
+    const creation = CATALOGUE_DOLIBARR.appels.find((a) => cleAppel(a) === 'POST /projects')
+    const drapeaux = creation?.parametres.filter((p) =>
+      ['usage_task', 'usage_bill_time'].includes(p.nom),
+    )
+    expect(drapeaux?.map((p) => p.source)).toEqual(['CONSTANTE', 'CONSTANTE'])
   })
 
   it('ne catalogue aucun appel de facturation, le produit n en émettant plus', () => {

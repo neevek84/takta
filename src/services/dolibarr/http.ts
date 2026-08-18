@@ -2,7 +2,10 @@ import {
   DolibarrRequestError,
   DolibarrUnavailableError,
   type DolibarrApi,
+  type DolibarrOrder,
   type DolibarrProject,
+  type DolibarrProjectCreation,
+  type DolibarrPropalLine,
   type DolibarrProposal,
   type DolibarrTask,
   type DolibarrThirdparty,
@@ -105,6 +108,42 @@ async function liste(ctx: Contexte, chemin: string): Promise<Array<Record<string
   return brut as Array<Record<string, unknown>>
 }
 
+/**
+ * Les lignes d'un document vendeur, propale ou commande : Dolibarr les rend
+ * sous la même forme, et les deux se reprennent avec la même règle.
+ */
+function lignesVendues(brut: Record<string, unknown>): DolibarrPropalLine[] {
+  const lignes = (brut.lines ?? []) as Array<Record<string, unknown>>
+  return lignes.map((l) => ({
+    id: Number(l.id),
+    label: String(l.desc ?? l.libelle ?? l.product_label ?? ''),
+    qty: Number(l.qty),
+    subpriceCents: Math.round(Number(l.subprice) * 100),
+  }))
+}
+
+function versCommande(brut: Record<string, unknown>): DolibarrOrder {
+  return {
+    id: Number(brut.id),
+    ref: String(brut.ref ?? ''),
+    // `ref_client` est nul sur l'immense majorité des commandes : c'est une
+    // absence ordinaire, pas une anomalie. `ref_customer` est son alias sur
+    // certaines versions, et les deux arrivent parfois côte à côte.
+    refClient: String(brut.ref_client ?? brut.ref_customer ?? ''),
+    socid: Number(brut.socid),
+    label: String(brut.label ?? brut.libelle ?? ''),
+    projectId: nombreOuNull(brut.fk_project ?? brut.fk_projet),
+    lines: lignesVendues(brut),
+  }
+}
+
+/**
+ * Les statuts de commande sur lesquels un projet peut naître : validée, en
+ * cours, livrée. Un brouillon n'engage rien et une annulée n'engage plus —
+ * créer un projet sur l'un ou l'autre fabriquerait un chantier sans commande.
+ */
+const STATUTS_COMMANDE_UTILISABLES = new Set([1, 2, 3])
+
 export function createHttpDolibarrApi(args: {
   baseUrl: string
   apiKey: string
@@ -165,19 +204,64 @@ export function createHttpDolibarrApi(args: {
       return { id: Number(id), ref: a.label, label: a.label, projectId: a.projectId }
     },
 
+    async createProject(a: DolibarrProjectCreation): Promise<DolibarrProject> {
+      const id = (await appel(ctx, '/projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: a.title,
+          socid: a.socid,
+          ref_ext: a.refExt,
+          description: a.description,
+          // Imposés, jamais paramétrables : sans eux le projet n'accepte
+          // aucune tâche ni aucun temps facturable, et `listProjects` le
+          // filtrerait aussitôt — l'application aurait créé ce qu'elle refuse.
+          usage_task: 1,
+          usage_bill_time: 1,
+        }),
+      })) as number | Record<string, unknown>
+
+      const projectId = typeof id === 'number' ? id : Number(id.id)
+      // La référence (`PJxxxx-nnnn`) est attribuée par Dolibarr : on la relit
+      // au lieu de l'inventer, sans quoi tout refus ultérieur nommerait un
+      // projet qui n'existe pas sous ce nom.
+      const cree = (await appel(ctx, `/projects/${projectId}`)) as Record<string, unknown>
+      return {
+        id: projectId,
+        ref: String(cree.ref ?? ''),
+        title: String(cree.title ?? a.title),
+        socid: nombreOuNull(cree.socid),
+      }
+    },
+
+    async listOrders(): Promise<DolibarrOrder[]> {
+      const brut = await liste(ctx, '/orders?limit=1000')
+      return brut
+        .filter((c) => STATUTS_COMMANDE_UTILISABLES.has(Number(c.statut ?? c.status)))
+        .map(versCommande)
+    },
+
+    async getOrder(id: number): Promise<DolibarrOrder> {
+      const brut = (await appel(ctx, `/orders/${id}`)) as Record<string, unknown>
+      return versCommande(brut)
+    },
+
+    async linkOrderToProject(a: { orderId: number; projectId: number }): Promise<void> {
+      // Un seul champ est écrit. Renvoyer la commande entière la ferait
+      // réenregistrer telle que l'API l'a rendue — et une valeur mal
+      // retranscrite au passage modifierait un document commercial signé.
+      await appel(ctx, `/orders/${a.orderId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ fk_project: a.projectId }),
+      })
+    },
+
     async getProposal(id: number): Promise<DolibarrProposal> {
       const brut = (await appel(ctx, `/proposals/${id}`)) as Record<string, unknown>
-      const lignes = (brut.lines ?? []) as Array<Record<string, unknown>>
       return {
         id: Number(brut.id),
         ref: String(brut.ref ?? ''),
         socid: Number(brut.socid),
-        lines: lignes.map((l) => ({
-          id: Number(l.id),
-          label: String(l.desc ?? l.libelle ?? l.product_label ?? ''),
-          qty: Number(l.qty),
-          subpriceCents: Math.round(Number(l.subprice) * 100),
-        })),
+        lines: lignesVendues(brut),
       }
     },
 
