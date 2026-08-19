@@ -61,9 +61,36 @@ function unCra(
     signataireNom: 'Claire Martin',
     signataireEmail: 'claire@acme.test',
     signature: null,
+    previsionnelAAnnuler: 0,
     ...extra,
   }
 }
+
+describe('page CRA — le prévisionnel emporté par la validation', () => {
+  // Chaque describe de ce fichier pose son propre nettoyage : sans lui, les
+  // rendus s'empilent dans le même document et les tests se lisent entre eux.
+  afterEach(cleanup)
+
+  it('annonce ce qui sera annulé, avant la validation', async () => {
+    // Un jour prévu emporté sans préavis est une donnée perdue dont personne
+    // ne saura qu'elle a existé.
+    await rendre({ cras: [unCra('BROUILLON', 'cra-1', { previsionnelAAnnuler: 3 })] })
+    const texte = document.body.textContent ?? ''
+
+    expect(texte).toContain('3 jours en prévisionnel')
+    expect(texte).toContain('seront annulées')
+  })
+
+  it('accorde le singulier sur un seul jour', async () => {
+    await rendre({ cras: [unCra('BROUILLON', 'cra-1', { previsionnelAAnnuler: 1 })] })
+    expect(document.body.textContent ?? '').toContain('1 jour en prévisionnel')
+  })
+
+  it('ne dit rien quand le mois n’a rien de prévu', async () => {
+    await rendre({ cras: [unCra('BROUILLON')] })
+    expect(document.body.textContent ?? '').not.toContain('prévisionnel')
+  })
+})
 
 function uneSignature(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {

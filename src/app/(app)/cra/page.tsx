@@ -92,6 +92,25 @@ export default async function CraPage({
 
           {cra.signature !== null && <SignatureCard signature={cra.signature} />}
 
+          {/* Dit **avant** la validation, jamais après : un jour prévu emporté
+              sans préavis est une donnée perdue dont personne ne saura qu'elle
+              a existé. */}
+          {cra.previsionnelAAnnuler > 0 && (
+            <div className="mb-4">
+              <Banner tone="info" title="Du prévisionnel sera annulé à la validation">
+                <p>
+                  Ce mois porte encore {cra.previsionnelAAnnuler} jour
+                  {cra.previsionnelAAnnuler > 1 ? 's' : ''} en prévisionnel. La validation clôt le
+                  mois : ce qui n’a pas eu lieu n’aura plus lieu, et ces saisies seront annulées —
+                  leurs blocs d’agenda avec elles.
+                </p>
+                <p>
+                  Passez-les en réalisé avant de valider si le temps a bien été servi.
+                </p>
+              </Banner>
+            </div>
+          )}
+
           <div className="mb-4 flex flex-wrap items-center gap-2">
             {/* Le téléchargement ne dépend d'aucun connecteur et d'aucun état :
                 c'est ce qui rend le lot utile tout seul. Le lien porte
