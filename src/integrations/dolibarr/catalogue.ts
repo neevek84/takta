@@ -43,8 +43,12 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
         comportement: 'ABANDONNE',
         visible: "L'écran Administration · Dolibarr affiche l'erreur ; rien n'est mis en file.",
       },
-      reglagesTiers: [],
-      note: 'Un 404 signifie « collection vide » et rend une liste vide, jamais une panne.',
+      reglagesTiers: ['drapeau « Client » du tiers'],
+      note:
+        'Un 404 signifie « collection vide » et rend une liste vide, jamais une panne. ' +
+        'Dolibarr rend tous les tiers ; le client ne garde que ceux dont le drapeau `client` ' +
+        'vaut 1 ou 3. Un fournisseur, un prospect seul ou un tiers neutre n’a pas de mission ' +
+        'et ne recevra jamais de temps.',
     },
     {
       operation: 'Créer le tiers qui correspond à un client local',
@@ -491,7 +495,9 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
       reglagesTiers: ['SOCIETE_FISCAL_MONTH_START', 'TIMESHEET_DAY_DURATION'],
       note:
         'La route n’existe pas sur toutes les versions : un 404 vaut « constante non lisible ' +
-        'ici », jamais « instance en panne ». La valeur arrive nue ou enveloppée dans `value`.',
+        'ici », jamais « instance en panne ». Le 403 est tolere de meme — `/setup` est reserve ' +
+        'aux administrateurs, et une cle portee par un utilisateur ordinaire ne doit pas faire ' +
+        'tomber l’ecran pour une valeur facultative. La valeur arrive nue ou enveloppée dans `value`.',
     },
   ],
 }

@@ -106,13 +106,53 @@ describe('client HTTP Dolibarr', () => {
     await expect(api.listProjects()).rejects.toThrow(DolibarrRequestError)
   })
 
-  it('traite un accès interdit comme une clé refusée', async () => {
+  it('distingue un droit manquant d une clé refusée, et nomme la route', async () => {
+    // Confondre les deux produit un faux diagnostic : « Reconnectez le
+    // connecteur » fait ressaisir indéfiniment une clé parfaitement valide.
     const api = createHttpDolibarrApi({
       baseUrl: BASE,
-      apiKey: 'sans-droits',
+      apiKey: 'valide-mais-sans-droits',
       fetchImpl: async () => reponse({ error: 'Forbidden' }, 403),
     })
-    await expect(api.listProjects()).rejects.toThrow(/clé d'API/)
+
+    await expect(api.listProjects()).rejects.toThrow(/n'a pas le droit/)
+    await expect(api.listProjects()).rejects.toThrow(/\/projects/)
+    await expect(api.listProjects()).rejects.toThrow(/la clé, elle, est valide/i)
+    await expect(api.listProjects()).rejects.toThrow(DolibarrRequestError)
+  })
+
+  it('ne fait pas tomber l écran quand une constante est réservée aux administrateurs', async () => {
+    // `/setup` est réservé aux administrateurs sur la plupart des instances.
+    // Une clé portée par un utilisateur ordinaire ne doit pas emporter tout
+    // l'écran de reprise pour une valeur facultative.
+    const api = createHttpDolibarrApi({
+      baseUrl: BASE,
+      apiKey: 'ordinaire',
+      fetchImpl: async () => reponse({ error: 'Forbidden' }, 403),
+    })
+    expect(await api.getSetupValue('TIMESHEET_DAY_DURATION')).toBeNull()
+  })
+
+  it('ne propose que les tiers qui sont des clients', async () => {
+    // Un fournisseur ou un tiers neutre n'a pas de mission et ne recevra
+    // jamais de temps : l'exposer n'invite qu'à un rattachement absurde.
+    const api = createHttpDolibarrApi({
+      baseUrl: BASE,
+      apiKey: 'k',
+      fetchImpl: async () =>
+        reponse([
+          { id: '1', name: 'Client', client: '1' },
+          { id: '2', name: 'Client et prospect', client: '3' },
+          { id: '3', name: 'Prospect seul', client: '2' },
+          { id: '4', name: 'Fournisseur', client: '0', fournisseur: '1' },
+          { id: '5', name: 'Ni l un ni l autre', client: '0' },
+        ]),
+    })
+
+    expect((await api.listThirdparties()).map((t) => t.name)).toEqual([
+      'Client',
+      'Client et prospect',
+    ])
   })
 
   it('rend null sur une constante absente plutôt que de lever', async () => {

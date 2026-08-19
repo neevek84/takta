@@ -35,7 +35,8 @@ export interface FakeDolibarrHttp {
   appels: Array<{ methode: string; url: string; entetes: Headers; corps: unknown }>
   /** gabarits du catalogue réellement frappés, dans l'ordre */
   gabaritsObserves: string[]
-  seedThirdparty(name: string): { id: number; name: string }
+  /** `client` : 1 client, 2 prospect, 3 les deux, 0 ni l'un ni l'autre. */
+  seedThirdparty(name: string, client?: number): { id: number; name: string }
   seedProject(a: {
     ref: string
     title: string
@@ -136,7 +137,7 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
   const appels: FakeDolibarrHttp['appels'] = []
   const gabaritsObserves: string[] = []
 
-  const thirdparties: Array<{ id: number; name: string }> = []
+  const thirdparties: Array<{ id: number; name: string; client: number }> = []
   const projects: FauxProjet[] = []
   const tasks: FauxTache[] = []
   const proposals: FauxPropale[] = []
@@ -202,14 +203,19 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
     switch (cleAppel(declare)) {
       case 'GET /thirdparties': {
         if (thirdparties.length === 0) return absent('No thirdparty found')
-        return json(thirdparties)
+        // Dolibarr rend **tous** les tiers avec leur drapeau ; le filtre sur
+        // les clients est appliqué par le client HTTP, et c'est ce que ce
+        // double permet d'exercer.
+        return json(
+          thirdparties.map((t) => ({ id: String(t.id), name: t.name, client: String(t.client) })),
+        )
       }
 
       case 'POST /thirdparties': {
         if (!estObjet(corps) || String(corps.name ?? '').trim() === '') {
           return refus('Name is mandatory')
         }
-        const tiers = { id: suivant(), name: String(corps.name) }
+        const tiers = { id: suivant(), name: String(corps.name), client: Number(corps.client ?? 0) }
         thirdparties.push(tiers)
         // Dolibarr rend un entier nu, pas un objet.
         return json(tiers.id)
@@ -440,8 +446,8 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
     projets: projects,
     commandes: orders,
 
-    seedThirdparty(name) {
-      const tiers = { id: suivant(), name }
+    seedThirdparty(name, client = 1) {
+      const tiers = { id: suivant(), name, client }
       thirdparties.push(tiers)
       return tiers
     },

@@ -32,6 +32,19 @@ interface Options {
   statutsToleres?: number[]
 }
 
+/**
+ * Le drapeau `client` d'un tiers Dolibarr : 0 ni l'un ni l'autre, 1 client,
+ * 2 prospect, 3 client **et** prospect. Seuls 1 et 3 désignent un client.
+ *
+ * Le prospect seul est écarté volontairement : il n'a rien signé, donc aucune
+ * mission ni aucun temps à recevoir. Il redeviendra visible le jour où
+ * Dolibarr le passera client, ce qui est précisément le moment utile.
+ */
+function estClient(valeur: unknown): boolean {
+  const n = Number(valeur)
+  return n === 1 || n === 3
+}
+
 /** Vrai pour '1', 1, true — Dolibarr renvoie l'un ou l'autre selon les versions. */
 function vrai(valeur: unknown): boolean {
   return valeur === 1 || valeur === '1' || valeur === true
@@ -72,9 +85,21 @@ async function appel(ctx: Contexte, chemin: string, options: Options = {}): Prom
 
   if (statutsToleres.includes(reponse.status)) return null
 
-  if (reponse.status === 401 || reponse.status === 403) {
+  if (reponse.status === 401) {
     throw new DolibarrRequestError(
       "Dolibarr a refusé la clé d'API. Reconnectez le connecteur dans Administration · Dolibarr.",
+    )
+  }
+
+  // 403 n'est pas 401, et les confondre produit un faux diagnostic : la clé est
+  // bonne, c'est l'utilisateur auquel elle appartient qui n'a pas le droit sur
+  // cette route-là. « Reconnectez le connecteur » ferait ressaisir une clé
+  // valide, indéfiniment, sans jamais nommer le droit qui manque.
+  if (reponse.status === 403) {
+    throw new DolibarrRequestError(
+      `L'utilisateur de la clé d'API n'a pas le droit d'accéder à ${chemin}. ` +
+        'La clé, elle, est valide : ajoutez la permission à cet utilisateur dans Dolibarr, ' +
+        "ou utilisez la clé d'un utilisateur qui l'a.",
     )
   }
 
@@ -160,7 +185,13 @@ export function createHttpDolibarrApi(args: {
   return {
     async listThirdparties(): Promise<DolibarrThirdparty[]> {
       const brut = await liste(ctx, '/thirdparties?limit=1000')
-      return brut.map((t) => ({ id: Number(t.id), name: String(t.name ?? '') }))
+      // Le filtre vit ici, comme celui de `listProjects`, et pour la même
+      // raison : un fournisseur ou un tiers neutre n'a pas de mission et ne
+      // recevra jamais de temps. L'exposer n'inviterait qu'à un rattachement
+      // qui n'a aucun sens.
+      return brut
+        .filter((t) => estClient(t.client))
+        .map((t) => ({ id: Number(t.id), name: String(t.name ?? '') }))
     },
 
     async createThirdparty(name: string): Promise<DolibarrThirdparty> {
@@ -316,8 +347,12 @@ export function createHttpDolibarrApi(args: {
       // panne ». On rend null et l'écran de reprise n'en propose simplement
       // pas la valeur — le connecteur ne doit jamais tomber parce qu'une
       // constante facultative manque.
+      // 403 toléré au même titre que 404 : `/setup` est réservé aux
+      // administrateurs sur la plupart des instances, et une clé d'API portée
+      // par un utilisateur ordinaire ne doit pas faire tomber tout l'écran
+      // pour une valeur facultative.
       const brut = (await appel(ctx, `/setup/conf/${encodeURIComponent(constant)}`, {
-        statutsToleres: [404],
+        statutsToleres: [404, 403],
       })) as unknown
 
       if (brut === null || brut === undefined) return null
