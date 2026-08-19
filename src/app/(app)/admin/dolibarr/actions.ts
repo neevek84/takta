@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireUser } from '@/auth'
 import { saveInstanceCredential, revokeInstanceCredential } from '@/services/credentials'
+import { baseApiDepuisInstance } from '@/core/dolibarr/url'
 import { DOLIBARR } from '@/services/dolibarr/api'
 import { createHttpDolibarrApi } from '@/services/dolibarr/http'
 import { getDolibarrApi } from '@/services/dolibarr/resolve'
@@ -37,16 +38,6 @@ function messageSansSecret(err: unknown, secret: string): string {
   return secret === '' ? brut : brut.split(secret).join('[clé masquée]')
 }
 
-/** Une URL absolue en http(s) : le reste ne peut produire qu'un faux diagnostic. */
-function urlAbsolue(valeur: string): boolean {
-  try {
-    const u = new URL(valeur)
-    return u.protocol === 'http:' || u.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
 /**
  * Enregistre la clé d'API après l'avoir **essayée** : une clé fausse acceptée
  * en silence ne se manifesterait qu'au premier push, plusieurs jours plus tard,
@@ -61,14 +52,18 @@ export async function connecterDolibarr(
 ): Promise<ConnexionState> {
   await requireUser()
 
-  const baseUrl = String(formData.get('baseUrl') ?? '').trim()
+  const instanceUrl = String(formData.get('instanceUrl') ?? '').trim()
   const apiKey = String(formData.get('apiKey') ?? '').trim()
   const dolibarrUserId = String(formData.get('dolibarrUserId') ?? '').trim()
 
   const erreurs: string[] = []
-  if (baseUrl === '') erreurs.push("L'URL de l'API Dolibarr est requise.")
-  else if (!urlAbsolue(baseUrl)) {
-    erreurs.push("L'URL doit être complète, protocole compris (https://…).")
+  // Le porteur saisit l'adresse de son instance ; `/api/index.php` est le même
+  // sur tous les Dolibarr et n'a rien à faire dans une saisie.
+  let baseUrl = ''
+  try {
+    baseUrl = baseApiDepuisInstance(instanceUrl)
+  } catch (err) {
+    erreurs.push(err instanceof Error ? err.message : String(err))
   }
   if (apiKey === '') erreurs.push("La clé d'API est requise.")
   if (!/^\d+$/.test(dolibarrUserId)) {

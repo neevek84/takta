@@ -68,12 +68,15 @@ import {
  * seulement à vérifier qu'on ne la retrouve nulle part.
  */
 const CLE_FICTIVE = 'cle-api-de-test-0000'
+/** Ce que le porteur saisit : l'adresse de son instance, sans chemin d'API. */
+const INSTANCE_FICTIVE = 'https://erp.invalid'
+/** Ce que l'application en dérive, et qui seul part sur le réseau. */
 const URL_FICTIVE = 'https://erp.invalid/api/index.php'
 
 function formulaireConnexion(patch: Record<string, string> = {}): FormData {
   const fd = new FormData()
   const champs: Record<string, string> = {
-    baseUrl: URL_FICTIVE,
+    instanceUrl: INSTANCE_FICTIVE,
     apiKey: CLE_FICTIVE,
     dolibarrUserId: '3',
     ...patch,
@@ -155,7 +158,7 @@ describe('connecterDolibarr', () => {
   it('refuse une saisie incomplète sans rien enregistrer', async () => {
     const state = await connecterDolibarr(
       null,
-      formulaireConnexion({ baseUrl: '', apiKey: '', dolibarrUserId: 'moi' }),
+      formulaireConnexion({ instanceUrl: '', apiKey: '', dolibarrUserId: 'moi' }),
     )
 
     expect(state?.ok).toBe(false)
@@ -165,13 +168,39 @@ describe('connecterDolibarr', () => {
     expect(createHttpDolibarrApi).not.toHaveBeenCalled()
   })
 
-  it('refuse une adresse qui n est pas une URL absolue', async () => {
-    // `fetch('erp.invalid/api')` lève un « Invalid URL » que le client
+  it('refuse ce qui n est pas une adresse web', async () => {
+    // Un `fetch` sur une chaîne pareille lève un « Invalid URL » que le client
     // traduirait en « Dolibarr est injoignable » : un diagnostic faux.
-    const state = await connecterDolibarr(null, formulaireConnexion({ baseUrl: 'erp.invalid/api' }))
+    const state = await connecterDolibarr(
+      null,
+      formulaireConnexion({ instanceUrl: 'ftp://erp.invalid' }),
+    )
 
     expect(state?.ok).toBe(false)
     expect(saveInstanceCredential).not.toHaveBeenCalled()
+    expect(createHttpDolibarrApi).not.toHaveBeenCalled()
+  })
+
+  it('ajoute le chemin de l API, que le porteur n a pas à connaître', async () => {
+    // Le chemin est le même sur toutes les instances Dolibarr : le demander
+    // ferait porter une constante par une saisie, avec sa faute de frappe.
+    await connecterDolibarr(null, formulaireConnexion({ instanceUrl: 'erp.invalid/' }))
+
+    expect(createHttpDolibarrApi).toHaveBeenCalledWith({
+      baseUrl: URL_FICTIVE,
+      apiKey: CLE_FICTIVE,
+    })
+  })
+
+  it('accepte que le porteur colle quand même l URL complète', async () => {
+    await connecterDolibarr(null, formulaireConnexion({ instanceUrl: URL_FICTIVE }))
+
+    // Sans quoi la même instance vivrait sous deux bases différentes, et les
+    // rattachements posés sous l'une seraient invisibles sous l'autre.
+    expect(createHttpDolibarrApi).toHaveBeenCalledWith({
+      baseUrl: URL_FICTIVE,
+      apiKey: CLE_FICTIVE,
+    })
   })
 
   it('essaie la connexion avant d enregistrer quoi que ce soit', async () => {

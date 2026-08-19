@@ -2,6 +2,7 @@ import { requireUser } from '@/auth'
 import { getInstanceCredential } from '@/services/credentials'
 import { listClients } from '@/services/clients'
 import { listMissionsForUser } from '@/services/missions'
+import { instanceDepuisBaseApi } from '@/core/dolibarr/url'
 import { DOLIBARR } from '@/services/dolibarr/api'
 import { getDolibarrApi } from '@/services/dolibarr/resolve'
 import { listImportCandidates, type ImportCandidates } from '@/services/dolibarr/import'
@@ -82,7 +83,7 @@ export default async function AdminDolibarrPage({
       )}
 
       <ConnexionForm
-        baseUrl={credential?.baseUrl ?? ''}
+        instanceUrl={instanceDepuisBaseApi(credential?.baseUrl ?? '')}
         dolibarrUserId={credential?.metadata.dolibarrUserId ?? ''}
         connecte={credential !== null}
         connectedAt={credential?.connectedAt ?? null}

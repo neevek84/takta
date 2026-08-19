@@ -10,7 +10,7 @@ vi.mock('./actions', () => ({ connecterDolibarr, deconnecterDolibarr }))
 
 import { ConnexionForm } from './ConnexionForm'
 
-const URL_FICTIVE = 'https://erp.invalid/api/index.php'
+const INSTANCE_FICTIVE = 'https://erp.invalid'
 
 beforeEach(() => {
   connecterDolibarr.mockReset().mockResolvedValue({ ok: true, message: 'Connexion enregistrée.' })
@@ -21,7 +21,7 @@ afterEach(cleanup)
 function rendre(patch: Partial<Parameters<typeof ConnexionForm>[0]> = {}) {
   render(
     <ConnexionForm
-      baseUrl={URL_FICTIVE}
+      instanceUrl={INSTANCE_FICTIVE}
       dolibarrUserId="3"
       connecte={true}
       connectedAt={new Date('2026-08-15T08:00:00.000Z')}
@@ -52,7 +52,11 @@ describe('ConnexionForm', () => {
   it('rappelle l URL et l identifiant utilisateur déjà connus', () => {
     // Sans eux, corriger une URL obligerait à la retaper de mémoire.
     rendre()
-    expect((screen.getByLabelText("URL de l'API") as HTMLInputElement).value).toBe(URL_FICTIVE)
+    // Ce que le champ réaffiche est ce qu'il accepte : l'adresse de l'instance,
+    // jamais la base d'API que l'application en dérive.
+    expect(
+      (screen.getByLabelText("URL de l'instance Dolibarr") as HTMLInputElement).value,
+    ).toBe(INSTANCE_FICTIVE)
     expect(
       (screen.getByLabelText('Identifiant utilisateur Dolibarr') as HTMLInputElement).value,
     ).toBe('3')
@@ -61,9 +65,11 @@ describe('ConnexionForm', () => {
   it('transmet les trois champs sous les noms que l action relit', async () => {
     // Cette couture est invisible : renommer un champ d'un seul côté fait
     // échouer la connexion sans qu'aucune erreur ne l'explique.
-    rendre({ baseUrl: '', dolibarrUserId: '', connecte: false, connectedAt: null })
+    rendre({ instanceUrl: '', dolibarrUserId: '', connecte: false, connectedAt: null })
 
-    fireEvent.change(screen.getByLabelText("URL de l'API"), { target: { value: URL_FICTIVE } })
+    fireEvent.change(screen.getByLabelText("URL de l'instance Dolibarr"), {
+      target: { value: INSTANCE_FICTIVE },
+    })
     fireEvent.change(screen.getByLabelText("Clé d'API"), { target: { value: 'cle-de-test' } })
     fireEvent.change(screen.getByLabelText('Identifiant utilisateur Dolibarr'), {
       target: { value: '7' },
@@ -73,16 +79,16 @@ describe('ConnexionForm', () => {
     await waitFor(() => expect(connecterDolibarr).toHaveBeenCalled())
     const fd = connecterDolibarr.mock.calls[0]![1] as FormData
     expect({
-      baseUrl: fd.get('baseUrl'),
+      instanceUrl: fd.get('instanceUrl'),
       apiKey: fd.get('apiKey'),
       dolibarrUserId: fd.get('dolibarrUserId'),
-    }).toEqual({ baseUrl: URL_FICTIVE, apiKey: 'cle-de-test', dolibarrUserId: '7' })
+    }).toEqual({ instanceUrl: INSTANCE_FICTIVE, apiKey: 'cle-de-test', dolibarrUserId: '7' })
   })
 
   it('annonce les refus rendus par l action', async () => {
     connecterDolibarr.mockResolvedValue({
       ok: false,
-      erreurs: ["La clé d'API est requise.", "L'URL de l'API Dolibarr est requise."],
+      erreurs: ["La clé d'API est requise.", "L'adresse de l'instance Dolibarr est requise."],
     })
     rendre()
 
@@ -91,7 +97,7 @@ describe('ConnexionForm', () => {
     // `alert` et non `status` : un refus interrompt, il ne patiente pas.
     const alerte = await screen.findByRole('alert')
     expect(alerte.textContent).toContain("La clé d'API est requise.")
-    expect(alerte.textContent).toContain("L'URL de l'API Dolibarr est requise.")
+    expect(alerte.textContent).toContain("L'adresse de l'instance Dolibarr est requise.")
   })
 
   it('confirme l enregistrement', async () => {

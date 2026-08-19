@@ -22,7 +22,7 @@ const PAR_LE_DOUBLE = { version: VERSION, date: DATE, moyen: 'DOUBLE' as const }
 
 export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
   systeme: 'Dolibarr',
-  base: "{URL de l'instance, enregistrée dans Administration · Dolibarr}/api/index.php",
+  base: "{URL de l'instance, saisie dans Administration · Dolibarr}/api/index.php",
   appels: [
     {
       operation: 'Lister les tiers connus de Dolibarr',

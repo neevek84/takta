@@ -177,7 +177,9 @@ describe('page Administration · Dolibarr — câblage', () => {
 
     expect(getInstanceCredential).toHaveBeenCalledWith('DOLIBARR')
     expect(recu.props).toEqual({
-      baseUrl: CREDENTIAL.baseUrl,
+      // Le formulaire reçoit l'adresse de l'instance, pas la base d'API
+      // enregistrée : ce qu'il réaffiche doit être ce qu'il accepte.
+      instanceUrl: 'https://erp.invalid',
       dolibarrUserId: '7',
       connecte: true,
       connectedAt: CREDENTIAL.connectedAt,
@@ -193,7 +195,7 @@ describe('page Administration · Dolibarr — câblage', () => {
     await rendre()
 
     expect(recu.props).toEqual({
-      baseUrl: '',
+      instanceUrl: '',
       dolibarrUserId: '',
       connecte: false,
       connectedAt: null,

@@ -16,12 +16,13 @@ import { connecterDolibarr, deconnecterDolibarr, type ConnexionState } from './a
  * rendu.
  */
 export function ConnexionForm({
-  baseUrl,
+  instanceUrl,
   dolibarrUserId,
   connecte,
   connectedAt,
 }: {
-  baseUrl: string
+  /** l'adresse de l'instance, sans le chemin de l'API : ce qui se saisit se réaffiche */
+  instanceUrl: string
   dolibarrUserId: string
   connecte: boolean
   connectedAt: Date | null
@@ -50,11 +51,12 @@ export function ConnexionForm({
 
       <form action={formAction} className="flex flex-wrap items-end gap-3">
         <Field
-          label="URL de l'API"
-          name="baseUrl"
-          defaultValue={baseUrl}
-          placeholder="https://exemple.invalid/api/index.php"
+          label="URL de l'instance Dolibarr"
+          name="instanceUrl"
+          defaultValue={instanceUrl}
+          placeholder="https://erp.exemple.invalid"
           inputMode="url"
+          hint="Celle de votre navigateur. Le chemin de l'API est ajouté tout seul."
           className="w-80"
         />
         <Field
