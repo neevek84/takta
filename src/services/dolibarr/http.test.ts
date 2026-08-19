@@ -324,7 +324,9 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
           id: 7,
           ref: 'PR2605-0001',
           socid: '3',
-          lines: [{ id: 1, desc: 'Développement', qty: '20', subprice: '800.10' }],
+          lines: [
+            { id: 1, desc: 'Développement', qty: '20', subprice: '800.10', product_type: '1' },
+          ],
         }),
     })
 
@@ -332,8 +334,32 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
       id: 7,
       ref: 'PR2605-0001',
       socid: 3,
-      lines: [{ id: 1, label: 'Développement', qty: 20, subpriceCents: 80_010 }],
+      lines: [
+        { id: 1, label: 'Développement', qty: 20, subpriceCents: 80_010, service: true },
+      ],
     })
+  })
+
+  it('distingue une ligne de service d une ligne de produit', async () => {
+    // Une ligne de produit vend des objets : la reprendre en prestation ferait
+    // « 5 jours vendus » d'une commande de cinq t-shirts.
+    const api = createHttpDolibarrApi({
+      baseUrl: BASE,
+      apiKey: 'k',
+      fetchImpl: async () =>
+        reponse({
+          id: 8,
+          ref: 'CO2605-0021',
+          socid: '3',
+          statut: '1',
+          lines: [
+            { id: 1, desc: 'Consultant', qty: '20', subprice: '800', product_type: '1' },
+            { id: 2, desc: 'T-shirt', qty: '5', subprice: '8', product_type: '0' },
+          ],
+        }),
+    })
+
+    expect((await api.getOrder(8)).lines.map((l) => l.service)).toEqual([true, false])
   })
 
   it('lit une liste vide là où Dolibarr répond 404', async () => {

@@ -207,6 +207,12 @@ export async function creerMissionDepuisCommande(formData: FormData): Promise<vo
       ? `La commande portait déjà le projet « ${resultat.projet.ref} » : la mission y est rattachée.`
       : `Mission créée, avec le projet « ${resultat.projet.ref} — ${resultat.projet.title} ».`,
   ]
+  if (resultat.prestationsCreees > 0) {
+    phrases.push(
+      `${resultat.prestationsCreees} prestation(s) reprises des lignes de service de la commande, ` +
+        `avec ${resultat.tachesCreees} tâche(s) créée(s) dans le projet.`,
+    )
+  }
   if (resultat.sansReferenceClient) {
     phrases.push(
       "Cette commande ne porte aucune référence client : le projet a pris la référence de la " +

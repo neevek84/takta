@@ -144,6 +144,7 @@ function lignesVendues(brut: Record<string, unknown>): DolibarrPropalLine[] {
     label: String(l.desc ?? l.libelle ?? l.product_label ?? ''),
     qty: Number(l.qty),
     subpriceCents: Math.round(Number(l.subprice) * 100),
+    service: Number(l.product_type) === 1,
   }))
 }
 

@@ -16,6 +16,7 @@
  * compte rendu, qui dit ce qui a été fait même quand la fin a échoué.
  */
 import { prisma } from '@/db/client'
+import { createLine } from '@/services/missions'
 import { verifierCoherenceTiers } from '@/core/dolibarr/coherence'
 import {
   referenceExterneCommande,
@@ -36,7 +37,7 @@ import {
   tiersAttendu,
   type AttachMissionResult,
 } from './import'
-import { LIEN_CLIENT, LIEN_COMMANDE, LIEN_MISSION } from './liens'
+import { LIEN_CLIENT, LIEN_COMMANDE, LIEN_LIGNE, LIEN_MISSION } from './liens'
 
 /** Une commande proposée à l'écran, avec ce qu'il faut pour la choisir. */
 export interface CommandeCandidate {
@@ -71,6 +72,10 @@ export interface CreationProjetResult {
   /** Ce que le rattachement de la mission a fait : repointage, rattrapage. */
   rattachement: AttachMissionResult
   missionId: string
+  /** prestations créées depuis les lignes de service de la commande */
+  prestationsCreees: number
+  /** tâches Dolibarr créées pour ces prestations */
+  tachesCreees: number
 }
 
 /** Où la création doit poser le projet, côté local. */
@@ -362,6 +367,20 @@ export async function creerProjetDepuisCommande(args: {
           })
         ).missionId
 
+  // Les prestations et leurs tâches n'ouvrent que pour une mission qui vient de
+  // naître : une mission existante a déjà les siennes, et les redoubler
+  // ferait deux fois le même engagement.
+  const ouverture =
+    args.cible.type === 'MISSION'
+      ? { prestationsCreees: 0, tachesCreees: 0 }
+      : await ouvrirLesPrestations({
+          userId: args.userId,
+          missionId,
+          commande,
+          projectId: projet.id,
+          api: args.api,
+        })
+
   // Le rattachement de la commande vient en dernier, et son échec n'annule
   // rien : le projet est créé et la mission pointe dessus. Le taire ferait
   // croire à un échec complet — et la reprise créerait un second projet.
@@ -383,7 +402,91 @@ export async function creerProjetDepuisCommande(args: {
     // correspondance dérivée : il n'y a rien à annoncer.
     rattachement: rattachement ?? { repointage: false, lignes: 0, temps: 0, craRattrapes: 0 },
     missionId,
+    ...ouverture,
   }
+}
+
+/**
+ * Crée une prestation par **ligne de service** de la commande, et sa tâche
+ * Dolibarr.
+ *
+ * **Pourquoi maintenant et pas au premier envoi de temps.** La tâche était
+ * créée paresseusement, au moment du push : le projet naissait vide, et rien
+ * dans Dolibarr ne disait ce qui avait été vendu tant qu'aucun temps n'était
+ * parti. Le flux du porteur va propale → commande → projet → **tâches** →
+ * saisie : les tâches appartiennent à l'ouverture du chantier.
+ *
+ * **Les lignes de produit sont écartées.** Une commande peut vendre des objets
+ * autant que du temps ; reprendre une ligne de cinq t-shirts donnerait une
+ * prestation de « 5 jours vendus ».
+ *
+ * **Idempotent côté Dolibarr** : une tâche portant déjà ce libellé dans le
+ * projet est réutilisée, jamais doublée. C'est exactement ce que fait le push,
+ * et les deux doivent se retrouver sur la même tâche.
+ */
+async function ouvrirLesPrestations(args: {
+  userId: string
+  missionId: string
+  commande: DolibarrOrder
+  projectId: number
+  api: DolibarrApi
+}): Promise<{ prestationsCreees: number; tachesCreees: number }> {
+  const services = args.commande.lines.filter((l) => l.service)
+  if (services.length === 0) return { prestationsCreees: 0, tachesCreees: 0 }
+
+  const existantes = await args.api.listTasks(args.projectId)
+  let tachesCreees = 0
+
+  for (const ligne of services) {
+    const { soldCentiemes, tjmCents } = reprendreLigneVendue(ligne, 'commande')
+    const label = ligne.label.replace(/\s+/g, ' ').trim() || `Ligne ${ligne.id}`
+
+    const prestation = await createLine({
+      missionId: args.missionId,
+      userId: args.userId,
+      label,
+      soldCentiemes,
+      tjmCents,
+    })
+
+    const deja = existantes.find((t) => t.label === label)
+    const tache = deja ?? (await args.api.createTask({ projectId: args.projectId, label }))
+    if (deja === undefined) {
+      tachesCreees += 1
+      existantes.push(tache)
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.missionLine.update({
+        where: { id: prestation.id },
+        data: { engagementSource: 'DOLIBARR_COMMANDE' },
+      })
+      await tx.externalLink.createMany({
+        data: [
+          {
+            userId: args.userId,
+            entityType: LIEN_COMMANDE,
+            entityId: prestation.id,
+            provider: DOLIBARR,
+            externalId: `${args.commande.id}:${ligne.id}`,
+            syncedAt: new Date(),
+            syncState: 'SYNCED',
+          },
+          {
+            userId: args.userId,
+            entityType: LIEN_LIGNE,
+            entityId: prestation.id,
+            provider: DOLIBARR,
+            externalId: String(tache.id),
+            syncedAt: new Date(),
+            syncState: 'SYNCED',
+          },
+        ],
+      })
+    })
+  }
+
+  return { prestationsCreees: services.length, tachesCreees }
 }
 
 /**

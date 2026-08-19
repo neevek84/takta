@@ -57,7 +57,7 @@ export interface FakeDolibarrHttp {
     statut?: number
     facturee?: boolean
     projectId?: number | null
-    lines?: Array<{ label: string; qty: number; subpriceEuros: number }>
+    lines?: Array<{ label: string; qty: number; subpriceEuros: number; service?: boolean }>
   }): { id: number }
   /** projets créés par l'API, pour vérifier ce que le client a réellement envoyé */
   projets: Array<{ id: number; ref: string; title: string; refExt: string; usageBillTime: boolean }>
@@ -91,7 +91,7 @@ interface FauxCommande {
   statut: number
   facturee: boolean
   projectId: number | null
-  lines: Array<{ id: number; label: string; qty: number; subpriceEuros: number }>
+  lines: Array<{ id: number; label: string; qty: number; subpriceEuros: number; service?: boolean }>
 }
 
 interface FauxTache {
@@ -105,7 +105,7 @@ interface FauxPropale {
   id: number
   ref: string
   socid: number
-  lines: Array<{ id: number; label: string; qty: number; subpriceEuros: number }>
+  lines: Array<{ id: number; label: string; qty: number; subpriceEuros: number; service?: boolean }>
 }
 
 function estObjet(valeur: unknown): valeur is Record<string, unknown> {
@@ -275,6 +275,7 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
             desc: l.label,
             qty: l.qty,
             subprice: l.subpriceEuros,
+            product_type: '1',
           })),
         })
       }
@@ -398,6 +399,7 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
             desc: l.label,
             qty: l.qty,
             subprice: l.subpriceEuros,
+            product_type: l.service === false ? '0' : '1',
           })),
         })
       }

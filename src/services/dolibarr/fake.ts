@@ -134,7 +134,7 @@ export class FakeDolibarr implements DolibarrApi {
     statut?: number
     facturee?: boolean
     projectId?: number | null
-    lines?: Array<{ label: string; qty: number; subpriceCents: number }>
+    lines?: Array<{ label: string; qty: number; subpriceCents: number; service?: boolean }>
   }): FakeOrder {
     const c: FakeOrder = {
       id: this.next(),
@@ -145,7 +145,7 @@ export class FakeDolibarr implements DolibarrApi {
       statut: args.statut ?? 1,
       facturee: args.facturee ?? false,
       projectId: args.projectId ?? null,
-      lines: (args.lines ?? []).map((l) => ({ id: this.next(), ...l })),
+      lines: (args.lines ?? []).map((l) => ({ service: true, ...l, id: this.next() })),
     }
     this.orders.push(c)
     return c
@@ -159,13 +159,13 @@ export class FakeDolibarr implements DolibarrApi {
   seedProposal(args: {
     ref: string
     socid: number
-    lines: Array<{ label: string; qty: number; subpriceCents: number }>
+    lines: Array<{ label: string; qty: number; subpriceCents: number; service?: boolean }>
   }): DolibarrProposal {
     const p: DolibarrProposal = {
       id: this.next(),
       ref: args.ref,
       socid: args.socid,
-      lines: args.lines.map((l) => ({ id: this.next(), ...l })),
+      lines: args.lines.map((l) => ({ service: true, ...l, id: this.next() })),
     }
     this.proposals.push(p)
     return p

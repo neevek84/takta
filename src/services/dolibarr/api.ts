@@ -39,6 +39,12 @@ export interface DolibarrPropalLine {
   qty: number
   /** prix unitaire, en centimes */
   subpriceCents: number
+  /**
+   * `product_type = 1` chez Dolibarr : la ligne vend du **service**, donc du
+   * temps. Une ligne de produit vend des objets — la reprendre en prestation
+   * ferait « 5 jours vendus » d'une commande de cinq t-shirts.
+   */
+  service: boolean
 }
 
 export interface DolibarrProposal {

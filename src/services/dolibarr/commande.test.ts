@@ -4,7 +4,7 @@ import { createClient } from '@/services/clients'
 import { createMission, createLine, updateLine } from '@/services/missions'
 import { FakeDolibarr } from './fake'
 import { DOLIBARR } from './api'
-import { LIEN_COMMANDE, LIEN_MISSION } from './liens'
+import { LIEN_COMMANDE, LIEN_LIGNE, LIEN_MISSION } from './liens'
 import { attachClient } from './import'
 import {
   attachOrderLine,
@@ -329,6 +329,147 @@ describe('creerProjetDepuisCommande — depuis le tiers', () => {
     const mission = await prisma.mission.findUniqueOrThrow({ where: { id: r.missionId } })
     expect(mission.clientId).toBe(clientId)
     expect(await prisma.client.count({ where: { name: { startsWith: 'CMD' } } })).toBe(1)
+  })
+})
+
+describe('les prestations et leurs tâches, à la naissance de la mission', () => {
+  it('crée une prestation et une tâche par ligne de service', async () => {
+    // Le flux du porteur va propale → commande → projet → tâches → saisie :
+    // les tâches appartiennent à l'ouverture du chantier, pas au premier envoi
+    // de temps.
+    const tiers = api.seedThirdparty('CMD ACME')
+    const client = await createClient('CMD ACME local')
+    await attachClient({ userId, clientId: client.id, dolibarrThirdpartyId: tiers.id })
+    const commande = api.seedOrder({
+      ref: 'CO2608-0070',
+      socid: tiers.id,
+      refClient: 'BDC-70',
+      lines: [
+        { label: 'Consultant ITSM', qty: 30, subpriceCents: 80_000 },
+        { label: 'Astreinte', qty: 10, subpriceCents: 120_000 },
+      ],
+    })
+
+    const r = await creerProjetDepuisCommande({
+      userId,
+      orderId: commande.id,
+      cible: { type: 'DEPUIS_LE_TIERS' },
+      api,
+    })
+
+    expect(r.prestationsCreees).toBe(2)
+    expect(r.tachesCreees).toBe(2)
+
+    const prestations = await prisma.missionLine.findMany({
+      where: { missionId: r.missionId },
+      orderBy: { label: 'asc' },
+    })
+    expect(prestations.map((l) => l.label)).toEqual(['Astreinte', 'Consultant ITSM'])
+    expect(prestations.map((l) => l.soldCentiemes)).toEqual([1000, 3000])
+    expect(prestations.map((l) => l.tjmCents)).toEqual([120_000, 80_000])
+    expect(prestations.every((l) => l.engagementSource === 'DOLIBARR_COMMANDE')).toBe(true)
+
+    // Chaque prestation pointe sur sa tâche : c'est ce lien que le push
+    // retrouvera au lieu d'en créer une seconde.
+    for (const p of prestations) {
+      const lien = await prisma.externalLink.findUnique({
+        where: {
+          entityType_entityId_provider: {
+            entityType: LIEN_LIGNE,
+            entityId: p.id,
+            provider: DOLIBARR,
+          },
+        },
+      })
+      expect(lien, p.label).not.toBeNull()
+      expect(api.tasks.some((t) => String(t.id) === lien!.externalId)).toBe(true)
+    }
+  })
+
+  it('écarte les lignes de produit : elles ne vendent pas du temps', async () => {
+    // Reprendre une ligne de cinq t-shirts donnerait « 5 jours vendus ».
+    const tiers = api.seedThirdparty('CMD ACME')
+    const client = await createClient('CMD ACME local')
+    await attachClient({ userId, clientId: client.id, dolibarrThirdpartyId: tiers.id })
+    const commande = api.seedOrder({
+      ref: 'CO2608-0071',
+      socid: tiers.id,
+      lines: [
+        { label: 'Consultant', qty: 10, subpriceCents: 80_000 },
+        { label: 'T-shirt', qty: 5, subpriceCents: 800, service: false },
+      ],
+    })
+
+    const r = await creerProjetDepuisCommande({
+      userId,
+      orderId: commande.id,
+      cible: { type: 'DEPUIS_LE_TIERS' },
+      api,
+    })
+
+    expect(r.prestationsCreees).toBe(1)
+    const prestations = await prisma.missionLine.findMany({ where: { missionId: r.missionId } })
+    expect(prestations.map((l) => l.label)).toEqual(['Consultant'])
+  })
+
+  it('réutilise une tâche du projet qui porte déjà ce libellé', async () => {
+    // Le push cherche la tâche par son libellé : en créer une seconde ferait
+    // partir les temps sur l'une et laisserait l'autre vide.
+    const tiers = api.seedThirdparty('CMD ACME')
+    const client = await createClient('CMD ACME local')
+    await attachClient({ userId, clientId: client.id, dolibarrThirdpartyId: tiers.id })
+    const projet = api.seedProject({ ref: 'PJ-EXISTANT', title: 'Déjà', socid: tiers.id })
+    const dejaLa = await api.createTask({ projectId: projet.id, label: 'Consultant' })
+    const avant = api.appels.createTask
+
+    const commande = api.seedOrder({
+      ref: 'CO2608-0072',
+      socid: tiers.id,
+      projectId: projet.id,
+      lines: [{ label: 'Consultant', qty: 10, subpriceCents: 80_000 }],
+    })
+
+    const r = await creerProjetDepuisCommande({
+      userId,
+      orderId: commande.id,
+      cible: { type: 'DEPUIS_LE_TIERS' },
+      api,
+    })
+
+    expect(r.tachesCreees).toBe(0)
+    expect(api.appels.createTask).toBe(avant)
+    const prestation = await prisma.missionLine.findFirstOrThrow({
+      where: { missionId: r.missionId },
+    })
+    const lien = await prisma.externalLink.findUnique({
+      where: {
+        entityType_entityId_provider: {
+          entityType: LIEN_LIGNE,
+          entityId: prestation.id,
+          provider: DOLIBARR,
+        },
+      },
+    })
+    expect(lien?.externalId).toBe(String(dejaLa.id))
+  })
+
+  it('n’ouvre rien sur une mission qui existe déjà', async () => {
+    const { tiersId, missionId } = await contexte()
+    const commande = api.seedOrder({
+      ref: 'CO2608-0073',
+      socid: tiersId,
+      lines: [{ label: 'Consultant', qty: 10, subpriceCents: 80_000 }],
+    })
+
+    const r = await creerProjetDepuisCommande({
+      userId,
+      orderId: commande.id,
+      cible: { type: 'MISSION', missionId },
+      api,
+    })
+
+    expect(r.prestationsCreees).toBe(0)
+    expect(await prisma.missionLine.count({ where: { missionId } })).toBe(0)
   })
 })
 
