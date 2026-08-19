@@ -12,7 +12,11 @@ import {
   type SignataireResult,
 } from '@/services/missions'
 import { getDolibarrApi } from '@/services/dolibarr/resolve'
-import { creerProjetDepuisCommande } from '@/services/dolibarr/commande'
+import {
+  creerMissionAvecProjet,
+  creerProjetDepuisCommande,
+  type ProjetVoulu,
+} from '@/services/dolibarr/commande'
 import type { DisplayUnit } from '@/core/types'
 
 /**
@@ -42,17 +46,70 @@ export async function addClient(formData: FormData) {
   revalidatePath('/missions')
 }
 
+/**
+ * Crée une mission à la main, avec le projet Dolibarr demandé — ou sans.
+ *
+ * Le champ `projet` porte trois valeurs : vide pour aucun projet, `CREER` pour
+ * en ouvrir un, ou l'identifiant d'un projet existant. Trois cas, un seul
+ * champ : deux commandes séparées auraient laissé l'écran choisir les deux.
+ */
 export async function addMission(formData: FormData) {
   const user = await requireUser()
-  await createMission({
-    clientId: String(formData.get('clientId')),
-    label: String(formData.get('label')),
+  const clientId = String(formData.get('clientId'))
+  const label = String(formData.get('label'))
+  const choix = String(formData.get('projet') ?? '')
+
+  let projet: ProjetVoulu = { type: 'AUCUN' }
+  if (choix === 'CREER') projet = { type: 'CREER' }
+  else if (choix !== '') {
+    const socidBrut = String(formData.get(`socid-${choix}`) ?? '')
+    projet = {
+      type: 'EXISTANT',
+      projectId: Number(choix),
+      projectRef: String(formData.get(`ref-${choix}`) ?? ''),
+      projectSocid: socidBrut === '' ? null : Number(socidBrut),
+    }
+  }
+
+  const commun = {
+    clientId,
+    label,
     minutesParJour: surchargeOuNull(formData.get('heuresParJour')),
     signataireNom: String(formData.get('signataireNom') ?? ''),
     signataireEmail: String(formData.get('signataireEmail') ?? ''),
     userId: user.id,
-  })
+  }
+
+  // Une mission sans projet ne touche pas au connecteur, et pas seulement
+  // parce que c'est inutile : c'est la promesse du produit. L'application
+  // s'utilise entière sans Dolibarr, et le chemin ordinaire ne doit pas
+  // traverser son service.
+  if (projet.type === 'AUCUN') {
+    await createMission(commun)
+    revalidatePath('/missions')
+    return
+  }
+
+  let resultat: Awaited<ReturnType<typeof creerMissionAvecProjet>>
+  try {
+    resultat = await creerMissionAvecProjet({ ...commun, projet, api: await getDolibarrApi() })
+  } catch (err) {
+    redirect(annonceMission(err instanceof Error ? err.message : String(err), 'danger'))
+    return
+  }
+
   revalidatePath('/missions')
+
+  const phrases: string[] = []
+  if (resultat.tiersCree) {
+    phrases.push('Le client a été créé dans Dolibarr pour porter le projet.')
+  }
+  phrases.push(
+    resultat.projetCree
+      ? `Mission créée, avec le projet « ${resultat.projet?.ref} ».`
+      : 'Mission créée et rattachée au projet Dolibarr choisi.',
+  )
+  redirect(annonceMission(phrases.join(' ')))
 }
 
 /** `null` = rien n'a encore été soumis. */

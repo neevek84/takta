@@ -3,7 +3,11 @@ import { listClients } from '@/services/clients'
 import { listMissionsForUser } from '@/services/missions'
 import { getSettings } from '@/services/settings'
 import { getDolibarrApi } from '@/services/dolibarr/resolve'
-import { listerCommandesRattachables } from '@/services/dolibarr/commande'
+import {
+  listerCommandesRattachables,
+  listerProjetsCandidats,
+  type ProjetCandidat,
+} from '@/services/dolibarr/commande'
 import { Banner } from '@/components/ui/Banner'
 import { PageShell } from '@/components/ui/PageShell'
 import { MissionsExplorer, type CommandeOuverte } from './MissionsExplorer'
@@ -28,10 +32,12 @@ export default async function MissionsPage({
   // Dolibarr est facultatif, et une instance en panne ne doit pas emporter la
   // page : la création manuelle des missions n'en dépend pas.
   let commandes: CommandeOuverte[] = []
+  let projets: ProjetCandidat[] = []
   let panneDolibarr: string | null = null
   if (api !== null) {
     try {
       commandes = await listerCommandesRattachables({ userId: user.id, api })
+      projets = await listerProjetsCandidats(api)
     } catch (err) {
       panneDolibarr = err instanceof Error ? err.message : String(err)
     }
@@ -50,6 +56,8 @@ export default async function MissionsPage({
         clients={clients}
         heuresParJourDefaut={settings.minutesParJour / 60}
         commandes={commandes}
+        projets={projets}
+        dolibarrActif={api !== null}
         panneDolibarr={panneDolibarr}
       />
     </PageShell>

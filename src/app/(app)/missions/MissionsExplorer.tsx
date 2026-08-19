@@ -31,6 +31,16 @@ export interface CommandeOuverte {
   missionLabel: string | null
 }
 
+/** Un projet Dolibarr proposable à la mission qu'on crée. */
+export interface ProjetOuvert {
+  id: number
+  ref: string
+  title: string
+  socid: number | null
+  /** mission locale qui le suit déjà, `null` sinon */
+  missionId: string | null
+}
+
 /** Le volet de droite : une mission, ou la création d'une nouvelle. */
 const NOUVELLE = 'NOUVELLE'
 
@@ -54,6 +64,8 @@ export function MissionsExplorer({
   clients,
   heuresParJourDefaut,
   commandes,
+  projets,
+  dolibarrActif,
   panneDolibarr,
 }: {
   missions: MissionForUser[]
@@ -61,6 +73,10 @@ export function MissionsExplorer({
   heuresParJourDefaut: number
   /** vide quand Dolibarr n'est pas connecté : la création manuelle suffit */
   commandes: CommandeOuverte[]
+  /** les projets facturables au temps, tiers compris */
+  projets: ProjetOuvert[]
+  /** Dolibarr est connecté sur cette instance */
+  dolibarrActif: boolean
   /** message d'une instance Dolibarr injoignable, `null` sinon */
   panneDolibarr: string | null
 }) {
@@ -170,6 +186,8 @@ export function MissionsExplorer({
             socidRetenu={socidRetenu}
             setTiersCible={setTiersCible}
             commandes={commandesDuTiers}
+            projets={projets}
+            dolibarrActif={dolibarrActif}
             panneDolibarr={panneDolibarr}
           />
         ) : (
@@ -248,6 +266,8 @@ function Nouvelle({
   socidRetenu,
   setTiersCible,
   commandes,
+  projets,
+  dolibarrActif,
   panneDolibarr,
 }: {
   clients: Array<{ id: string; name: string }>
@@ -256,8 +276,21 @@ function Nouvelle({
   socidRetenu: number | null
   setTiersCible: (socid: number) => void
   commandes: CommandeOuverte[]
+  projets: ProjetOuvert[]
+  dolibarrActif: boolean
   panneDolibarr: string | null
 }) {
+  const [clientManuel, setClientManuel] = useState(clients[0]?.id ?? '')
+
+  // Seuls les projets du tiers de ce client, et seuls ceux que personne ne
+  // suit : rattacher deux missions au même projet ferait partir deux CRA vers
+  // les mêmes tâches, et un projet d'un autre tiers serait refusé par le
+  // service — le proposer ne ferait qu'inviter à un refus.
+  const tiersDuClient = tiers.find((t) => t.clientId === clientManuel)?.socid ?? null
+  const projetsDuClient = projets.filter(
+    (p) => p.missionId === null && tiersDuClient !== null && p.socid === tiersDuClient,
+  )
+
   return (
     <div className="flex flex-col gap-6">
       <Card title="Depuis une commande Dolibarr">
@@ -354,13 +387,47 @@ function Nouvelle({
       <Card title="À la main">
         <form action={addMission} className="flex flex-wrap items-end gap-2">
           <Field label="Nouvelle mission" name="label" required />
-          <Select label="Client de la mission" name="clientId" required>
+          <Select
+            label="Client de la mission"
+            name="clientId"
+            required
+            value={clientManuel}
+            onChange={(e) => setClientManuel(e.target.value)}
+          >
             {clients.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
           </Select>
+
+          {/* Trois cas, un seul champ : rattacher un projet existant, en ouvrir
+              un, ou rester local. Une mission sans projet ne pousse jamais rien
+              — `isDolibarrPushArmed` exige la correspondance — et le
+              rattachement se faisait donc plus tard, dans les réglages, quand
+              on y pensait. */}
+          {dolibarrActif && (
+            <>
+              <Select label="Projet Dolibarr" name="projet" defaultValue="" className="w-80">
+                <option value="">Aucun — mission locale</option>
+                <option value="CREER">Créer un projet pour cette mission</option>
+                {projetsDuClient.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    Rattacher à {p.ref} · {p.title}
+                  </option>
+                ))}
+              </Select>
+              {/* La référence et le tiers voyagent avec le choix : le refus de
+                  cohérence les nomme, et l'écran ne doit pas les faire deviner
+                  au service. */}
+              {projetsDuClient.map((p) => (
+                <span key={p.id}>
+                  <input type="hidden" name={`ref-${p.id}`} value={p.ref} />
+                  <input type="hidden" name={`socid-${p.id}`} value={p.socid ?? ''} />
+                </span>
+              ))}
+            </>
+          )}
           <Field
             label="Durée d’une journée (h)"
             name="heuresParJour"

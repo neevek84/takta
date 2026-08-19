@@ -8,6 +8,7 @@ import { LIEN_COMMANDE, LIEN_LIGNE, LIEN_MISSION } from './liens'
 import { attachClient } from './import'
 import {
   attachOrderLine,
+  creerMissionAvecProjet,
   creerProjetDepuisCommande,
   listerCommandes,
   listerCommandesRattachables,
@@ -470,6 +471,120 @@ describe('les prestations et leurs tâches, à la naissance de la mission', () =
 
     expect(r.prestationsCreees).toBe(0)
     expect(await prisma.missionLine.count({ where: { missionId } })).toBe(0)
+  })
+})
+
+describe('creerMissionAvecProjet', () => {
+  it('laisse la mission locale quand on ne demande aucun projet', async () => {
+    const client = await createClient('CMD ACME local')
+    const r = await creerMissionAvecProjet({
+      userId,
+      clientId: client.id,
+      label: 'CMD Locale',
+      minutesParJour: null,
+      signataireNom: '',
+      signataireEmail: '',
+      projet: { type: 'AUCUN' },
+      api: null,
+    })
+
+    expect(r.projet).toBeNull()
+    expect(await prisma.externalLink.count({ where: { entityId: r.missionId } })).toBe(0)
+  })
+
+  it('ouvre un projet pour la mission, et crée le tiers s’il manque', async () => {
+    // Refuser ici obligerait à sortir de la création de mission pour aller
+    // rattacher le client dans les réglages, puis à y revenir.
+    const client = await createClient('CMD SANS TIERS')
+    const r = await creerMissionAvecProjet({
+      userId,
+      clientId: client.id,
+      label: 'CMD Nouvelle',
+      minutesParJour: null,
+      signataireNom: '',
+      signataireEmail: '',
+      projet: { type: 'CREER' },
+      api,
+    })
+
+    expect(r.tiersCree).toBe(true)
+    expect(r.projetCree).toBe(true)
+    expect(r.projet?.title).toBe('CMD Nouvelle')
+    const lien = await prisma.externalLink.findUnique({
+      where: {
+        entityType_entityId_provider: {
+          entityType: LIEN_MISSION,
+          entityId: r.missionId,
+          provider: DOLIBARR,
+        },
+      },
+    })
+    expect(lien?.externalId).toBe(String(r.projet?.id))
+  })
+
+  it('rattache un projet existant', async () => {
+    const tiers = api.seedThirdparty('CMD ACME')
+    const client = await createClient('CMD ACME local')
+    await attachClient({ userId, clientId: client.id, dolibarrThirdpartyId: tiers.id })
+    const projet = api.seedProject({ ref: 'PJ-EXISTANT', title: 'Déjà', socid: tiers.id })
+
+    const r = await creerMissionAvecProjet({
+      userId,
+      clientId: client.id,
+      label: 'CMD Rattachée',
+      minutesParJour: null,
+      signataireNom: '',
+      signataireEmail: '',
+      projet: {
+        type: 'EXISTANT',
+        projectId: projet.id,
+        projectRef: projet.ref,
+        projectSocid: projet.socid,
+      },
+      api,
+    })
+
+    expect(r.projetCree).toBe(false)
+    expect(api.appels.createProject).toBe(0)
+  })
+
+  it('refuse le projet d’un autre tiers — et refuse avant de créer la mission', async () => {
+    const tiers = api.seedThirdparty('CMD ACME')
+    const autre = api.seedThirdparty('CMD AUTRE')
+    const client = await createClient('CMD ACME local')
+    await attachClient({ userId, clientId: client.id, dolibarrThirdpartyId: tiers.id })
+
+    await expect(
+      creerMissionAvecProjet({
+        userId,
+        clientId: client.id,
+        label: 'CMD Refusée',
+        minutesParJour: null,
+        signataireNom: '',
+        signataireEmail: '',
+        projet: { type: 'EXISTANT', projectId: 999, projectRef: 'PJ-X', projectSocid: autre.id },
+        api,
+      }),
+    ).rejects.toThrow(/mauvais client/i)
+
+    expect(await prisma.mission.count({ where: { label: 'CMD Refusée' } })).toBe(0)
+  })
+
+  it('refuse d’ouvrir un projet quand Dolibarr n’est pas connecté', async () => {
+    const client = await createClient('CMD ACME local')
+    await expect(
+      creerMissionAvecProjet({
+        userId,
+        clientId: client.id,
+        label: 'CMD Sans Doli',
+        minutesParJour: null,
+        signataireNom: '',
+        signataireEmail: '',
+        projet: { type: 'CREER' },
+        api: null,
+      }),
+    ).rejects.toThrow(/pas connecté/i)
+    expect(await prisma.mission.count({ where: { label: 'CMD Sans Doli' } })).toBe(0)
   })
 })
 

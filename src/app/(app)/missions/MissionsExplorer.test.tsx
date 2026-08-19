@@ -48,6 +48,14 @@ const MISSIONS: MissionForUser[] = [
   mission({ id: 'm3', label: 'Suivi temps', clientId: 'c2', clientName: 'MACERTIF' }),
 ]
 
+const PROJETS = [
+  { id: 46, ref: 'PJ2511-0033', title: 'GUICHET UNIQUE', socid: 7, missionId: null },
+  // Déjà suivi : le proposer ferait partir deux CRA vers les mêmes tâches.
+  { id: 47, ref: 'PJ2511-0034', title: 'RUN', socid: 7, missionId: 'm2' },
+  // Autre tiers : le service le refuserait, le proposer n'inviterait qu'au refus.
+  { id: 49, ref: 'PJ2605-0036', title: 'I26-EPM', socid: 9, missionId: null },
+]
+
 const CLIENTS = [
   { id: 'c1', name: 'SILKHOM' },
   { id: 'c2', name: 'MACERTIF' },
@@ -91,6 +99,8 @@ function rendre(patch: Partial<Parameters<typeof MissionsExplorer>[0]> = {}) {
       clients={CLIENTS}
       heuresParJourDefaut={7}
       commandes={COMMANDES}
+      projets={PROJETS}
+      dolibarrActif={true}
       panneDolibarr={null}
       {...patch}
     />,
@@ -225,6 +235,38 @@ describe('MissionsExplorer — créer depuis une commande', () => {
     expect(screen.getByText(/Dolibarr a répondu 500 sur \/orders\./)).toBeTruthy()
     // La création manuelle reste atteignable : elle ne dépend pas du connecteur.
     expect(screen.getByLabelText('Nouvelle mission')).toBeTruthy()
+  })
+
+  it('offre les trois voies : aucun projet, en créer un, ou rattacher', () => {
+    // Une mission sans projet ne pousse jamais rien, et le rattachement se
+    // faisait plus tard, dans les réglages, quand on y pensait.
+    rendre()
+    fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
+
+    const choix = screen.getByLabelText('Projet Dolibarr') as HTMLSelectElement
+    const options = Array.from(choix.options).map((o) => o.textContent)
+    expect(options[0]).toContain('Aucun')
+    expect(options[1]).toContain('Créer un projet')
+    // Le projet du tiers du client choisi, et lui seul.
+    expect(options[2]).toContain('PJ2511-0033')
+    expect(options).toHaveLength(3)
+  })
+
+  it('n’offre pas un projet déjà suivi, ni celui d’un autre tiers', () => {
+    // Deux missions sur un même projet feraient partir deux CRA vers les mêmes
+    // tâches ; un projet d'un autre tiers serait de toute façon refusé.
+    rendre()
+    fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
+    const rendu = (screen.getByLabelText('Projet Dolibarr') as HTMLSelectElement).innerHTML
+
+    expect(rendu).not.toContain('PJ2511-0034')
+    expect(rendu).not.toContain('PJ2605-0036')
+  })
+
+  it('ne propose aucun projet quand Dolibarr n’est pas connecté', () => {
+    rendre({ dolibarrActif: false })
+    fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
+    expect(screen.queryByLabelText('Projet Dolibarr')).toBeNull()
   })
 
   it('ouvre sur la création quand il n’y a encore aucune mission', () => {

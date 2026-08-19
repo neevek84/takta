@@ -16,7 +16,7 @@
  * compte rendu, qui dit ce qui a été fait même quand la fin a échoué.
  */
 import { prisma } from '@/db/client'
-import { createLine } from '@/services/missions'
+import { createLine, createMission } from '@/services/missions'
 import { verifierCoherenceTiers } from '@/core/dolibarr/coherence'
 import {
   referenceExterneCommande,
@@ -34,6 +34,7 @@ import {
   attachMission,
   createClientFromDolibarr,
   createMissionFromDolibarr,
+  pushClientToDolibarr,
   tiersAttendu,
   type AttachMissionResult,
 } from './import'
@@ -191,6 +192,41 @@ export async function listerCommandesRattachables(args: {
       missionLabel: missionId === null ? null : (libelleMission.get(missionId) ?? null),
     }
   })
+}
+
+/** Un projet Dolibarr proposable à une mission, avec son tiers. */
+export interface ProjetCandidat {
+  id: number
+  ref: string
+  title: string
+  socid: number | null
+  /** mission locale qui le suit déjà, `null` sinon */
+  missionId: string | null
+}
+
+/**
+ * Les projets facturables au temps, avec la mission qui les suit déjà.
+ *
+ * Rendus **tous**, tiers compris : c'est l'écran qui les rapproche du client
+ * choisi, parce que le client se change sans recharger la page. Le refus de
+ * cohérence reste posé côté service — l'écran filtre pour aider, il ne garde
+ * rien.
+ */
+export async function listerProjetsCandidats(api: DolibarrApi): Promise<ProjetCandidat[]> {
+  const projets = await api.listProjects()
+  const liens = await prisma.externalLink.findMany({
+    where: { entityType: LIEN_MISSION, provider: DOLIBARR },
+    select: { entityId: true, externalId: true },
+  })
+  const missionParProjet = new Map(liens.map((l) => [l.externalId, l.entityId]))
+
+  return projets.map((p) => ({
+    id: p.id,
+    ref: p.ref,
+    title: p.title,
+    socid: p.socid,
+    missionId: missionParProjet.get(String(p.id)) ?? null,
+  }))
 }
 
 /**
@@ -578,4 +614,130 @@ export async function attachOrderLine(args: {
   })
 
   return { soldCentiemes, tjmCents }
+}
+
+/** Ce que la création d'une mission demande à Dolibarr, quand elle lui demande. */
+export type ProjetVoulu =
+  /** rien : la mission reste locale, et le reste de l'application marche pareil */
+  | { type: 'AUCUN' }
+  /** un projet Dolibarr qui existe déjà */
+  | { type: 'EXISTANT'; projectId: number; projectRef: string; projectSocid: number | null }
+  /** un projet à ouvrir pour cette mission */
+  | { type: 'CREER' }
+
+export interface MissionCreeeResult {
+  missionId: string
+  /** le projet rattaché, `null` quand la mission reste locale */
+  projet: DolibarrProject | null
+  projetCree: boolean
+  /** le tiers a été créé dans Dolibarr pour porter le projet */
+  tiersCree: boolean
+}
+
+/**
+ * Crée une mission « à la main », avec le projet Dolibarr que l'utilisateur a
+ * demandé — ou sans, ce qui reste le cas ordinaire d'une instance sans ERP.
+ *
+ * **Pourquoi le projet se décide ici.** Une mission créée sans projet ne
+ * pousse jamais rien : `isDolibarrPushArmed` exige la correspondance, et un
+ * CRA validé sans elle n'entre même pas en file. Le rattachement se faisait
+ * donc plus tard, dans les réglages, et il fallait y penser — sans quoi
+ * l'historique restait hors de Dolibarr sans qu'un mot le dise.
+ *
+ * **Créer le projet exige un tiers.** Si le client local n'en a pas encore, il
+ * est poussé chez Dolibarr : refuser ici obligerait à sortir de la création de
+ * mission pour y revenir, exactement ce qu'on vient de retirer du parcours.
+ */
+export async function creerMissionAvecProjet(args: {
+  userId: string
+  clientId: string
+  label: string
+  minutesParJour: number | null
+  signataireNom: string
+  signataireEmail: string
+  projet: ProjetVoulu
+  /** `null` quand Dolibarr n'est pas connecté : seul `AUCUN` est alors possible */
+  api: DolibarrApi | null
+}): Promise<MissionCreeeResult> {
+  if (args.projet.type !== 'AUCUN' && args.api === null) {
+    throw new DolibarrRequestError(
+      "Dolibarr n'est pas connecté : la mission peut être créée, mais aucun projet ne peut l'être.",
+    )
+  }
+
+  const client = await prisma.client.findUniqueOrThrow({
+    where: { id: args.clientId },
+    select: { id: true, name: true },
+  })
+
+  // Tout ce qui peut être refusé l'est **avant** la création de la mission :
+  // un refus après coup laisserait une mission orpheline, jamais rattachée,
+  // mais bien réelle en base.
+  let tiersCree = false
+  let projet: DolibarrProject | null = null
+
+  if (args.projet.type === 'EXISTANT') {
+    verifierCoherenceTiers({
+      projectRef: args.projet.projectRef,
+      projectSocid: args.projet.projectSocid,
+      clientLabel: client.name,
+      expectedThirdpartyId: await tiersAttendu(client.id),
+    })
+  }
+
+  if (args.projet.type === 'CREER') {
+    const api = args.api as DolibarrApi
+    const deja = await tiersAttendu(client.id)
+    if (deja === null) {
+      await pushClientToDolibarr({ userId: args.userId, clientId: client.id, api })
+      tiersCree = true
+    }
+    const socid = (await tiersAttendu(client.id)) as number
+
+    projet = await api.createProject({
+      socid,
+      title: args.label,
+      // Aucune référence client à reporter : cette mission ne vient d'aucun
+      // document. Inventer une valeur ferait passer pour un report ce qui n'en
+      // est pas un.
+      refExt: '',
+      description: `Projet ouvert pour la mission « ${args.label} ».`,
+    })
+  }
+
+  const mission = await createMission({
+    clientId: args.clientId,
+    label: args.label,
+    minutesParJour: args.minutesParJour,
+    signataireNom: args.signataireNom,
+    signataireEmail: args.signataireEmail,
+    userId: args.userId,
+  })
+
+  if (args.projet.type === 'EXISTANT') {
+    await attachMission({
+      userId: args.userId,
+      missionId: mission.id,
+      dolibarrProjectId: args.projet.projectId,
+      projectRef: args.projet.projectRef,
+      projectSocid: args.projet.projectSocid,
+    })
+  }
+
+  if (projet !== null) {
+    await attachMission({
+      userId: args.userId,
+      missionId: mission.id,
+      dolibarrProjectId: projet.id,
+      projectRef: projet.ref,
+      projectSocid: projet.socid,
+    })
+  }
+
+  return {
+    missionId: mission.id,
+    projet,
+    projetCree: projet !== null,
+    tiersCree,
+  }
 }
