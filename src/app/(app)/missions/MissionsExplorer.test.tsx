@@ -54,8 +54,26 @@ const CLIENTS = [
 ]
 
 const COMMANDES: CommandeOuverte[] = [
-  { id: 51, ref: 'CO2410-0002', refClient: '2419', label: '', clientId: 'c1' },
-  { id: 52, ref: 'CO2411-0001', refClient: '', label: '', clientId: 'c2' },
+  {
+    id: 51,
+    ref: 'CO2410-0002',
+    refClient: '2419',
+    label: '',
+    socid: 7,
+    thirdpartyName: 'SILKHOM',
+    clientId: 'c1',
+  },
+  {
+    id: 52,
+    ref: 'CO2411-0001',
+    refClient: '',
+    label: '',
+    socid: 9,
+    // Ce tiers n'est rattaché à aucun client local : l'écran doit quand même
+    // le proposer, sans quoi il faut passer par les réglages pour revenir ici.
+    thirdpartyName: 'MACERTIF',
+    clientId: null,
+  },
 ]
 
 function rendre(patch: Partial<Parameters<typeof MissionsExplorer>[0]> = {}) {
@@ -131,15 +149,28 @@ describe('MissionsExplorer — le détail', () => {
 })
 
 describe('MissionsExplorer — créer depuis une commande', () => {
-  it('ne propose que les commandes du client choisi', () => {
+  it('propose les tiers Dolibarr, y compris ceux sans client local', () => {
+    // Le défaut : le sélecteur ne portait que les clients locaux. Un tiers
+    // Dolibarr non rattaché n'apparaissait nulle part dans la page où l'on
+    // crée la mission, et il fallait aller le rattacher dans les réglages.
     rendre()
     fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
 
-    // Le premier client est sélectionné par défaut.
+    const choix = screen.getByLabelText('Client Dolibarr') as HTMLSelectElement
+    const options = Array.from(choix.options).map((o) => o.textContent)
+    expect(options[0]).toContain('SILKHOM')
+    expect(options[1]).toContain('MACERTIF')
+    expect(options[1]).toContain('client local à créer')
+  })
+
+  it('ne propose que les commandes du tiers choisi', () => {
+    rendre()
+    fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
+
     expect(screen.getByRole('button', { name: /Créer la mission depuis « CO2410-0002 »/ })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /CO2411-0001/ })).toBeNull()
 
-    fireEvent.change(screen.getByLabelText('Client'), { target: { value: 'c2' } })
+    fireEvent.change(screen.getByLabelText('Client Dolibarr'), { target: { value: '9' } })
 
     expect(screen.getByRole('button', { name: /Créer la mission depuis « CO2411-0001 »/ })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /CO2410-0002/ })).toBeNull()
@@ -150,7 +181,7 @@ describe('MissionsExplorer — créer depuis une commande', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
     expect(screen.getByText(/Référence client : 2419/)).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText('Client'), { target: { value: 'c2' } })
+    fireEvent.change(screen.getByLabelText('Client Dolibarr'), { target: { value: '9' } })
     expect(screen.getByText(/Aucune référence client/)).toBeTruthy()
   })
 

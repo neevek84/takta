@@ -18,7 +18,10 @@ export interface CommandeOuverte {
   ref: string
   refClient: string
   label: string
-  /** client local auquel son tiers est rattaché, `null` si aucun */
+  /** tiers Dolibarr de la commande */
+  socid: number
+  thirdpartyName: string
+  /** client local auquel ce tiers est rattaché, `null` s'il n'en a pas encore */
   clientId: string | null
 }
 
@@ -57,7 +60,10 @@ export function MissionsExplorer({
 }) {
   const [recherche, setRecherche] = useState('')
   const [selection, setSelection] = useState<string>(missions[0]?.id ?? NOUVELLE)
-  const [clientCible, setClientCible] = useState<string>(clients[0]?.id ?? '')
+  // Le sélecteur de la carte Dolibarr porte des **tiers**, pas des clients
+  // locaux : c'est chez Dolibarr que vivent les commandes, et exiger un
+  // rattachement préalable obligeait à quitter la page pour y revenir.
+  const [tiersCible, setTiersCible] = useState<number | null>(null)
 
   const filtrees = useMemo(() => {
     const q = recherche.trim().toLowerCase()
@@ -81,7 +87,20 @@ export function MissionsExplorer({
   }, [filtrees])
 
   const mission = missions.find((m) => m.id === selection) ?? null
-  const commandesDuClient = commandes.filter((c) => c.clientId === clientCible)
+
+  // Un tiers par commande ouverte, sans doublon, dans l'ordre des commandes.
+  const tiers = useMemo(() => {
+    const par = new Map<number, { socid: number; name: string; clientId: string | null }>()
+    for (const c of commandes) {
+      if (!par.has(c.socid)) {
+        par.set(c.socid, { socid: c.socid, name: c.thirdpartyName, clientId: c.clientId })
+      }
+    }
+    return [...par.values()]
+  }, [commandes])
+
+  const socidRetenu = tiersCible ?? tiers[0]?.socid ?? null
+  const commandesDuTiers = commandes.filter((c) => c.socid === socidRetenu)
 
   return (
     <div className="grid gap-6 md:grid-cols-[18rem_1fr] md:items-start">
@@ -141,11 +160,11 @@ export function MissionsExplorer({
           <Nouvelle
             clients={clients}
             heuresParJourDefaut={heuresParJourDefaut}
-            clientCible={clientCible}
-            setClientCible={setClientCible}
-            commandes={commandesDuClient}
+            tiers={tiers}
+            socidRetenu={socidRetenu}
+            setTiersCible={setTiersCible}
+            commandes={commandesDuTiers}
             panneDolibarr={panneDolibarr}
-            aucunClient={clients.length === 0}
           />
         ) : (
           <Detail mission={mission} />
@@ -219,19 +238,19 @@ function Detail({ mission }: { mission: MissionForUser }) {
 function Nouvelle({
   clients,
   heuresParJourDefaut,
-  clientCible,
-  setClientCible,
+  tiers,
+  socidRetenu,
+  setTiersCible,
   commandes,
   panneDolibarr,
-  aucunClient,
 }: {
   clients: Array<{ id: string; name: string }>
   heuresParJourDefaut: number
-  clientCible: string
-  setClientCible: (id: string) => void
+  tiers: Array<{ socid: number; name: string; clientId: string | null }>
+  socidRetenu: number | null
+  setTiersCible: (socid: number) => void
   commandes: CommandeOuverte[]
   panneDolibarr: string | null
-  aucunClient: boolean
 }) {
   return (
     <div className="flex flex-col gap-6">
@@ -248,31 +267,32 @@ function Nouvelle({
           </Banner>
         )}
 
-        {aucunClient ? (
-          <p className="text-sm text-muted">
-            Créez d’abord un client : une mission n’existe pas sans lui.
-          </p>
+        {tiers.length === 0 ? (
+          panneDolibarr === null && (
+            <p className="text-sm text-muted">
+              Aucune commande à faire chez vos clients Dolibarr. Les brouillons, les annulées, les
+              livrées et les commandes entièrement facturées ne sont pas proposés.
+            </p>
+          )
         ) : (
           <>
             <Select
-              label="Client"
-              name="clientCible"
-              value={clientCible}
-              onChange={(e) => setClientCible(e.target.value)}
-              className="w-72"
+              label="Client Dolibarr"
+              name="tiersCible"
+              value={socidRetenu ?? ''}
+              onChange={(e) => setTiersCible(Number(e.target.value))}
+              className="w-96"
             >
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
+              {tiers.map((t) => (
+                <option key={t.socid} value={t.socid}>
+                  {t.name}
+                  {t.clientId === null ? ' — client local à créer' : ''}
                 </option>
               ))}
             </Select>
 
-            {panneDolibarr === null && commandes.length === 0 ? (
-              <p className="mt-3 text-sm text-muted">
-                Aucune commande à faire pour ce client. Les brouillons, les annulées, les livrées et
-                les commandes entièrement facturées ne sont pas proposés.
-              </p>
+            {commandes.length === 0 ? (
+              <p className="mt-3 text-sm text-muted">Aucune commande à faire pour ce client.</p>
             ) : (
               <ul className="mt-3 flex flex-col gap-3">
                 {commandes.map((c) => (
@@ -292,7 +312,6 @@ function Nouvelle({
                         className="mt-2 flex flex-wrap items-end gap-2"
                       >
                         <input type="hidden" name="orderId" value={c.id} />
-                        <input type="hidden" name="clientId" value={clientCible} />
                         <Button
                           type="submit"
                           variant="primary"

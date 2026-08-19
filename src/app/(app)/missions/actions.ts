@@ -185,18 +185,16 @@ export async function creerMissionDepuisCommande(formData: FormData): Promise<vo
   }
 
   const orderId = Number(formData.get('orderId'))
-  const clientId = String(formData.get('clientId') ?? '')
-  if (clientId === '') {
-    redirect(annonceMission('Choisissez le client de la mission à créer.', 'danger'))
-    return
-  }
 
   let resultat: Awaited<ReturnType<typeof creerProjetDepuisCommande>>
   try {
     resultat = await creerProjetDepuisCommande({
       userId: user.id,
       orderId,
-      cible: { type: 'NOUVELLE_MISSION', clientId },
+      // Le client local est déduit du tiers de la commande, et créé s'il
+      // n'existe pas : on choisit un tiers Dolibarr dans cet écran, pas un
+      // client local.
+      cible: { type: 'DEPUIS_LE_TIERS' },
       api,
     })
   } catch (err) {

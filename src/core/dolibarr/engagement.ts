@@ -24,3 +24,29 @@ const LIBELLES: Record<EngagementSource, string> = {
 export function libelleEngagement(source: EngagementSource): string {
   return LIBELLES[source]
 }
+
+/**
+ * Les sources dont Dolibarr reste maître : jours vendus et TJM ne se modifient
+ * pas ici.
+ *
+ * **Le trou que cette table ferme.** Le verrou était écrit
+ * `source === 'DOLIBARR_PROPALE'`, à deux endroits — le service et le
+ * formulaire. Le jour où la reprise depuis une **commande** est arrivée, la
+ * comparaison est restée vraie pour la propale seule : une prestation reprise
+ * d'une commande redevenait modifiable localement, et ses jours vendus
+ * pouvaient diverger de la commande sans que rien ne le dise. Ce sont les
+ * chiffres qui seront facturés.
+ *
+ * Un `Record` exhaustif oblige toute source future à déclarer sa réponse.
+ */
+const VERROUILLEES: Record<EngagementSource, boolean> = {
+  MANUEL: false,
+  DOLIBARR_PROPALE: true,
+  DOLIBARR_COMMANDE: true,
+  DOLIBARR_PROJET: true,
+}
+
+/** L'engagement de cette prestation est-il détenu par Dolibarr ? */
+export function engagementVerrouille(source: EngagementSource): boolean {
+  return VERROUILLEES[source]
+}

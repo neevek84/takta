@@ -29,7 +29,13 @@ import {
   type DolibarrOrder,
   type DolibarrProject,
 } from './api'
-import { attachMission, createMissionFromDolibarr, tiersAttendu, type AttachMissionResult } from './import'
+import {
+  attachMission,
+  createClientFromDolibarr,
+  createMissionFromDolibarr,
+  tiersAttendu,
+  type AttachMissionResult,
+} from './import'
 import { LIEN_CLIENT, LIEN_COMMANDE } from './liens'
 
 /** Une commande proposée à l'écran, avec ce qu'il faut pour la choisir. */
@@ -71,6 +77,16 @@ export interface CreationProjetResult {
 export type CibleCommande =
   | { type: 'MISSION'; missionId: string }
   | { type: 'NOUVELLE_MISSION'; clientId: string }
+  /**
+   * Le client local est **déduit du tiers de la commande**, et créé s'il
+   * n'existe pas encore.
+   *
+   * C'est ce que l'écran des missions demande : on choisit un tiers Dolibarr,
+   * pas un client local. Exiger le rattachement préalable dans les réglages
+   * obligeait à quitter la création de mission pour y revenir — et le tiers
+   * n'apparaissait nulle part dans la page où l'on crée.
+   */
+  | { type: 'DEPUIS_LE_TIERS' }
 
 /**
  * Les commandes que Dolibarr propose, brouillons et annulées exclus par le
@@ -107,8 +123,14 @@ export async function listerCommandes(api: DolibarrApi): Promise<CommandeCandida
  */
 export async function listerCommandesRattachables(args: {
   api: DolibarrApi
-}): Promise<Array<CommandeCandidate & { clientId: string | null }>> {
-  const commandes = (await listerCommandes(args.api)).filter((c) => c.projectId === null)
+}): Promise<Array<CommandeCandidate & { clientId: string | null; thirdpartyName: string }>> {
+  const [commandes, tiers] = await Promise.all([
+    listerCommandes(args.api).then((liste) => liste.filter((c) => c.projectId === null)),
+    // Le nom du tiers ne vient pas de la commande — elle ne porte que `socid`.
+    // Sans lui, l'écran ne proposerait que des numéros.
+    args.api.listThirdparties(),
+  ])
+  const nomParTiers = new Map(tiers.map((t) => [t.id, t.name]))
 
   // Sans filtre sur `userId`, comme partout ailleurs : une correspondance
   // appartient à l'instance, pas à celui qui l'a posée.
@@ -118,22 +140,60 @@ export async function listerCommandesRattachables(args: {
   })
   const clientParTiers = new Map(liens.map((l) => [l.externalId, l.entityId]))
 
-  return commandes.map((c) => ({ ...c, clientId: clientParTiers.get(String(c.socid)) ?? null }))
+  return commandes.map((c) => ({
+    ...c,
+    clientId: clientParTiers.get(String(c.socid)) ?? null,
+    thirdpartyName: nomParTiers.get(c.socid) ?? `Tiers n° ${c.socid}`,
+  }))
 }
 
-/** Le client local visé, et son nom — les deux que le refus de cohérence exige. */
-async function clientVise(cible: CibleCommande): Promise<{ id: string; name: string }> {
-  if (cible.type === 'NOUVELLE_MISSION') {
+/**
+ * Le client local visé, et son nom — les deux que le refus de cohérence exige.
+ *
+ * Pour `DEPUIS_LE_TIERS`, le client est **créé** s'il n'existe pas, avec sa
+ * correspondance. C'est une écriture locale posée avant l'appel distant qui
+ * crée le projet : si celui-ci échoue, le client reste. Il est juste — il
+ * correspond bien à un tiers réel — et la reprise le retrouvera au lieu d'en
+ * créer un second, la correspondance étant unique par tiers.
+ */
+async function clientVise(args: {
+  cible: CibleCommande
+  userId: string
+  socid: number
+  nomTiers: string
+}): Promise<{ id: string; name: string }> {
+  if (args.cible.type === 'NOUVELLE_MISSION') {
     return prisma.client.findUniqueOrThrow({
-      where: { id: cible.clientId },
+      where: { id: args.cible.clientId },
       select: { id: true, name: true },
     })
   }
-  const mission = await prisma.mission.findUniqueOrThrow({
-    where: { id: cible.missionId },
-    select: { client: { select: { id: true, name: true } } },
+
+  if (args.cible.type === 'MISSION') {
+    const mission = await prisma.mission.findUniqueOrThrow({
+      where: { id: args.cible.missionId },
+      select: { client: { select: { id: true, name: true } } },
+    })
+    return mission.client
+  }
+
+  const existant = await prisma.externalLink.findFirst({
+    where: { entityType: LIEN_CLIENT, provider: DOLIBARR, externalId: String(args.socid) },
+    select: { entityId: true },
   })
-  return mission.client
+  if (existant !== null) {
+    return prisma.client.findUniqueOrThrow({
+      where: { id: existant.entityId },
+      select: { id: true, name: true },
+    })
+  }
+
+  const { clientId } = await createClientFromDolibarr({
+    userId: args.userId,
+    dolibarrThirdpartyId: args.socid,
+    name: args.nomTiers,
+  })
+  return { id: clientId, name: args.nomTiers }
 }
 
 /**
@@ -197,7 +257,15 @@ export async function creerProjetDepuisCommande(args: {
   api: DolibarrApi
 }): Promise<CreationProjetResult> {
   const commande = await args.api.getOrder(args.orderId)
-  const client = await clientVise(args.cible)
+  // Résolu une fois, et servant deux fois : à nommer le client créé, et à
+  // nommer le projet. La commande ne porte que `socid`.
+  const nomTiers = await nomDuTiers(args.api, commande.socid, '')
+  const client = await clientVise({
+    cible: args.cible,
+    userId: args.userId,
+    socid: commande.socid,
+    nomTiers: nomTiers === '' ? `Tiers n° ${commande.socid}` : nomTiers,
+  })
 
   verifierCoherenceTiers({
     elementLabel: 'La commande',
@@ -213,7 +281,7 @@ export async function creerProjetDepuisCommande(args: {
   // rend pas : un titre amputé vaut mieux qu'une création qui échoue.
   const titre = titreProjetDepuisCommande({
     ...commande,
-    thirdpartyName: await nomDuTiers(args.api, commande.socid, client.name),
+    thirdpartyName: nomTiers === '' ? client.name : nomTiers,
   })
   const refExt = referenceExterneCommande(commande)
 
@@ -245,7 +313,7 @@ export async function creerProjetDepuisCommande(args: {
       : (
           await createMissionFromDolibarr({
             userId: args.userId,
-            clientId: args.cible.clientId,
+            clientId: client.id,
             dolibarrProjectId: projet.id,
             projectRef: projet.ref,
             projectSocid: projet.socid,

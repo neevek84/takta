@@ -66,3 +66,38 @@ seul compte.
 La clé d'API reste de portée instance. Une clé par consultant multiplierait
 les secrets à faire tourner, et Dolibarr attribue déjà le temps par
 `fk_user` — c'est le bon axe, pas la clé.
+
+
+---
+
+# Annexe — deux demandes du porteur, cadrées et non implémentées
+
+## Gérer les clients et les missions « locaux »
+
+Demandé le 19 août : pouvoir **archiver ou supprimer** un client local et une
+mission depuis les réglages.
+
+Le modèle porte déjà `Mission.archived` et `MissionLine.archived`, et
+`listMissionsForUser` filtre sur `archived: false` — l'archivage existe donc en
+base sans aucun écran pour le poser. `Client` n'a pas de drapeau.
+
+Ce que l'évolution doit trancher :
+
+1. **Archiver n'est pas supprimer.** Un client ou une mission qui porte des CRA
+   validés, des temps poussés chez Dolibarr ou des correspondances ne peut pas
+   disparaître sans détruire de l'historique facturé. La suppression doit être
+   refusée dans ce cas, et le refus doit dire ce qui la retient.
+2. **Ce que l'archivage cache, et ce qu'il garde.** Une mission archivée sort
+   des écrans de saisie et de la liste, mais ses CRA restent consultables.
+3. **Le sort des correspondances.** Archiver ne rompt rien ; supprimer doit
+   rompre, sans rien effacer chez Dolibarr — c'est déjà la règle de
+   `detachEntity`.
+4. **Où.** Les réglages, et non la page des missions : ce n'est pas un geste de
+   travail quotidien.
+
+## Un client Dolibarr créé sans passer par les réglages
+
+**Fait le 19 août**, et noté ici parce que c'est le même axe : l'écran des
+missions propose désormais les **tiers Dolibarr** et crée le client local, avec
+sa correspondance, au moment où la mission naît. Le rattachement préalable dans
+les réglages n'est plus un passage obligé.

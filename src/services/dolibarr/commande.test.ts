@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import { prisma } from '@/db/client'
 import { createClient } from '@/services/clients'
-import { createMission, createLine } from '@/services/missions'
+import { createMission, createLine, updateLine } from '@/services/missions'
 import { FakeDolibarr } from './fake'
 import { DOLIBARR } from './api'
 import { LIEN_COMMANDE, LIEN_MISSION } from './liens'
@@ -238,6 +238,62 @@ describe('creerProjetDepuisCommande', () => {
   })
 })
 
+describe('creerProjetDepuisCommande — depuis le tiers', () => {
+  it('crée le client local quand le tiers n’en a encore aucun', async () => {
+    // Exiger le rattachement préalable dans les réglages obligeait à quitter la
+    // création de mission pour y revenir.
+    const tiers = api.seedThirdparty('CMD NOUVEAU TIERS')
+    const commande = api.seedOrder({
+      ref: 'CO2608-0060',
+      socid: tiers.id,
+      refClient: 'BDC-60',
+    })
+
+    const r = await creerProjetDepuisCommande({
+      userId,
+      orderId: commande.id,
+      cible: { type: 'DEPUIS_LE_TIERS' },
+      api,
+    })
+
+    const mission = await prisma.mission.findUniqueOrThrow({
+      where: { id: r.missionId },
+      select: { clientId: true, client: { select: { name: true } } },
+    })
+    expect(mission.client.name).toBe('CMD NOUVEAU TIERS')
+    expect(r.projet.title).toBe('BDC-60 — CMD NOUVEAU TIERS — CO2608-0060')
+
+    // La correspondance est posée : une seconde création la retrouvera au lieu
+    // de créer un second client pour le même tiers.
+    const lien = await prisma.externalLink.findUnique({
+      where: {
+        entityType_entityId_provider: {
+          entityType: 'Client',
+          entityId: mission.clientId,
+          provider: DOLIBARR,
+        },
+      },
+    })
+    expect(lien?.externalId).toBe(String(tiers.id))
+  })
+
+  it('réutilise le client déjà rattaché au tiers, sans en créer un second', async () => {
+    const { tiersId, clientId } = await contexte()
+    const commande = api.seedOrder({ ref: 'CO2608-0061', socid: tiersId, refClient: 'BDC-61' })
+
+    const r = await creerProjetDepuisCommande({
+      userId,
+      orderId: commande.id,
+      cible: { type: 'DEPUIS_LE_TIERS' },
+      api,
+    })
+
+    const mission = await prisma.mission.findUniqueOrThrow({ where: { id: r.missionId } })
+    expect(mission.clientId).toBe(clientId)
+    expect(await prisma.client.count({ where: { name: { startsWith: 'CMD' } } })).toBe(1)
+  })
+})
+
 describe('attachOrderLine', () => {
   it('reprend les jours vendus et le TJM de la ligne de commande', async () => {
     const { tiersId, missionId } = await contexte()
@@ -296,6 +352,44 @@ describe('attachOrderLine', () => {
     // Et rien n'a été lu chez Dolibarr : une garde qui parle après coup a déjà
     // interrogé l'instance pour un demandeur sans droit.
     expect(api.appels.getOrder).toBe(0)
+  })
+
+  it('verrouille les chiffres repris : ils ne se modifient plus localement', async () => {
+    // Le verrou du service testait « est-ce une propale ? ». Une prestation
+    // reprise d'une commande redevenait modifiable, et ses jours vendus
+    // pouvaient diverger du document — sur les chiffres qui seront facturés.
+    const { tiersId, missionId } = await contexte()
+    const ligne = await createLine({
+      missionId,
+      label: 'Consultant',
+      userId,
+      soldCentiemes: 0,
+      tjmCents: 0,
+    })
+    const commande = api.seedOrder({
+      ref: 'CO2608-0052',
+      socid: tiersId,
+      lines: [{ label: 'Consultant', qty: 10, subpriceCents: 50_000 }],
+    })
+    await attachOrderLine({
+      userId,
+      lineId: ligne.id,
+      orderId: commande.id,
+      orderLineId: commande.lines[0]!.id,
+      api,
+    })
+
+    const refus = await updateLine({ userId, lineId: ligne.id, soldCentiemes: 4000 })
+    expect(refus).toEqual({
+      ok: false,
+      reason: 'ENGAGEMENT_EXTERNE',
+      // Le document est nommé : « la propale » enverrait chercher au mauvais
+      // endroit.
+      message: expect.stringContaining('commande Dolibarr'),
+    })
+
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: ligne.id } })
+    expect(relue.soldCentiemes).toBe(1000)
   })
 
   it('refuse une ligne absente de la commande sans rien écrire', async () => {

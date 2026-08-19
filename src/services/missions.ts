@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { prisma } from '@/db/client'
+import { engagementVerrouille, libelleEngagement } from '@/core/dolibarr/engagement'
 import { getSettings } from './settings'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import type { DisplayUnit, EngagementSource } from '@/core/types'
@@ -232,14 +233,17 @@ export async function updateLine(args: {
     (args.soldCentiemes !== undefined && args.soldCentiemes !== ligne.soldCentiemes) ||
     (args.tjmCents !== undefined && args.tjmCents !== ligne.tjmCents)
 
-  if (ligne.engagementSource === 'DOLIBARR_PROPALE' && toucheEngagement) {
+  const source = ligne.engagementSource as EngagementSource
+  if (engagementVerrouille(source) && toucheEngagement) {
     return {
       ok: false,
       reason: 'ENGAGEMENT_EXTERNE',
+      // Le document est **nommé** : « la propale » sur un engagement repris
+      // d'une commande enverrait chercher au mauvais endroit.
       message:
-        'Les jours vendus et le TJM de cette prestation proviennent de la propale Dolibarr ' +
-        'à laquelle elle est rattachée. Modifiez-les dans Dolibarr : l’application ne ' +
-        'modifie jamais une propale.',
+        `Les jours vendus et le TJM de cette prestation proviennent de la ${libelleEngagement(source)} ` +
+        'à laquelle elle est rattachée. Modifiez-les dans Dolibarr, qui en reste maître : ' +
+        'l’application ne modifie jamais un document commercial.',
     }
   }
 
