@@ -341,6 +341,19 @@ describe('le double refuse ce que Documenso refuserait', () => {
       fileName: 'CRA-ACME-2026-06.pdf',
       pdf: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
       destinataire: { nom: 'Claire Martin', email: 'claire@acme.test' },
+      champs: [
+        {
+          nature: 'SIGNATURE' as const,
+          ancre: '[[cra:signature]]',
+          page: 1,
+          x: 600,
+          y: 120,
+          largeur: 148,
+          hauteur: 34,
+          pageLargeur: 842,
+          pageHauteur: 595,
+        },
+      ],
     })
     await c.status('42')
     await c.download('42')
@@ -352,6 +365,51 @@ describe('le double refuse ce que Documenso refuserait', () => {
 })
 
 describe('send', () => {
+  it('place les champs de signature, sans quoi Documenso reçoit un PDF muet', async () => {
+    // Le pavé « Bon pour accord » n'est qu'un dessin : sans champ, il faut les
+    // poser à la main dans l'interface, sur chaque CRA, tous les mois.
+    const api = faussApi()
+    await connecteur(api.fetchFn).send({
+      titre: 'CRA ACME — juin 2026',
+      fileName: 'CRA-ACME-2026-06.pdf',
+      pdf: new Uint8Array([0x25]),
+      destinataire: { nom: 'Claire Martin', email: 'claire@acme.test' },
+      champs: [
+        {
+          nature: 'SIGNATURE' as const,
+          ancre: '[[cra:signature]]',
+          page: 1,
+          x: 600,
+          y: 120,
+          largeur: 148,
+          hauteur: 34,
+          pageLargeur: 842,
+          pageHauteur: 595,
+        },
+        {
+          nature: 'DATE' as const,
+          ancre: '[[cra:date]]',
+          page: 1,
+          x: 521,
+          y: 138,
+          largeur: 70,
+          hauteur: 16,
+          pageLargeur: 842,
+          pageHauteur: 595,
+        },
+      ],
+    })
+
+    const creation = api.appels.find((a) => a.url.endsWith('/api/v1/documents'))
+    const corps = JSON.parse(String(creation?.body ?? '{}')) as {
+      recipients: Array<{ fields?: Array<{ formType: string; pageY: number }> }>
+    }
+    const champs = corps.recipients[0]?.fields ?? []
+    expect(champs.map((c) => c.formType)).toEqual(['SIGNATURE', 'DATE'])
+    // Et les coordonnées sont retournées : Documenso compte depuis le haut.
+    expect(champs[0]!.pageY).toBeCloseTo(((595 - 154) / 595) * 100, 1)
+  })
+
   it('crée le document, téléverse le PDF, puis l envoie — dans cet ordre', async () => {
     const api = faussApi()
     const externalId = await connecteur(api.fetchFn).send({
@@ -359,6 +417,19 @@ describe('send', () => {
       fileName: 'CRA-ACME-2026-06.pdf',
       pdf: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
       destinataire: { nom: 'Claire Martin', email: 'claire@acme.test' },
+      champs: [
+        {
+          nature: 'SIGNATURE' as const,
+          ancre: '[[cra:signature]]',
+          page: 1,
+          x: 600,
+          y: 120,
+          largeur: 148,
+          hauteur: 34,
+          pageLargeur: 842,
+          pageHauteur: 595,
+        },
+      ],
     })
 
     expect(externalId).toBe('42')
@@ -376,6 +447,19 @@ describe('send', () => {
       fileName: 'CRA-ACME-2026-06.pdf',
       pdf: new Uint8Array([0x25]),
       destinataire: { nom: 'Claire Martin', email: 'claire@acme.test' },
+      champs: [
+        {
+          nature: 'SIGNATURE' as const,
+          ancre: '[[cra:signature]]',
+          page: 1,
+          x: 600,
+          y: 120,
+          largeur: 148,
+          hauteur: 34,
+          pageLargeur: 842,
+          pageHauteur: 595,
+        },
+      ],
     })
 
     expect(api.appels[0]!.headers['Authorization']).toBe(CLE)
@@ -391,6 +475,19 @@ describe('send', () => {
       fileName: 'f.pdf',
       pdf: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
       destinataire: { nom: 'C', email: 'c@acme.test' },
+      champs: [
+        {
+          nature: 'SIGNATURE' as const,
+          ancre: '[[cra:signature]]',
+          page: 1,
+          x: 600,
+          y: 120,
+          largeur: 148,
+          hauteur: 34,
+          pageLargeur: 842,
+          pageHauteur: 595,
+        },
+      ],
     })
     expect(Array.from(api.appels[1]!.body as Uint8Array)).toEqual([0x25, 0x50, 0x44, 0x46, 0x2d])
   })
@@ -403,6 +500,19 @@ describe('send', () => {
         fileName: 'f.pdf',
         pdf: new Uint8Array([1]),
         destinataire: { nom: 'C', email: 'c@acme.test' },
+        champs: [
+          {
+            nature: 'SIGNATURE' as const,
+            ancre: '[[cra:signature]]',
+            page: 1,
+            x: 600,
+            y: 120,
+            largeur: 148,
+            hauteur: 34,
+            pageLargeur: 842,
+            pageHauteur: 595,
+          },
+        ],
       }),
     ).rejects.toBeInstanceOf(SignatureConnectorError)
   })
@@ -415,6 +525,19 @@ describe('send', () => {
         fileName: 'f.pdf',
         pdf: new Uint8Array([1]),
         destinataire: { nom: 'C', email: 'c@acme.test' },
+        champs: [
+          {
+            nature: 'SIGNATURE' as const,
+            ancre: '[[cra:signature]]',
+            page: 1,
+            x: 600,
+            y: 120,
+            largeur: 148,
+            hauteur: 34,
+            pageLargeur: 842,
+            pageHauteur: 595,
+          },
+        ],
       }),
     ).rejects.toMatchObject({ statusCode: 503 })
   })

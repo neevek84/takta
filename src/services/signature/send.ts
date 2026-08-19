@@ -82,13 +82,13 @@ export async function sendCraForSignature(
     options.connector !== undefined ? options.connector : await getSignatureConnector()
   if (connector === null) return echec('PAS_DE_CONNECTEUR')
 
-  const { fileName, bytes } = await buildCraPdf(userId, craId)
+  const { fileName, bytes, champs } = await buildCraPdf(userId, craId)
   const mois = cra.month.toISOString().slice(0, 7)
   const titre = `CRA ${cra.mission.client.name} — ${cra.mission.label} — ${libelleMois(mois)}`
 
   let externalId: string
   try {
-    externalId = await connector.send({ titre, fileName, pdf: bytes, destinataire })
+    externalId = await connector.send({ titre, fileName, pdf: bytes, destinataire, champs })
   } catch {
     // L'erreur n'est pas propagée telle quelle : elle peut porter ce que le
     // prestataire a renvoyé, et ce message finit sous les yeux de

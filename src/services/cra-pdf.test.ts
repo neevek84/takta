@@ -88,6 +88,26 @@ async function saisir(lineId: string, date: string, minutes: number): Promise<vo
 }
 
 describe('buildCraPdf', () => {
+  it('rend les deux champs à signer, situés dans le fichier livré', async () => {
+    // Sans eux le prestataire de signature reçoit un PDF muet, et il faut
+    // poser les champs à la main sur chaque CRA, tous les mois.
+    await saisir(ligneJour, '2026-06-01', 480)
+    const { champs, bytes } = await buildCraPdf(userId, craId)
+
+    expect(champs.map((c) => c.nature).sort()).toEqual(['DATE', 'SIGNATURE'])
+    for (const champ of champs) {
+      expect(champ.page).toBeGreaterThanOrEqual(1)
+      expect(champ.largeur).toBeGreaterThan(0)
+      expect(champ.hauteur).toBeGreaterThan(0)
+      // Le champ tient dans sa page — une zone qui déborde fait signer dans le vide.
+      expect(champ.x + champ.largeur).toBeLessThanOrEqual(champ.pageLargeur)
+      expect(champ.y + champ.hauteur).toBeLessThanOrEqual(champ.pageHauteur)
+      // Et son ancre est réellement dans le fichier : c'est ce que cherchent
+      // les outils qui placent leurs champs par le texte.
+      expect(Buffer.from(bytes).toString('latin1')).toContain(champ.ancre)
+    }
+  })
+
   it('produit un fichier PDF', async () => {
     await saisir(ligneJour, '2026-06-01', 480)
     const { bytes } = await buildCraPdf(userId, craId)

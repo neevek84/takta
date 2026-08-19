@@ -2,6 +2,8 @@ import { prisma } from '@/db/client'
 import { renderPdf } from '@/core/pdf/writer'
 import { buildCraDocument, type CraDocument } from '@/core/cra/document'
 import { layoutCraDocument } from '@/core/cra/layout'
+import { zonesSignature } from '@/core/cra/signature-zones'
+import type { SignatureChamp } from '@/core/signature/connector'
 import type { TimeEntryKind } from '@/core/types'
 import { readSettingsRow } from './settings'
 
@@ -10,6 +12,15 @@ export interface CraPdf {
   bytes: Uint8Array
   /** le modèle qui a servi à composer le fichier, utile aux appelants et aux tests */
   document: CraDocument
+  /**
+   * Où signer, dans **ce** fichier.
+   *
+   * Rendu ici et pas recalculé par l'appelant : les zones viennent de la
+   * position réellement occupée par les ancres dans les pages composées, et
+   * une seconde géométrie finirait par désigner un autre endroit que le cadre
+   * dessiné.
+   */
+  champs: ReadonlyArray<SignatureChamp>
 }
 
 export interface CraPdfTelechargement {
@@ -168,10 +179,19 @@ export async function buildCraPdf(userId: string, craId: string): Promise<CraPdf
     })),
   })
 
+  const pages = layoutCraDocument(document)
+  // Les zones se lisent dans les pages composées, jamais recalculées : c'est
+  // la même vérité qui dessine le cadre et qui dit où signer.
+  const zones = zonesSignature(pages)
+
   return {
     fileName: contexte.fileName,
-    bytes: renderPdf(layoutCraDocument(document)),
+    bytes: renderPdf(pages),
     document,
+    champs: [
+      { nature: 'SIGNATURE' as const, ...zones.signature },
+      { nature: 'DATE' as const, ...zones.date },
+    ],
   }
 }
 

@@ -44,6 +44,14 @@ export interface PdfText {
   bold?: boolean
   /** encre du texte ; noir à défaut, la mise en page passant son jeton */
   color?: PdfCouleur
+  /**
+   * Texte posé mais **non peint** (mode de rendu 3).
+   *
+   * Il reste dans la couche de texte : une extraction le voit, un outil de
+   * signature qui cherche une ancre le trouve. C'est ce qui permet de marquer
+   * l'emplacement des champs sans rien ajouter à ce que le client lit.
+   */
+  invisible?: boolean
 }
 
 export interface PdfLine {
@@ -306,6 +314,9 @@ function fluxDeContenu(page: PdfPage): Buffer {
       Buffer.from(
         encre(texte.color, 'rg') +
           `BT /${texte.bold === true ? 'F2' : 'F1'} ${nombre(texte.size)} Tf ` +
+          // `3 Tr` : posé, jamais peint. L'opérateur vit dans le bloc BT/ET,
+          // qui est propre à ce texte — rien à remettre à zéro derrière.
+          (texte.invisible === true ? '3 Tr ' : '') +
           `${nombre(texte.x)} ${nombre(texte.y)} Td `,
         'latin1',
       ),

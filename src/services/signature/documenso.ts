@@ -5,6 +5,7 @@ import {
   type SignatureFetchLike,
   type SignatureStatus,
 } from '@/core/signature/connector'
+import { versDocumensoField } from '@/core/signature/documenso-champs'
 import { PROVIDER_DOCUMENSO } from './constants'
 
 /**
@@ -73,6 +74,12 @@ export function createDocumensoConnector(args: {
               email: envoi.destinataire.email,
               role: 'SIGNER',
               signingOrder: 1,
+              // Sans champs, Documenso reçoit un PDF muet : le pavé « Bon pour
+              // accord » n'est qu'un dessin, et il faut les poser à la main
+              // dans son interface, sur chaque CRA, tous les mois. La
+              // conversion points → pourcentages vit dans `core/signature`,
+              // où elle est prouvée.
+              fields: envoi.champs.map(versDocumensoField),
             },
           ],
         }),

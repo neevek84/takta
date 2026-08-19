@@ -10,6 +10,12 @@ import {
 import { THEME_ENCRE_CLAIR } from '../theme/tokens'
 import type { EngagementDetaille } from '../engagement/compute'
 import { formatJours, type CraDocument, type CraLigne } from './document'
+import {
+  ANCRE_DATE,
+  ANCRE_SIGNATURE,
+  TAILLE_CHAMP_DATE,
+  TAILLE_CHAMP_SIGNATURE,
+} from './signature-zones'
 
 /**
  * La mise en page du CRA : **A4 couché**, le mois d'un seul tenant.
@@ -86,7 +92,7 @@ class Feuille {
     x: number,
     yHaut: number,
     text: string,
-    options: { size?: number; bold?: boolean; color?: string } = {},
+    options: { size?: number; bold?: boolean; color?: string; invisible?: boolean } = {},
   ): void {
     if (text === '') return
     this.texts.push({
@@ -95,8 +101,21 @@ class Feuille {
       size: options.size ?? 8,
       text,
       ...(options.bold === true ? { bold: true } : {}),
+      ...(options.invisible === true ? { invisible: true } : {}),
       color: options.color ?? T.ink,
     })
+  }
+
+  /**
+   * Une ancre : posée à un point précis, jamais peinte.
+   *
+   * `yHaut` désigne le **bas** du champ qu'elle marque, parce que c'est
+   * l'origine que les coordonnées PDF utilisent et que `zonesSignature` rend
+   * telle quelle. Le texte n'a ni taille lisible ni couleur : il n'est pas là
+   * pour être vu.
+   */
+  ancre(x: number, yHaut: number, text: string): void {
+    this.texte(x, yHaut, text, { size: 1, invisible: true })
   }
 
   /** Le même texte, aligné sur son bord droit. */
@@ -515,6 +534,14 @@ function colonneDeDroite(
   f.pave(X_DROITE, yPave, LARGEUR_DROITE, 2.5, { fill: T.accent })
   f.texte(X_DROITE + 9, yPave + 17, 'DATE', { size: 6.5, bold: true, color: T.muted })
   f.texte(X_DROITE + 88, yPave + 17, 'SIGNATURE', { size: 6.5, bold: true, color: T.muted })
+
+  // Les deux ancres, à l'aplomb de leur intitulé et au ras du bas de leur
+  // champ. Elles ne se voient pas et ne se lisent qu'à l'extraction : c'est ce
+  // qui permet à un outil de signature de trouver l'emplacement sans que rien
+  // ne s'ajoute à ce que le client lit. `zonesSignature` rend leur position
+  // telle quelle — une seule vérité pour le dessin et pour les coordonnées.
+  f.ancre(X_DROITE + 9, yPave + 22 + TAILLE_CHAMP_DATE.hauteur, ANCRE_DATE)
+  f.ancre(X_DROITE + 88, yPave + 22 + TAILLE_CHAMP_SIGNATURE.hauteur, ANCRE_SIGNATURE)
   f.texte(X_DROITE + 9, yPave + hauteurPave - 12, doc.signataireNom, {
     size: 7.5,
     color: T.muted,
