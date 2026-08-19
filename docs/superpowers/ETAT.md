@@ -179,6 +179,13 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 
 ---
 
+- **`dolibarrUserId` est de portée instance alors qu'il désigne une personne.**
+  Tous les temps poussés partent sous le même utilisateur Dolibarr, quel que
+  soit le propriétaire du CRA. Invisible à un seul consultant, faux à deux.
+  Le rôle `User.role` existe et n'est lu par aucun écran. Cadré dans
+  `docs/superpowers/specs/2026-08-19-roles-et-portees-design.md` ; le porteur a
+  demandé de valider d'abord le fonctionnement, puis de faire l'évolution.
+
 ## 9. Environnement du porteur
 
 - **Dolibarr 23.0.1** joignable par API. Exercice fiscal : `SOCIETE_FISCAL_MONTH_START = 4` — **avril à mars**.
