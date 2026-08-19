@@ -11,7 +11,6 @@ const {
   listClients,
   listMissionsForUser,
   previewDolibarrSetup,
-  listerCommandes,
 } = vi.hoisted(() => ({
   requireUser: vi.fn(),
   getInstanceCredential: vi.fn(),
@@ -20,7 +19,6 @@ const {
   listClients: vi.fn(),
   listMissionsForUser: vi.fn(),
   previewDolibarrSetup: vi.fn(),
-  listerCommandes: vi.fn(),
 }))
 
 vi.mock('@/auth', () => ({ requireUser }))
@@ -30,7 +28,6 @@ vi.mock('@/services/dolibarr/import', () => ({ listImportCandidates }))
 vi.mock('@/services/clients', () => ({ listClients }))
 vi.mock('@/services/missions', () => ({ listMissionsForUser }))
 vi.mock('@/services/dolibarr/setup', () => ({ previewDolibarrSetup }))
-vi.mock('@/services/dolibarr/commande', () => ({ listerCommandes }))
 // Les server actions tireraient `next/cache` et l'authentification : le
 // formulaire les reçoit, il ne les exécute pas ici.
 vi.mock('./actions', () => ({
@@ -39,7 +36,6 @@ vi.mock('./actions', () => ({
   detacher: vi.fn(),
   pousserClient: vi.fn(),
   reprendreReglages: vi.fn(),
-  creerProjetCommande: vi.fn(),
 }))
 
 // Témoin : ce test porte sur le **câblage** de la page, pas sur le rendu du
@@ -111,38 +107,6 @@ const DIVERGENT = {
   reetalonnage: { concernees: 2, verrouillees: 1 },
 }
 
-const COMMANDES = [
-  {
-    id: 51,
-    ref: 'CO2608-0042',
-    refClient: 'BDC-2026-118',
-    label: 'AMOA ITSM',
-    socid: 1,
-    projectId: null,
-    lines: [],
-  },
-  {
-    id: 52,
-    ref: 'CO2608-0043',
-    refClient: '',
-    label: 'Run',
-    socid: 1,
-    projectId: null,
-    lines: [],
-  },
-  // Déjà rattachée à un projet : elle n'a plus rien à créer, et l'écran ne
-  // doit pas proposer d'en créer un second.
-  {
-    id: 53,
-    ref: 'CO2608-0044',
-    refClient: 'BDC-9',
-    label: 'Déjà',
-    socid: 1,
-    projectId: 9,
-    lines: [],
-  },
-]
-
 const MISSIONS = [
   {
     id: 'm1',
@@ -163,7 +127,6 @@ beforeEach(() => {
   listClients.mockReset().mockResolvedValue([{ id: 'c1', name: 'ACME local' }])
   listMissionsForUser.mockReset().mockResolvedValue(MISSIONS)
   previewDolibarrSetup.mockReset().mockResolvedValue(ALIGNE)
-  listerCommandes.mockReset().mockResolvedValue(COMMANDES)
 })
 afterEach(cleanup)
 
@@ -363,46 +326,5 @@ describe('page Administration · Dolibarr — reprise des réglages', () => {
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
     expect(screen.queryByText('correspondent déjà')).toBeNull()
     expect(screen.getByTestId('connexion')).toBeTruthy()
-  })
-})
-
-describe('page Administration · Dolibarr — création d’un projet depuis une commande', () => {
-  it('ne propose que les commandes sans projet', async () => {
-    await rendre()
-
-    expect(screen.getByRole('button', { name: /Créer le projet de « CO2608-0042 »/ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Créer le projet de « CO2608-0043 »/ })).toBeTruthy()
-    // Déjà rattachée : en reproposer la création ferait naître un second projet
-    // pour le même bon de commande.
-    expect(screen.queryByRole('button', { name: /Créer le projet de « CO2608-0044 »/ })).toBeNull()
-  })
-
-  it('affiche la référence client, et son absence quand il n’y en a pas', async () => {
-    await rendre()
-    const texte = document.body.textContent ?? ''
-
-    expect(texte).toContain('Référence client : BDC-2026-118')
-    expect(texte).toContain('Aucune référence client')
-  })
-
-  it('ne propose rien quand toutes les commandes portent déjà un projet', async () => {
-    listerCommandes.mockResolvedValue([{ ...COMMANDES[2] }])
-    await rendre()
-
-    expect(document.body.textContent ?? '').toContain('Aucune commande sans projet')
-  })
-
-  it('laisse les rattachements et l’aperçu à l’écran quand la liste des commandes échoue', async () => {
-    listerCommandes.mockRejectedValue(new Error('Dolibarr a répondu 500 sur /orders.'))
-    await rendre()
-    const texte = document.body.textContent ?? ''
-
-    // La panne se voit…
-    expect(texte).toContain('Dolibarr a répondu 500 sur /orders.')
-    // …sans emporter ce qui avait déjà été lu. L'aperçu des réglages est le
-    // témoin qui compte : il est lu juste avant les commandes, et une lecture
-    // placée avant lui le ferait disparaître à chaque panne sur /orders.
-    expect(texte).toContain('correspondent déjà')
-    expect(screen.getByRole('button', { name: /Rattacher « ACME distant »/ })).toBeTruthy()
   })
 })

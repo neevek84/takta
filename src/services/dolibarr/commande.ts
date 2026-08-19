@@ -30,7 +30,7 @@ import {
   type DolibarrProject,
 } from './api'
 import { attachMission, createMissionFromDolibarr, tiersAttendu, type AttachMissionResult } from './import'
-import { LIEN_COMMANDE } from './liens'
+import { LIEN_CLIENT, LIEN_COMMANDE } from './liens'
 
 /** Une commande proposée à l'écran, avec ce qu'il faut pour la choisir. */
 export interface CommandeCandidate {
@@ -90,6 +90,35 @@ export async function listerCommandes(api: DolibarrApi): Promise<CommandeCandida
     projectId: c.projectId,
     lines: c.lines,
   }))
+}
+
+/**
+ * Les commandes sur lesquelles une mission peut naître, **rangées sous le
+ * client local** auquel leur tiers est rattaché.
+ *
+ * C'est la forme dont l'écran des missions a besoin : on choisit un client,
+ * puis on voit ce qu'il reste à faire chez lui. Une commande dont le tiers
+ * n'est rattaché à aucun client local rend `clientId: null` — elle existe, mais
+ * aucune mission ne peut encore naître dessus, et le dire vaut mieux que la
+ * cacher.
+ *
+ * Les commandes qui portent déjà un projet sont écartées : la mission se
+ * rattache alors au projet existant, ce qui est un autre geste.
+ */
+export async function listerCommandesRattachables(args: {
+  api: DolibarrApi
+}): Promise<Array<CommandeCandidate & { clientId: string | null }>> {
+  const commandes = (await listerCommandes(args.api)).filter((c) => c.projectId === null)
+
+  // Sans filtre sur `userId`, comme partout ailleurs : une correspondance
+  // appartient à l'instance, pas à celui qui l'a posée.
+  const liens = await prisma.externalLink.findMany({
+    where: { entityType: LIEN_CLIENT, provider: DOLIBARR },
+    select: { entityId: true, externalId: true },
+  })
+  const clientParTiers = new Map(liens.map((l) => [l.externalId, l.entityId]))
+
+  return commandes.map((c) => ({ ...c, clientId: clientParTiers.get(String(c.socid)) ?? null }))
 }
 
 /** Le client local visé, et son nom — les deux que le refus de cohérence exige. */

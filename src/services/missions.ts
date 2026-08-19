@@ -117,6 +117,7 @@ export async function createLine(args: {
 export interface MissionForUser {
   id: string
   label: string
+  clientId: string
   clientName: string
   /** durée d'une journée réellement appliquée, après cascade */
   minutesParJourEffectif: number
@@ -167,6 +168,7 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
   return missions.map((m) => ({
     id: m.id,
     label: m.label,
+    clientId: m.client.id,
     clientName: m.client.name,
     minutesParJourEffectif: resolveMinutesParJour({
       mission: m.minutesParJour,

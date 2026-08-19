@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
 import { requireUser } from '@/auth'
 import { createClient } from '@/services/clients'
 import {
@@ -10,6 +11,8 @@ import {
   updateMissionSignataire,
   type SignataireResult,
 } from '@/services/missions'
+import { getDolibarrApi } from '@/services/dolibarr/resolve'
+import { creerProjetDepuisCommande } from '@/services/dolibarr/commande'
 import type { DisplayUnit } from '@/core/types'
 
 /**
@@ -162,4 +165,71 @@ export async function addLine(formData: FormData) {
   })
   revalidatePath('/missions')
   revalidatePath('/saisie')
+}
+
+/**
+ * Crée une mission à partir d'une commande Dolibarr : le projet naît, porte la
+ * référence du bon de commande, et la commande lui est rattachée.
+ *
+ * Le compte rendu passe par le bandeau, comme sur l'écran d'administration :
+ * c'est le seul endroit où le porteur apprendra que le projet existe **malgré**
+ * un rattachement de commande en échec. Le taire ferait recommencer — et naître
+ * un second projet pour le même bon de commande.
+ */
+export async function creerMissionDepuisCommande(formData: FormData): Promise<void> {
+  const user = await requireUser()
+  const api = await getDolibarrApi()
+  if (api === null) {
+    redirect(annonceMission("Dolibarr n'est pas connecté : aucune mission n'a été créée.", 'danger'))
+    return
+  }
+
+  const orderId = Number(formData.get('orderId'))
+  const clientId = String(formData.get('clientId') ?? '')
+  if (clientId === '') {
+    redirect(annonceMission('Choisissez le client de la mission à créer.', 'danger'))
+    return
+  }
+
+  let resultat: Awaited<ReturnType<typeof creerProjetDepuisCommande>>
+  try {
+    resultat = await creerProjetDepuisCommande({
+      userId: user.id,
+      orderId,
+      cible: { type: 'NOUVELLE_MISSION', clientId },
+      api,
+    })
+  } catch (err) {
+    redirect(annonceMission(err instanceof Error ? err.message : String(err), 'danger'))
+    return
+  }
+
+  const phrases: string[] = [
+    resultat.projetExistant
+      ? `La commande portait déjà le projet « ${resultat.projet.ref} » : la mission y est rattachée.`
+      : `Mission créée, avec le projet « ${resultat.projet.ref} — ${resultat.projet.title} ».`,
+  ]
+  if (resultat.sansReferenceClient) {
+    phrases.push(
+      "Cette commande ne porte aucune référence client : le projet a pris la référence de la " +
+        'commande. Renseignez « Réf. client » dans Dolibarr si la facture doit la porter.',
+    )
+  }
+  if (resultat.commandeNonRattachee !== null) {
+    phrases.push(
+      `Le projet existe, mais la commande n'a pas pu y être rattachée (${resultat.commandeNonRattachee}). ` +
+        'Rattachez-la dans Dolibarr, sans quoi la facture ne retrouvera pas le bon de commande. ' +
+        'Ne relancez pas la création : un second projet naîtrait.',
+    )
+  }
+
+  revalidatePath('/missions')
+  redirect(
+    annonceMission(phrases.join(' '), resultat.commandeNonRattachee === null ? 'success' : 'danger'),
+  )
+}
+
+/** Un message porté par la redirection, avec sa tonalité. */
+function annonceMission(message: string, tone: 'success' | 'danger' = 'success'): string {
+  return `/missions?message=${encodeURIComponent(message)}&tone=${tone}`
 }
