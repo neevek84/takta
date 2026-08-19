@@ -12,6 +12,7 @@ import {
   type SignataireResult,
 } from '@/services/missions'
 import { getDolibarrApi } from '@/services/dolibarr/resolve'
+import { ouvrirLaTacheDeLaPrestation } from '@/services/dolibarr/taches'
 import {
   creerMissionAvecProjet,
   creerProjetDepuisCommande,
@@ -207,18 +208,56 @@ export async function modifierLigne(
   return { ok: true }
 }
 
+/**
+ * Ajoute une prestation — et **sa tâche Dolibarr**, quand la mission est
+ * rattachée à un projet.
+ *
+ * Sans cela, une prestation née d'une commande recevait sa tâche à l'ouverture
+ * du chantier tandis qu'une prestation ajoutée à la main attendait le premier
+ * envoi de temps : le projet montrait une partie de ce qui avait été vendu, et
+ * le reste surgissait des semaines plus tard.
+ *
+ * L'échec d'ouverture ne fait jamais échouer l'ajout : la prestation est
+ * locale et valide. Il se dit, en revanche — croire sa tâche créée et ne pas
+ * la trouver est pire que de savoir qu'elle manque.
+ */
 export async function addLine(formData: FormData) {
   const user = await requireUser()
-  await createLine({
-    missionId: String(formData.get('missionId')),
+  const missionId = String(formData.get('missionId'))
+  const label = String(formData.get('label'))
+
+  const ligne = await createLine({
+    missionId,
     userId: user.id,
-    label: String(formData.get('label')),
+    label,
     soldCentiemes: Math.round(Number(formData.get('joursVendus')) * 100),
     tjmCents: Math.round(Number(formData.get('tjm')) * 100),
     displayUnit: String(formData.get('displayUnit')) as DisplayUnit,
   })
+
+  const { creee, echec } = await ouvrirLaTacheDeLaPrestation({
+    userId: user.id,
+    missionId,
+    lineId: ligne.id,
+    label,
+    api: await getDolibarrApi(),
+  })
+
   revalidatePath('/missions')
   revalidatePath('/saisie')
+
+  if (echec !== null) {
+    redirect(
+      annonceMission(
+        `Prestation ajoutée, mais sa tâche Dolibarr n'a pas pu être créée (${echec}). ` +
+          'Les temps ne partiront pas tant qu’elle manque.',
+        'danger',
+      ),
+    )
+  }
+  if (creee) {
+    redirect(annonceMission(`Prestation ajoutée, avec sa tâche « ${label} » dans le projet.`))
+  }
 }
 
 /**

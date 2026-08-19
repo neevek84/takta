@@ -39,7 +39,8 @@ import {
   tiersAttendu,
   type AttachMissionResult,
 } from './import'
-import { LIEN_CLIENT, LIEN_COMMANDE, LIEN_LIGNE, LIEN_MISSION } from './liens'
+import { LIEN_CLIENT, LIEN_COMMANDE, LIEN_MISSION } from './liens'
+import { assurerLaTache } from './taches'
 
 /** Une commande proposée à l'écran, avec ce qu'il faut pour la choisir. */
 export interface CommandeCandidate {
@@ -490,39 +491,33 @@ async function ouvrirLesPrestations(args: {
       tjmCents,
     })
 
-    const deja = existantes.find((t) => t.label === label)
-    const tache = deja ?? (await args.api.createTask({ projectId: args.projectId, label }))
-    if (deja === undefined) {
-      tachesCreees += 1
-      existantes.push(tache)
-    }
+    // La tâche passe par le même chemin qu'une prestation ajoutée à la main :
+    // deux implémentations auraient fini par diverger sur la réutilisation.
+    const { creee } = await assurerLaTache({
+      userId: args.userId,
+      lineId: prestation.id,
+      label,
+      projectId: args.projectId,
+      api: args.api,
+      connues: existantes,
+    })
+    if (creee) tachesCreees += 1
 
     await prisma.$transaction(async (tx) => {
       await tx.missionLine.update({
         where: { id: prestation.id },
         data: { engagementSource: 'DOLIBARR_COMMANDE' },
       })
-      await tx.externalLink.createMany({
-        data: [
-          {
-            userId: args.userId,
-            entityType: LIEN_COMMANDE,
-            entityId: prestation.id,
-            provider: DOLIBARR,
-            externalId: `${args.commande.id}:${ligne.id}`,
-            syncedAt: new Date(),
-            syncState: 'SYNCED',
-          },
-          {
-            userId: args.userId,
-            entityType: LIEN_LIGNE,
-            entityId: prestation.id,
-            provider: DOLIBARR,
-            externalId: String(tache.id),
-            syncedAt: new Date(),
-            syncState: 'SYNCED',
-          },
-        ],
+      await tx.externalLink.create({
+        data: {
+          userId: args.userId,
+          entityType: LIEN_COMMANDE,
+          entityId: prestation.id,
+          provider: DOLIBARR,
+          externalId: `${args.commande.id}:${ligne.id}`,
+          syncedAt: new Date(),
+          syncState: 'SYNCED',
+        },
       })
     })
   }
