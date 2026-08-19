@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  LONGUEUR_MAX_REF,
   LONGUEUR_MAX_TITRE,
   referenceExterneCommande,
+  referenceProjetDepuisCommande,
+  referenceProjetDepuisMission,
   titreProjetDepuisCommande,
 } from './commande'
 
@@ -105,5 +108,44 @@ describe('referenceExterneCommande', () => {
 
   it('rend une chaîne vide quand la commande n’en porte aucune — rien à reporter', () => {
     expect(referenceExterneCommande({ refClient: '   ' })).toBe('')
+  })
+})
+
+describe('referenceProjetDepuisCommande', () => {
+  it('reprend la référence de la commande', () => {
+    expect(referenceProjetDepuisCommande({ ref: 'CO2605-0021' })).toBe('CO2605-0021')
+  })
+
+  it('ne marche jamais sur la numérotation de Dolibarr', () => {
+    // `PJ` est le préfixe de sa séquence automatique : y poser nos références
+    // provoquerait un jour un conflit sur un numéro qu'il croyait libre.
+    expect(referenceProjetDepuisCommande({ ref: 'CO2605-0021' }).startsWith('PJ')).toBe(false)
+    expect(referenceProjetDepuisMission({ label: 'Guichet unique' }).startsWith('PJ')).toBe(false)
+  })
+
+  it('refuse une commande sans référence', () => {
+    expect(() => referenceProjetDepuisCommande({ ref: '  ' })).toThrow(/référence/i)
+  })
+})
+
+describe('referenceProjetDepuisMission', () => {
+  it('dérive une référence lisible du libellé', () => {
+    expect(referenceProjetDepuisMission({ label: 'Guichet unique' })).toBe('MIS-GUICHET-UNIQUE')
+  })
+
+  it('retire accents et ponctuation, que Dolibarr n’aime pas dans une référence', () => {
+    expect(referenceProjetDepuisMission({ label: 'Réf. « clé » / suivi' })).toBe(
+      'MIS-REF-CLE-SUIVI',
+    )
+  })
+
+  it('tronque sans laisser de tiret pendant', () => {
+    const ref = referenceProjetDepuisMission({ label: 'A'.repeat(20) + ' ' + 'B'.repeat(20) })
+    expect(ref.length).toBeLessThanOrEqual(LONGUEUR_MAX_REF)
+    expect(ref.endsWith('-')).toBe(false)
+  })
+
+  it('refuse un libellé dont il ne reste rien', () => {
+    expect(() => referenceProjetDepuisMission({ label: '«»' })).toThrow(/libellé/i)
   })
 })

@@ -20,6 +20,8 @@ import { createLine, createMission } from '@/services/missions'
 import { verifierCoherenceTiers } from '@/core/dolibarr/coherence'
 import {
   referenceExterneCommande,
+  referenceProjetDepuisCommande,
+  referenceProjetDepuisMission,
   titreProjetDepuisCommande,
 } from '@/core/dolibarr/commande'
 import { reprendreLigneVendue } from '@/core/dolibarr/ligne-vendue'
@@ -370,6 +372,10 @@ export async function creerProjetDepuisCommande(args: {
     ? await projetDeLaCommande(args.api, commande)
     : await args.api.createProject({
         socid: commande.socid,
+        // La référence de la commande : unique par construction, elle dit d'où
+        // le projet vient, et une seconde tentative se heurte à elle plutôt que
+        // d'ouvrir un doublon.
+        ref: referenceProjetDepuisCommande(commande),
         title: titre,
         refExt,
         description: `Projet ouvert depuis la commande ${commande.ref}${
@@ -699,6 +705,7 @@ export async function creerMissionAvecProjet(args: {
 
     projet = await api.createProject({
       socid,
+      ref: referenceProjetDepuisMission({ label: args.label }),
       title: args.label,
       // Aucune référence client à reporter : cette mission ne vient d'aucun
       // document. Inventer une valeur ferait passer pour un report ce qui n'en

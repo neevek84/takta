@@ -340,6 +340,24 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     })
   })
 
+  it('envoie la référence du projet, que Dolibarr exige', async () => {
+    const { vues, fetchImpl } = espion(() => reponse(12))
+    const api = createHttpDolibarrApi({ baseUrl: BASE, apiKey: 'k', fetchImpl })
+
+    await api.createProject({
+      socid: 3,
+      ref: 'CO2605-0021',
+      title: 'T',
+      refExt: 'BDC-9',
+      description: 'd',
+    })
+
+    const corps = JSON.parse(vues[0]!.body ?? '{}') as Record<string, unknown>
+    expect(corps.ref).toBe('CO2605-0021')
+    expect(corps.usage_task).toBe(1)
+    expect(corps.usage_bill_time).toBe(1)
+  })
+
   it('reprend le motif de Dolibarr au lieu de le jeter', async () => {
     // « Dolibarr a refusé la requête /projects (400) » ne dit pas quel champ
     // manque : c'est un mur. Dolibarr, lui, le dit.
@@ -351,7 +369,7 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     })
 
     await expect(
-      api.createProject({ socid: 3, title: 'T', refExt: '', description: '' }),
+      api.createProject({ socid: 3, ref: 'CO-X', title: 'T', refExt: '', description: '' }),
     ).rejects.toThrow(/Ref is mandatory/)
   })
 

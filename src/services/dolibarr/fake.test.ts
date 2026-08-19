@@ -253,3 +253,41 @@ describe('double de l API Dolibarr — garde-fou inverse', () => {
     expect(api.timespents.map((t) => t.durationSeconds)).toEqual([25_200, 12_600])
   })
 })
+
+describe('createProject — le double refuse ce que l’instance refuse', () => {
+  it('refuse un projet sans référence, comme Dolibarr', async () => {
+    // Mesuré sur l'instance du porteur : « Bad Request: ref field missing ».
+    // Le double l'ignorait, et c'est pour cela que le défaut n'a été découvert
+    // qu'en production.
+    const api = new FakeDolibarr()
+    const tiers = api.seedThirdparty('ACME')
+
+    await expect(
+      api.createProject({ socid: tiers.id, ref: '  ', title: 'T', refExt: '', description: '' }),
+    ).rejects.toThrow(/ref field missing/)
+  })
+
+  it('refuse une référence déjà prise', async () => {
+    // C'est ce refus qui rend la création idempotente : une seconde tentative
+    // se heurte à la référence plutôt que d'ouvrir un second projet.
+    const api = new FakeDolibarr()
+    const tiers = api.seedThirdparty('ACME')
+    const commun = { socid: tiers.id, ref: 'CO-1', title: 'T', refExt: '', description: '' }
+
+    await api.createProject(commun)
+    await expect(api.createProject(commun)).rejects.toThrow(/existe déjà/)
+  })
+
+  it('donne au projet la référence demandée, jamais une inventée', async () => {
+    const api = new FakeDolibarr()
+    const tiers = api.seedThirdparty('ACME')
+    const p = await api.createProject({
+      socid: tiers.id,
+      ref: 'CO2605-0021',
+      title: 'T',
+      refExt: '',
+      description: '',
+    })
+    expect(p.ref).toBe('CO2605-0021')
+  })
+})

@@ -332,14 +332,18 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
       case 'POST /projects': {
         if (!estObjet(corps)) return refus('Body is mandatory')
         if (String(corps.title ?? '').trim() === '') return refus('Title is mandatory')
+        // Le refus exact de l'instance du porteur, mesuré le 20 août 2026.
+        if (String(corps.ref ?? '').trim() === '') return refus('Bad Request: ref field missing')
+        if (projects.some((p) => p.ref === String(corps.ref))) {
+          return refus(`Project ${String(corps.ref)} already exists`)
+        }
         if (thirdparties.find((t) => t.id === Number(corps.socid)) === undefined) {
           return refus('Thirdparty not found')
         }
         const id = suivant()
         projects.push({
           id,
-          // Dolibarr attribue la référence : le client la relit, il ne l'invente pas.
-          ref: `PJ${String(id).padStart(4, '0')}`,
+          ref: String(corps.ref),
           title: String(corps.title),
           socid: Number(corps.socid),
           // Le client impose les deux drapeaux ; le double refuse un projet qui

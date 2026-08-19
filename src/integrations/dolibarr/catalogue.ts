@@ -19,6 +19,12 @@ import type { CatalogueSysteme } from '@/core/integrations/catalogue'
 const VERSION = '23.0.1'
 const DATE = '2026-08-16'
 const PAR_LE_DOUBLE = { version: VERSION, date: DATE, moyen: 'DOUBLE' as const }
+/**
+ * Éprouvé contre l'instance réelle du porteur, et pas seulement contre le
+ * double. La date est en UTC, comme celle que le contrôle du catalogue
+ * compare.
+ */
+const PAR_L_INSTANCE = { version: VERSION, date: '2026-08-19', moyen: 'INSTANCE_PORTEUR' as const }
 
 export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
   systeme: 'Dolibarr',
@@ -371,6 +377,12 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
       emisPar: 'src/services/dolibarr/http.ts · createProject',
       parametres: [
         {
+          nom: 'ref',
+          source: 'CALCUL',
+          origine: 'src/core/dolibarr/commande.ts · referenceProjetDepuisCommande',
+          exemple: 'CO-EXEMPLE',
+        },
+        {
           nom: 'title',
           source: 'SAISIE',
           origine: 'src/core/dolibarr/commande.ts · titreProjetDepuisCommande',
@@ -407,16 +419,19 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
           exemple: '1',
         },
       ],
-      preuve: PAR_LE_DOUBLE,
+      preuve: PAR_L_INSTANCE,
       echec: {
         comportement: 'ABANDONNE',
         visible: "L'écran affiche le refus ; aucune correspondance locale n'est posée.",
       },
       reglagesTiers: [],
       note:
-        '`usage_task` et `usage_bill_time` sont imposés et non paramétrables : sans eux le projet ' +
-        'n’accepte ni tâche ni temps facturable, et `listProjects` le filtrerait aussitôt — ' +
-        'l’application aurait créé ce qu’elle refuse de rattacher. Dolibarr rend un entier nu.',
+        '`ref` est **obligatoire** : l’interface de Dolibarr la fabrique par son module de ' +
+        'numérotation, son API non — elle refuse par « Bad Request: ref field missing ». Jamais ' +
+        'préfixée `PJ`, qui est celui de sa séquence automatique. `usage_task` et ' +
+        '`usage_bill_time` sont imposés et non paramétrables : sans eux le projet n’accepte ni ' +
+        'tâche ni temps facturable, et `listProjects` le filtrerait aussitôt. Dolibarr rend un ' +
+        'entier nu.',
     },
     {
       operation: 'Relire le projet créé pour connaître la référence attribuée',

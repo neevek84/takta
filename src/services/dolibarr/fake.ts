@@ -224,6 +224,15 @@ export class FakeDolibarr implements DolibarrApi {
     if (args.title.trim() === '') {
       throw new DolibarrRequestError('Dolibarr refuse un projet sans titre.')
     }
+    // Mesuré sur l'instance réelle : « Bad Request: ref field missing ». Le
+    // double l'ignorait, et c'est pour ça que le défaut n'a été découvert
+    // qu'en production.
+    if (args.ref.trim() === '') {
+      throw new DolibarrRequestError('Bad Request: ref field missing')
+    }
+    if (this.projects.some((p) => p.ref === args.ref)) {
+      throw new DolibarrRequestError(`Le projet ${args.ref} existe déjà.`)
+    }
     if (!entierPositif(args.socid)) {
       throw new DolibarrRequestError('Dolibarr refuse un projet rattaché à un tiers inconnu.')
     }
@@ -234,7 +243,7 @@ export class FakeDolibarr implements DolibarrApi {
     const id = this.next()
     const p: FakeProject = {
       id,
-      ref: `PJ${String(id).padStart(4, '0')}`,
+      ref: args.ref,
       title: args.title,
       socid: args.socid,
       // Le port n'expose pas le réglage : un projet créé d'ici est toujours

@@ -89,3 +89,53 @@ export function titreProjetDepuisCommande(commande: {
 export function referenceExterneCommande(commande: { refClient: string }): string {
   return replier(commande.refClient)
 }
+
+/** Ce que la colonne `ref` d'un projet Dolibarr accepte. */
+export const LONGUEUR_MAX_REF = 30
+
+/**
+ * La référence du projet créé.
+ *
+ * **Dolibarr l'exige.** Son interface la fabrique elle-même par le module de
+ * numérotation ; son API, non — elle refuse la création par
+ * « Bad Request: ref field missing », mesuré sur l'instance du porteur le
+ * 20 août 2026.
+ *
+ * **Jamais préfixée `PJ`.** C'est le préfixe de la numérotation automatique de
+ * Dolibarr : y poser nos propres références reviendrait à marcher sur sa
+ * séquence, et à provoquer un jour un conflit sur un numéro qu'il croyait
+ * libre.
+ *
+ * Depuis une commande, c'est **la référence de la commande** : unique par
+ * construction, et elle dit d'où le projet vient. Elle rend aussi la création
+ * idempotente côté Dolibarr — une seconde tentative se heurte à la référence
+ * déjà prise plutôt que d'ouvrir un doublon.
+ */
+export function referenceProjetDepuisCommande(commande: { ref: string }): string {
+  const ref = replier(commande.ref)
+  if (ref === '') {
+    throw new Error('Une commande sans référence ne peut pas nommer un projet.')
+  }
+  return ref.slice(0, LONGUEUR_MAX_REF)
+}
+
+/**
+ * La référence d'un projet ouvert pour une mission, faute de document.
+ *
+ * Dérivée du libellé pour rester lisible dans Dolibarr. Deux missions de même
+ * libellé produiraient la même référence : Dolibarr refusera la seconde en le
+ * disant, ce qui vaut mieux qu'une référence illisible imposée à toutes.
+ */
+export function referenceProjetDepuisMission(mission: { label: string }): string {
+  const slug = replier(mission.label)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+  if (slug === '') {
+    throw new Error('Une mission sans libellé exploitable ne peut pas nommer un projet.')
+  }
+  return `MIS-${slug}`.slice(0, LONGUEUR_MAX_REF).replace(/-+$/, '')
+}

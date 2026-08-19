@@ -272,6 +272,7 @@ export function createHttpDolibarrApi(args: {
       const id = (await appel(ctx, '/projects', {
         method: 'POST',
         body: JSON.stringify({
+          ref: a.ref,
           title: a.title,
           socid: a.socid,
           ref_ext: a.refExt,

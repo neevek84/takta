@@ -49,6 +49,7 @@ async function exercerTout(): Promise<string[]> {
   await api.getOrder(commande.id)
   const projetCree = await api.createProject({
     socid: tiers.id,
+    ref: 'CO-EXEMPLE',
     title: 'BDC-EXEMPLE — Libellé de la commande',
     refExt: 'BDC-EXEMPLE',
     description: 'Projet ouvert depuis la commande CO-EXEMPLE.',

@@ -78,6 +78,13 @@ export interface DolibarrOrder {
 /** Ce qu'il faut à Dolibarr pour créer un projet facturable au temps. */
 export interface DolibarrProjectCreation {
   socid: number
+  /**
+   * `ref` du projet. **Obligatoire** : l'interface de Dolibarr la fabrique par
+   * son module de numérotation, son API non — elle refuse la création par
+   * « Bad Request: ref field missing ». Mesuré sur l'instance 23.0.1 du
+   * porteur le 19 août 2026.
+   */
+  ref: string
   title: string
   /** `ref_ext` : la référence client reportée, `''` quand la commande n'en porte pas */
   refExt: string
