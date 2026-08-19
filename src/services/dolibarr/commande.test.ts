@@ -51,16 +51,21 @@ async function contexte(): Promise<{ tiersId: number; clientId: string; missionI
 }
 
 describe('listerCommandes', () => {
-  it('écarte les brouillons et les annulées : elles n’engagent rien', async () => {
+  it('ne garde que ce qui reste à faire : ni brouillon, ni annulée, ni livrée, ni facturée', async () => {
     const t = api.seedThirdparty('CMD ACME')
     api.seedOrder({ ref: 'CO-VALIDEE', socid: t.id, statut: 1 })
     api.seedOrder({ ref: 'CO-EN-COURS', socid: t.id, statut: 2 })
+    // Close : le travail y est fini, ouvrir un projet pour y saisir des temps
+    // à venir n'a plus de sens.
     api.seedOrder({ ref: 'CO-LIVREE', socid: t.id, statut: 3 })
     api.seedOrder({ ref: 'CO-BROUILLON', socid: t.id, statut: 0 })
     api.seedOrder({ ref: 'CO-ANNULEE', socid: t.id, statut: -1 })
+    // Entièrement facturée : plus rien à consommer, le projet ne serait
+    // jamais facturé.
+    api.seedOrder({ ref: 'CO-FACTUREE', socid: t.id, statut: 1, facturee: true })
 
     const commandes = await listerCommandes(api)
-    expect(commandes.map((c) => c.ref).sort()).toEqual(['CO-EN-COURS', 'CO-LIVREE', 'CO-VALIDEE'])
+    expect(commandes.map((c) => c.ref).sort()).toEqual(['CO-EN-COURS', 'CO-VALIDEE'])
   })
 })
 
@@ -84,7 +89,7 @@ describe('creerProjetDepuisCommande', () => {
     expect(r.projetExistant).toBe(false)
     expect(r.sansReferenceClient).toBe(false)
     expect(r.commandeNonRattachee).toBeNull()
-    expect(r.projet.title).toBe('BDC-2026-118 — AMOA ITSM')
+    expect(r.projet.title).toBe('BDC-2026-118 — CMD ACME — AMOA ITSM — CO2608-0042')
     // Le report machine : c'est lui qui survit à un renommage du projet.
     expect(api.refExtDuProjet(r.projet.id)).toBe('BDC-2026-118')
     // Et le retour côté commande, sans lequel la facture ne retrouve pas le BDC.
@@ -115,7 +120,7 @@ describe('creerProjetDepuisCommande', () => {
 
     expect(r.sansReferenceClient).toBe(true)
     expect(api.refExtDuProjet(r.projet.id)).toBe('')
-    expect(r.projet.title).toBe('CO2608-0043 — Run')
+    expect(r.projet.title).toBe('CO2608-0043 — CMD ACME — Run')
   })
 
   it('ne crée pas un second projet quand la commande en porte déjà un', async () => {
@@ -228,7 +233,7 @@ describe('creerProjetDepuisCommande', () => {
     })
 
     const mission = await prisma.mission.findUniqueOrThrow({ where: { id: r.missionId } })
-    expect(mission.label).toBe('BDC-11 — Guichet unique')
+    expect(mission.label).toBe('BDC-11 — CMD ACME — Guichet unique — CO2608-0048')
     expect(mission.clientId).toBe(client.id)
   })
 })

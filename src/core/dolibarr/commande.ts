@@ -44,8 +44,10 @@ export function titreProjetDepuisCommande(commande: {
   refClient: string
   /** `ref` de la commande, du genre `CO2608-0042` */
   ref: string
-  /** libellé ou objet de la commande, souvent vide lui aussi */
+  /** libellé ou objet de la commande — vide sur l'immense majorité d'entre elles */
   label: string
+  /** nom du tiers Dolibarr ; la commande ne le porte pas, il est résolu par le service */
+  thirdpartyName?: string
 }): string {
   const ref = replier(commande.ref)
   if (ref === '') {
@@ -54,14 +56,22 @@ export function titreProjetDepuisCommande(commande: {
 
   const refClient = replier(commande.refClient)
   const label = replier(commande.label)
+  const tiers = replier(commande.thirdpartyName ?? '')
 
+  // La référence client tient la tête, parce que c'est elle qu'on cherche. À
+  // défaut, la référence de la commande — jamais un titre qui n'identifierait
+  // rien.
   const tete = refClient === '' ? ref : refClient
-  // Quand la référence client tient la tête, la référence de la commande prend
-  // la place du libellé absent : sans elle, le titre ne dirait pas de quelle
-  // commande le projet est né.
-  const queue = label !== '' ? label : refClient === '' ? '' : ref
 
-  const titre = queue === '' ? tete : `${tete}${SEPARATEUR}${queue}`
+  const parts = [tete]
+  if (tiers !== '') parts.push(tiers)
+  if (label !== '') parts.push(label)
+  // La référence de la commande ferme le titre : sans elle, rien ne dit de
+  // quel document le projet est né. Sauf quand elle tient déjà la tête — la
+  // répéter n'ajouterait rien et mangerait la place des autres.
+  if (ref !== tete) parts.push(ref)
+
+  const titre = parts.join(SEPARATEUR)
   if (titre.length <= LONGUEUR_MAX_TITRE) return titre
 
   // Tronqué par la queue : c'est la tête qui identifie. `trimEnd` évite de

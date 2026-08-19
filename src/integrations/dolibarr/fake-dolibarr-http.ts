@@ -55,6 +55,7 @@ export interface FakeDolibarrHttp {
     refClient?: string
     label?: string
     statut?: number
+    facturee?: boolean
     projectId?: number | null
     lines?: Array<{ label: string; qty: number; subpriceEuros: number }>
   }): { id: number }
@@ -88,6 +89,7 @@ interface FauxCommande {
   label: string
   socid: number
   statut: number
+  facturee: boolean
   projectId: number | null
   lines: Array<{ id: number; label: string; qty: number; subpriceEuros: number }>
 }
@@ -374,6 +376,7 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
             socid: String(c.socid),
             label: c.label,
             statut: String(c.statut),
+            billed: c.facturee ? '1' : '0',
             fk_project: c.projectId === null ? null : String(c.projectId),
           })),
         )
@@ -490,6 +493,7 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
         label: a.label ?? '',
         socid: a.socid,
         statut: a.statut ?? 1,
+        facturee: a.facturee ?? false,
         projectId: a.projectId ?? null,
         lines: (a.lines ?? []).map((l) => ({ id: suivant(), ...l })),
       }

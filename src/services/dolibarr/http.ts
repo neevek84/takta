@@ -163,11 +163,15 @@ function versCommande(brut: Record<string, unknown>): DolibarrOrder {
 }
 
 /**
- * Les statuts de commande sur lesquels un projet peut naître : validée, en
- * cours, livrée. Un brouillon n'engage rien et une annulée n'engage plus —
- * créer un projet sur l'un ou l'autre fabriquerait un chantier sans commande.
+ * Les statuts de commande sur lesquels un projet peut naître : **validée** et
+ * **en cours**, rien d'autre.
+ *
+ * Un brouillon n'engage rien et une annulée n'engage plus — créer un projet
+ * sur l'un ou l'autre fabriquerait un chantier sans commande. Une **livrée**
+ * (statut 3) est close : le travail y est fini, et ouvrir un projet pour y
+ * saisir des temps à venir n'a plus de sens.
  */
-const STATUTS_COMMANDE_UTILISABLES = new Set([1, 2, 3])
+const STATUTS_COMMANDE_UTILISABLES = new Set([1, 2])
 
 export function createHttpDolibarrApi(args: {
   baseUrl: string
@@ -268,6 +272,11 @@ export function createHttpDolibarrApi(args: {
       const brut = await liste(ctx, '/orders?limit=1000')
       return brut
         .filter((c) => STATUTS_COMMANDE_UTILISABLES.has(Number(c.statut ?? c.status)))
+        // `billed` à 1 dit que la commande est **entièrement** facturée : il
+        // n'y a plus rien à consommer dessus, et le projet qu'on ouvrirait ne
+        // serait jamais facturé. Une commande partiellement facturée, elle,
+        // reste proposée — c'est le cas courant d'une prestation en cours.
+        .filter((c) => !vrai(c.billed))
         .map(versCommande)
     },
 

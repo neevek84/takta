@@ -39,6 +39,8 @@ interface FakeProject extends DolibarrProject {
 interface FakeOrder extends DolibarrOrder {
   /** statut Dolibarr : 0 brouillon, 1 validée, 2 en cours, 3 livrée, -1 annulée */
   statut: number
+  /** `billed` : la commande est entièrement facturée */
+  facturee: boolean
 }
 
 export interface FakeTimeSpent {
@@ -130,6 +132,7 @@ export class FakeDolibarr implements DolibarrApi {
     refClient?: string
     label?: string
     statut?: number
+    facturee?: boolean
     projectId?: number | null
     lines?: Array<{ label: string; qty: number; subpriceCents: number }>
   }): FakeOrder {
@@ -140,6 +143,7 @@ export class FakeDolibarr implements DolibarrApi {
       socid: args.socid,
       label: args.label ?? '',
       statut: args.statut ?? 1,
+      facturee: args.facturee ?? false,
       projectId: args.projectId ?? null,
       lines: (args.lines ?? []).map((l) => ({ id: this.next(), ...l })),
     }
@@ -245,8 +249,11 @@ export class FakeDolibarr implements DolibarrApi {
   async listOrders(): Promise<DolibarrOrder[]> {
     this.garde()
     // Le filtre vit du même côté que dans le client HTTP : un brouillon
-    // n'engage rien, une annulée n'engage plus.
-    return this.orders.filter((c) => c.statut >= 1 && c.statut <= 3).map((c) => ({ ...c }))
+    // n'engage rien, une annulée n'engage plus, une livrée est close, et une
+    // commande entièrement facturée n'a plus rien à consommer.
+    return this.orders
+      .filter((c) => (c.statut === 1 || c.statut === 2) && !c.facturee)
+      .map((c) => ({ ...c }))
   }
 
   async getOrder(id: number): Promise<DolibarrOrder> {

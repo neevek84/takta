@@ -350,6 +350,24 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     expect(await api.listTasks(9)).toEqual([])
   })
 
+  it('ne liste que les commandes qui restent a faire', async () => {
+    const api = createHttpDolibarrApi({
+      baseUrl: BASE,
+      apiKey: 'k',
+      fetchImpl: async () =>
+        reponse([
+          { id: '1', ref: 'CO-VALIDEE', socid: '3', statut: '1', billed: '0' },
+          { id: '2', ref: 'CO-EN-COURS', socid: '3', statut: '2', billed: '0' },
+          { id: '3', ref: 'CO-LIVREE', socid: '3', statut: '3', billed: '0' },
+          { id: '4', ref: 'CO-BROUILLON', socid: '3', statut: '0', billed: '0' },
+          { id: '5', ref: 'CO-ANNULEE', socid: '3', statut: '-1', billed: '0' },
+          { id: '6', ref: 'CO-FACTUREE', socid: '3', statut: '1', billed: '1' },
+        ]),
+    })
+
+    expect((await api.listOrders()).map((c) => c.ref)).toEqual(['CO-VALIDEE', 'CO-EN-COURS'])
+  })
+
   it('refuse une réponse qui n a pas la forme attendue', async () => {
     const api = createHttpDolibarrApi({
       baseUrl: BASE,

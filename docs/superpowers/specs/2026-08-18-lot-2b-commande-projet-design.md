@@ -27,8 +27,12 @@ explicitement, en deux endroits complémentaires :
 
 - `ref_ext` du projet = `ref_client` de la commande — champ machine, jamais
   retouché, qui survit à un renommage ;
-- `title` du projet = « `{ref_client}` — `{libellé de la commande}` » — lisible
-  à l'écran et dans toute recherche.
+- `title` du projet = « `{ref_client}` — `{nom du tiers}` — `{libellé}` —
+  `{ref de la commande}` », les parties absentes étant simplement omises et la
+  référence de commande n'étant jamais répétée quand elle tient déjà la tête.
+  Mesuré sur l'instance du porteur : **aucune commande ne porte de libellé**, et
+  la commande ne porte pas non plus le nom du tiers — seulement `socid`, que le
+  service résout. Sans le nom, le titre se réduirait à deux références opaques.
 
 Et surtout : la commande est **rattachée au projet** (`fk_project`). C'est ce
 rattachement, et lui seul, qui fait apparaître la commande sous le projet dans
@@ -81,8 +85,11 @@ suppression, et n'en portera pas. L'ordre est donc :
 | Créer le projet | POST | `/projects` |
 | Rattacher la commande au projet | PUT | `/orders/{id}` |
 
-Les brouillons et les commandes annulées ne sont pas proposés : on ne crée pas
-de projet sur un engagement qui n'existe pas encore ou qui n'existe plus.
+Ne sont proposées que les commandes **qui restent à faire** : ni brouillon (rien
+n'est engagé), ni annulée (plus rien ne l'est), ni livrée (close), ni
+entièrement facturée (`billed`) — le projet qu'on ouvrirait dessus ne serait
+jamais facturé. Une commande partiellement facturée reste proposée : c'est le
+cas courant d'une prestation en cours.
 
 Toutes les quatre entrent au catalogue `src/integrations/dolibarr/catalogue.ts`,
 que le double HTTP et le test de couverture rendent obligatoire.

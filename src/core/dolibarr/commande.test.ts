@@ -6,10 +6,39 @@ import {
 } from './commande'
 
 describe('titreProjetDepuisCommande', () => {
-  it('met la référence client en tête, devant le libellé de la commande', () => {
+  it('assemble référence client, nom du tiers, libellé et référence de commande', () => {
     expect(
-      titreProjetDepuisCommande({ refClient: 'BDC-2026-118', ref: 'CO2608-0042', label: 'AMOA ITSM' }),
-    ).toBe('BDC-2026-118 — AMOA ITSM')
+      titreProjetDepuisCommande({
+        refClient: 'BDC-2026-118',
+        ref: 'CO2608-0042',
+        label: 'AMOA ITSM',
+        thirdpartyName: 'SILKHOM',
+      }),
+    ).toBe('BDC-2026-118 — SILKHOM — AMOA ITSM — CO2608-0042')
+  })
+
+  it('nomme le tiers même quand la commande n’a aucun libellé — le cas ordinaire', () => {
+    // Aucune commande de l'instance du porteur ne porte de libellé : sans le
+    // nom du tiers, le titre se réduirait à deux références opaques.
+    expect(
+      titreProjetDepuisCommande({
+        refClient: '2419',
+        ref: 'CO2410-0002',
+        label: '',
+        thirdpartyName: 'SILKHOM',
+      }),
+    ).toBe('2419 — SILKHOM — CO2410-0002')
+  })
+
+  it('ne répète pas la référence de la commande quand elle tient déjà la tête', () => {
+    expect(
+      titreProjetDepuisCommande({
+        refClient: '',
+        ref: 'CO2411-0001',
+        label: '',
+        thirdpartyName: 'SILKHOM',
+      }),
+    ).toBe('CO2411-0001 — SILKHOM')
   })
 
   it('retombe sur la référence de la commande quand elle ne porte aucun libellé', () => {
@@ -37,7 +66,7 @@ describe('titreProjetDepuisCommande', () => {
         ref: 'CO2608-0042',
         label: ' AMOA\t ITSM ',
       }),
-    ).toBe('BDC 2026 118 — AMOA ITSM')
+    ).toBe('BDC 2026 118 — AMOA ITSM — CO2608-0042')
   })
 
   it('tronque à la longueur que Dolibarr accepte, en gardant la référence en tête', () => {

@@ -331,9 +331,11 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
       },
       reglagesTiers: [],
       note:
-        'Les statuts sont filtrés côté client : seules 1 (validée), 2 (en cours) et 3 (livrée) ' +
-        'sont retenues. Un brouillon n’engage rien, une annulée n’engage plus — créer un projet ' +
-        'sur l’une ou l’autre fabriquerait un chantier sans commande.',
+        'Deux filtres, tous deux côté client. Le statut : seules 1 (validée) et 2 (en cours) ' +
+        'sont retenues — un brouillon n’engage rien, une annulée n’engage plus, une livrée est ' +
+        'close. Et `billed` : une commande entièrement facturée n’a plus rien à consommer, et ' +
+        'le projet qu’on ouvrirait dessus ne serait jamais facturé. Une commande ' +
+        'partiellement facturée reste proposée : c’est le cas courant d’une prestation en cours.',
     },
     {
       operation: 'Lire une commande client et ses lignes',
@@ -358,7 +360,8 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
       note:
         '`ref_client` porte la référence du bon de commande du client — le champ que le lot 2b ' +
         'reporte sur le projet. Il est nul sur la plupart des commandes, et `ref_customer` en est ' +
-        'l’alias sur certaines versions.',
+        'l’alias sur certaines versions. La commande ne porte **pas** le nom du tiers, seulement ' +
+        '`socid` : le titre du projet le résout par `GET /thirdparties`.',
     },
     {
       operation: 'Créer un projet facturable au temps depuis une commande',

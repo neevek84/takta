@@ -129,6 +129,23 @@ async function projetDeLaCommande(api: DolibarrApi, commande: DolibarrOrder): Pr
 }
 
 /**
+ * Le nom du tiers Dolibarr, ou le nom du client local à défaut.
+ *
+ * Le nom **de Dolibarr** est préféré parce que le projet vivra là-bas, et que
+ * c'est ce nom-là que le porteur y lira. Le nom local ne sert que de secours :
+ * la cohérence des tiers a déjà été vérifiée, les deux désignent le même
+ * client.
+ */
+async function nomDuTiers(
+  api: DolibarrApi,
+  socid: number,
+  nomLocal: string,
+): Promise<string> {
+  const tiers = await api.listThirdparties()
+  return tiers.find((t) => t.id === socid)?.name ?? nomLocal
+}
+
+/**
  * Crée le projet Dolibarr d'une commande, et rattache la mission dessus.
  *
  * L'ordre n'est pas négociable :
@@ -162,7 +179,13 @@ export async function creerProjetDepuisCommande(args: {
   })
 
   const projetExistant = commande.projectId !== null
-  const titre = titreProjetDepuisCommande(commande)
+  // Le nom du tiers ne vient pas de la commande — elle ne porte que `socid`.
+  // Il est résolu ici, et retombe sur le nom du client local si Dolibarr ne le
+  // rend pas : un titre amputé vaut mieux qu'une création qui échoue.
+  const titre = titreProjetDepuisCommande({
+    ...commande,
+    thirdpartyName: await nomDuTiers(args.api, commande.socid, client.name),
+  })
   const refExt = referenceExterneCommande(commande)
 
   const projet = projetExistant
