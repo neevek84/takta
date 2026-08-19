@@ -137,9 +137,12 @@ describe('buildCraPdf', () => {
     const imprime = extraireTextes((await buildCraPdf(userId, craId)).bytes)
     expect(imprime).toContain('Jour')
     expect(imprime).toContain('Nuit')
-    expect(imprime).toContain('lun. 01')
+    // La bande paysage écrit le quantième seul, surmonté de l'initiale du
+    // jour : « lun. 01 » ne tient pas dans une case de vingt points.
+    expect(imprime).toContain('1')
+    expect(imprime).toContain('30')
     expect(imprime).toContain(formatJours(50))
-    expect(imprime.join(' | ')).toContain('Total du mois')
+    expect(imprime.join(' | ')).toContain('TOTAL DU MOIS')
   })
 
   it('n emprunte rien à une autre mission', async () => {

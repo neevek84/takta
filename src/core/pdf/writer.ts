@@ -13,6 +13,27 @@
 export const A4_WIDTH_PT = 595
 export const A4_HEIGHT_PT = 842
 
+/**
+ * A4 couché. C'est le format du CRA : trente-et-une colonnes de jours ne
+ * portent un nombre lisible qu'à cette largeur — à 595 points, une case fait
+ * 13 points et n'en porte aucun.
+ */
+export const A4_PAYSAGE_WIDTH_PT = A4_HEIGHT_PT
+export const A4_PAYSAGE_HEIGHT_PT = A4_WIDTH_PT
+
+/**
+ * Une couleur, en hexadécimal `#rrggbb`.
+ *
+ * Le type est une chaîne et non un triplet : les couleurs de ce document
+ * viennent des jetons du thème (`core/theme/tokens.ts`), qui sont déjà écrits
+ * sous cette forme. Les convertir à la main à chaque appel, c'est se donner
+ * l'occasion de se tromper.
+ */
+export type PdfCouleur = string
+
+/** Motif de tiret : longueur du trait, longueur du blanc, en points. */
+export type PdfTiret = readonly [number, number]
+
 export interface PdfText {
   /** points depuis le bord gauche */
   x: number
@@ -21,6 +42,8 @@ export interface PdfText {
   size: number
   text: string
   bold?: boolean
+  /** encre du texte ; noir à défaut, la mise en page passant son jeton */
+  color?: PdfCouleur
 }
 
 export interface PdfLine {
@@ -29,11 +52,42 @@ export interface PdfLine {
   x2: number
   y2: number
   thickness?: number
+  color?: PdfCouleur
+  dash?: PdfTiret
+}
+
+/**
+ * Un rectangle, plein et/ou tracé.
+ *
+ * `y` est le bord **bas**, comme partout ailleurs dans ce module : l'origine
+ * PDF est en bas à gauche, et une seule inversion suffit à décaler tout un
+ * calendrier d'une case.
+ */
+export interface PdfRect {
+  x: number
+  y: number
+  w: number
+  h: number
+  fill?: PdfCouleur
+  stroke?: PdfCouleur
+  thickness?: number
+  /** rayon des coins, en points ; 0 par défaut */
+  radius?: number
+  dash?: PdfTiret
 }
 
 export interface PdfPage {
   texts: PdfText[]
   lines: PdfLine[]
+  /**
+   * Les aplats. Ils se dessinent **avant** les traits et les textes : ce sont
+   * des fonds, et un fond posé après ce qu'il porte l'efface.
+   */
+  rects?: PdfRect[]
+  /** largeur de la page, A4 portrait par défaut */
+  width?: number
+  /** hauteur de la page, A4 portrait par défaut */
+  height?: number
 }
 
 /** Les points de code Unicode que WinAnsiEncoding loge dans 0x80–0x9F. */
@@ -93,25 +147,155 @@ function nombre(valeur: number): string {
 }
 
 /**
+ * Les caractères d'Helvetica dont on connaît la largeur exacte, en millièmes
+ * d'em — ceux qui composent une quantité.
+ *
+ * Les chiffres font 556, mais la virgule et l'espace n'en font que 278. Les
+ * traiter comme un chiffre, c'est surestimer « 24,25 » de plus de huit points
+ * à 31 points de corps : assez pour ouvrir un blanc visible entre le nombre et
+ * son unité, et pour décaler une colonne de totaux alignés à droite.
+ */
+const LARGEURS_EXACTES: Record<string, number> = {
+  '0': 0.556, '1': 0.556, '2': 0.556, '3': 0.556, '4': 0.556,
+  '5': 0.556, '6': 0.556, '7': 0.556, '8': 0.556, '9': 0.556,
+  ' ': 0.278, ',': 0.278, '.': 0.278, '·': 0.278, ':': 0.278, ';': 0.278,
+}
+
+/**
  * Largeur approchée d'une chaîne en Helvetica, en points.
  *
- * Les chiffres d'Helvetica font exactement 556/1000 d'em ; les lettres
- * tournent autour. C'est une approximation assumée : elle ne sert qu'à
- * aligner des nombres à droite dans une colonne, pas à composer du texte.
+ * Exacte sur les quantités — chiffres, virgule, espace et séparateurs, voir
+ * `LARGEURS_EXACTES` — et approchée à 556/1000 d'em sur le reste, où les
+ * lettres tournent autour de cette valeur sans l'atteindre.
+ *
+ * L'approximation est assumée : cette fonction sert à aligner et à tronquer,
+ * pas à composer du texte. Là où elle se trompe, elle se trompe **en trop** —
+ * une troncature un caractère trop courte vaut mieux qu'un libellé qui déborde
+ * sur son voisin.
  */
 export function largeurApprox(text: string, size: number): number {
-  return text.length * size * 0.556
+  let em = 0
+  for (const caractere of text) em += LARGEURS_EXACTES[caractere] ?? 0.556
+  return em * size
+}
+
+/**
+ * `#rrggbb` vers les trois composantes que PDF attend, entre 0 et 1.
+ *
+ * Une couleur illisible — ou absente — rend du noir plutôt que de lever : ce
+ * module compose un document destiné à être signé, et un fond manquant vaut
+ * mieux qu'un export qui échoue. La forme est de toute façon vérifiée par le
+ * type des jetons de thème, en amont.
+ *
+ * Aucune couleur n'est écrite en clair dans ce fichier, pas même le noir de
+ * repli : le contrôle « aucune couleur en dur » du système de design ne connaît
+ * qu'une source légitime, `core/theme/tokens.ts`, et un écrivain PDF n'en est
+ * pas une.
+ */
+export function composantes(couleur: PdfCouleur | undefined): [number, number, number] {
+  const hex = /^#([0-9a-fA-F]{6})$/.exec((couleur ?? '').trim())
+  if (hex === null) return [0, 0, 0]
+  const brut = hex[1] as string
+  return [0, 2, 4].map((i) => {
+    const octet = Number.parseInt(brut.slice(i, i + 2), 16)
+    return Math.round((octet / 255) * 1000) / 1000
+  }) as [number, number, number]
+}
+
+/**
+ * Une composante de couleur s'écrit au millième, et non au centième comme les
+ * coordonnées : `nombre` ramènerait 0,498 à 0,5, soit six niveaux de gris
+ * d'écart sur 255. Sur un aplat qui porte du texte, c'est le genre d'écart qui
+ * fait rater un rapport de contraste de peu.
+ */
+function millieme(valeur: number): string {
+  return String(Math.round(valeur * 1000) / 1000)
+}
+
+function encre(couleur: PdfCouleur | undefined, operateur: 'rg' | 'RG'): string {
+  const [r, v, b] = composantes(couleur)
+  return `${millieme(r)} ${millieme(v)} ${millieme(b)} ${operateur}\n`
+}
+
+/** Le motif de tiret, puis son annulation : l'état graphique est global. */
+function tiret(motif: PdfTiret | undefined): { pose: string; retire: string } {
+  if (motif === undefined) return { pose: '', retire: '' }
+  return { pose: `[${nombre(motif[0])} ${nombre(motif[1])}] 0 d\n`, retire: '[] 0 d\n' }
+}
+
+/**
+ * Le facteur de Bézier qui approche un quart de cercle — 4/3·(√2−1).
+ *
+ * PDF ne sait pas tracer d'arc : un coin arrondi est une courbe cubique, et
+ * c'est la seule constante qui la fasse passer par le cercle.
+ */
+const KAPPA = 0.5523
+
+/** Le contour d'un rectangle, à coins vifs ou arrondis. */
+function contour(rect: PdfRect): string {
+  const { x, y, w, h } = rect
+  const r = Math.min(rect.radius ?? 0, w / 2, h / 2)
+  if (r <= 0) return `${nombre(x)} ${nombre(y)} ${nombre(w)} ${nombre(h)} re\n`
+
+  const k = r * KAPPA
+  const [xg, xd, yb, yh] = [x, x + w, y, y + h]
+  const courbe = (
+    x1: number, y1: number, x2: number, y2: number, x3: number, y3: number,
+  ): string =>
+    `${nombre(x1)} ${nombre(y1)} ${nombre(x2)} ${nombre(y2)} ` +
+    `${nombre(x3)} ${nombre(y3)} c\n`
+
+  return (
+    `${nombre(xg + r)} ${nombre(yb)} m\n` +
+    `${nombre(xd - r)} ${nombre(yb)} l\n` +
+    courbe(xd - r + k, yb, xd, yb + r - k, xd, yb + r) +
+    `${nombre(xd)} ${nombre(yh - r)} l\n` +
+    courbe(xd, yh - r + k, xd - r + k, yh, xd - r, yh) +
+    `${nombre(xg + r)} ${nombre(yh)} l\n` +
+    courbe(xg + r - k, yh, xg, yh - r + k, xg, yh - r) +
+    `${nombre(xg)} ${nombre(yb + r)} l\n` +
+    courbe(xg, yb + r - k, xg + r - k, yb, xg + r, yb) +
+    'h\n'
+  )
 }
 
 function fluxDeContenu(page: PdfPage): Buffer {
   const morceaux: Buffer[] = []
 
-  for (const trait of page.lines) {
+  // Les aplats d'abord : ce sont des fonds.
+  for (const rect of page.rects ?? []) {
+    const remplit = rect.fill !== undefined
+    const trace = rect.stroke !== undefined
+    if (!remplit && !trace) continue
+    if (rect.w <= 0 || rect.h <= 0) continue
+
+    const motif = tiret(rect.dash)
     morceaux.push(
       Buffer.from(
-        `${nombre(trait.thickness ?? 0.5)} w\n` +
+        (remplit ? encre(rect.fill, 'rg') : '') +
+          (trace ? encre(rect.stroke, 'RG') + `${nombre(rect.thickness ?? 0.5)} w\n` : '') +
+          motif.pose +
+          contour(rect) +
+          // `B` remplit **et** trace en une passe : deux passes poseraient le
+          // trait à cheval sur un bord déjà peint, et l'épaissiraient d'un
+          // demi-point sur les seuls rectangles qui font les deux.
+          (remplit && trace ? 'B\n' : remplit ? 'f\n' : 'S\n') +
+          motif.retire,
+        'latin1',
+      ),
+    )
+  }
+
+  for (const trait of page.lines) {
+    const motif = tiret(trait.dash)
+    morceaux.push(
+      Buffer.from(
+        encre(trait.color, 'RG') +
+          `${nombre(trait.thickness ?? 0.5)} w\n` +
+          motif.pose +
           `${nombre(trait.x1)} ${nombre(trait.y1)} m ` +
-          `${nombre(trait.x2)} ${nombre(trait.y2)} l S\n`,
+          `${nombre(trait.x2)} ${nombre(trait.y2)} l S\n` +
+          motif.retire,
         'latin1',
       ),
     )
@@ -120,7 +304,8 @@ function fluxDeContenu(page: PdfPage): Buffer {
   for (const texte of page.texts) {
     morceaux.push(
       Buffer.from(
-        `BT /${texte.bold === true ? 'F2' : 'F1'} ${nombre(texte.size)} Tf ` +
+        encre(texte.color, 'rg') +
+          `BT /${texte.bold === true ? 'F2' : 'F1'} ${nombre(texte.size)} Tf ` +
           `${nombre(texte.x)} ${nombre(texte.y)} Td `,
         'latin1',
       ),
@@ -169,7 +354,9 @@ export function renderPdf(pages: ReadonlyArray<PdfPage>): Uint8Array {
     const contenu = fluxDeContenu(page)
     objets.push(
       Buffer.from(
-        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${A4_WIDTH_PT} ${A4_HEIGHT_PT}]` +
+        `<< /Type /Page /Parent 2 0 R` +
+          ` /MediaBox [0 0 ${nombre(page.width ?? A4_WIDTH_PT)}` +
+          ` ${nombre(page.height ?? A4_HEIGHT_PT)}]` +
           ` /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >>` +
           ` /Contents ${idContenu(index)} 0 R >>`,
         'latin1',
