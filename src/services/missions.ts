@@ -1,6 +1,12 @@
 import { z } from 'zod'
 import { prisma } from '@/db/client'
 import { engagementVerrouille, libelleEngagement } from '@/core/dolibarr/engagement'
+// Trois chaînes, pas un import du service Dolibarr : `services/missions` ne
+// dépend pas du connecteur, et ne doit pas commencer à le faire pour afficher
+// une étiquette.
+const PROVIDER_DOLIBARR = 'DOLIBARR'
+const ENTITE_MISSION = 'Mission'
+const ENTITE_LIGNE = 'MissionLine'
 import { getSettings } from './settings'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import type { DisplayUnit, EngagementSource } from '@/core/types'
@@ -120,6 +126,14 @@ export interface MissionForUser {
   label: string
   clientId: string
   clientName: string
+  /**
+   * Le projet Dolibarr rattaché, `null` quand la mission est purement locale.
+   *
+   * L'écran le dit en toutes lettres : sans cette distinction, rien ne
+   * permettait de voir qu'une mission ne pousserait jamais rien — et on ne
+   * s'en apercevait qu'au premier CRA validé qui n'arrivait pas.
+   */
+  dolibarrProjectId: number | null
   /** durée d'une journée réellement appliquée, après cascade */
   minutesParJourEffectif: number
   /** surcharge portée par la mission elle-même, null si héritée */
@@ -138,6 +152,8 @@ export interface MissionForUser {
      * proposer de modifier des chiffres dont la source de vérité est ailleurs.
      */
     engagementSource: EngagementSource
+    /** La tâche Dolibarr de cette prestation, `null` quand elle n'en a pas. */
+    dolibarrTaskId: number | null
   }>
 }
 
@@ -166,11 +182,27 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
     getSettings(),
   ])
 
+  // Les correspondances Dolibarr, en une requête pour toute la liste. Sans
+  // filtre sur `userId` : une correspondance appartient à l'instance, pas à
+  // celui qui l'a posée — c'est déjà la lecture que fait l'écran d'import.
+  const liens = await prisma.externalLink.findMany({
+    where: {
+      provider: PROVIDER_DOLIBARR,
+      entityType: { in: [ENTITE_MISSION, ENTITE_LIGNE] },
+      entityId: {
+        in: [...missions.map((m) => m.id), ...missions.flatMap((m) => m.lines.map((l) => l.id))],
+      },
+    },
+    select: { entityType: true, entityId: true, externalId: true },
+  })
+  const externeDe = new Map(liens.map((l) => [`${l.entityType}|${l.entityId}`, Number(l.externalId)]))
+
   return missions.map((m) => ({
     id: m.id,
     label: m.label,
     clientId: m.client.id,
     clientName: m.client.name,
+    dolibarrProjectId: externeDe.get(`${ENTITE_MISSION}|${m.id}`) ?? null,
     minutesParJourEffectif: resolveMinutesParJour({
       mission: m.minutesParJour,
       client: m.client.minutesParJour,
@@ -186,6 +218,7 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
       tjmCents: l.tjmCents,
       displayUnit: l.displayUnit as DisplayUnit,
       engagementSource: l.engagementSource as EngagementSource,
+      dolibarrTaskId: externeDe.get(`${ENTITE_LIGNE}|${l.id}`) ?? null,
     })),
   }))
 }

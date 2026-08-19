@@ -20,6 +20,7 @@ function mission(patch: Partial<MissionForUser> & { id: string }): MissionForUse
     label: 'Mission',
     clientId: 'c1',
     clientName: 'SILKHOM',
+    dolibarrProjectId: null,
     minutesParJourEffectif: 420,
     minutesParJourSurcharge: null,
     signataireNom: '',
@@ -41,6 +42,7 @@ const MISSIONS: MissionForUser[] = [
         tjmCents: 80000,
         displayUnit: 'JOUR',
         engagementSource: 'DOLIBARR_COMMANDE',
+        dolibarrTaskId: 51,
       },
     ],
   }),
@@ -137,6 +139,68 @@ describe('MissionsExplorer — la liste', () => {
       target: { value: 'zzz' },
     })
     expect(screen.getByText(/Aucune mission ne correspond/)).toBeTruthy()
+  })
+})
+
+describe('MissionsExplorer — d’où vient chaque chose', () => {
+  it('dit qu’une mission sans projet est locale, et pourquoi ça compte', async () => {
+    // Une mission sans projet ne pousse jamais rien, et on ne s'en apercevait
+    // qu'au premier CRA validé qui n'arrivait pas.
+    rendre()
+    const liste = screen.getByRole('navigation', { name: 'Missions' })
+
+    expect(within(liste).getAllByLabelText('Local').length).toBeGreaterThan(0)
+    expect(
+      screen.getByLabelText(/Local — aucun projet Dolibarr/),
+    ).toBeTruthy()
+  })
+
+  it('nomme le projet quand la mission en porte un', () => {
+    rendre({ missions: [mission({ id: 'm1', label: 'AMOA', dolibarrProjectId: 46 })] })
+    expect(screen.getByLabelText('Dolibarr — projet PJ2511-0033')).toBeTruthy()
+  })
+
+  it('retombe sur le numéro quand le projet n’est pas dans la liste', () => {
+    // Dolibarr en panne : la liste des projets est vide, mais la mission reste
+    // rattachée — le dire « Local » serait faux.
+    rendre({
+      missions: [mission({ id: 'm1', dolibarrProjectId: 999 })],
+      projets: [],
+    })
+    expect(screen.getByLabelText('Dolibarr — projet n° 999')).toBeTruthy()
+  })
+
+  it('distingue une prestation avec tâche d’une prestation sans', () => {
+    rendre({
+      missions: [
+        mission({
+          id: 'm1',
+          lines: [
+            {
+              id: 'l1',
+              label: 'Avec',
+              soldCentiemes: 100,
+              tjmCents: 0,
+              displayUnit: 'JOUR',
+              engagementSource: 'MANUEL',
+              dolibarrTaskId: 51,
+            },
+            {
+              id: 'l2',
+              label: 'Sans',
+              soldCentiemes: 100,
+              tjmCents: 0,
+              displayUnit: 'JOUR',
+              engagementSource: 'MANUEL',
+              dolibarrTaskId: null,
+            },
+          ],
+        }),
+      ],
+    })
+
+    expect(screen.getByLabelText('Dolibarr — tâche n° 51')).toBeTruthy()
+    expect(screen.getByLabelText(/Local — aucune tâche Dolibarr/)).toBeTruthy()
   })
 })
 

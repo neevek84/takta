@@ -7,6 +7,7 @@ import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
+import { Origine } from '@/components/ui/Origine'
 import { Select } from '@/components/ui/Select'
 import { addClient, addMission, addLine, creerMissionDepuisCommande } from './actions'
 import { LigneForm } from './LigneForm'
@@ -164,8 +165,11 @@ export function MissionsExplorer({
                         (selection === m.id ? 'bg-off font-medium text-ink' : 'text-ink hover:bg-off')
                       }
                     >
-                      {m.label}
-                      <span className="ml-2 text-xs text-muted">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span>{m.label}</span>
+                        <Origine dansDolibarr={m.dolibarrProjectId !== null} />
+                      </span>
+                      <span className="text-xs text-muted">
                         {m.lines.length} prestation{m.lines.length > 1 ? 's' : ''}
                       </span>
                     </button>
@@ -191,22 +195,45 @@ export function MissionsExplorer({
             panneDolibarr={panneDolibarr}
           />
         ) : (
-          <Detail mission={mission} />
+          <Detail
+            mission={mission}
+            projetRef={
+              projets.find((p) => p.id === mission.dolibarrProjectId)?.ref ??
+              (mission.dolibarrProjectId === null ? null : `n° ${mission.dolibarrProjectId}`)
+            }
+          />
         )}
       </div>
     </div>
   )
 }
 
-function Detail({ mission }: { mission: MissionForUser }) {
+function Detail({
+  mission,
+  projetRef,
+}: {
+  mission: MissionForUser
+  /** référence du projet Dolibarr, `null` quand la mission est locale */
+  projetRef: string | null
+}) {
   return (
     <Card>
-      <h2 className="mb-3 font-medium">
-        {mission.clientName} · {mission.label}{' '}
+      <h2 className="mb-3 flex flex-wrap items-center gap-2 font-medium">
+        <span>
+          {mission.clientName} · {mission.label}
+        </span>
         <span className="text-xs font-normal text-muted">
           {mission.minutesParJourEffectif / 60} h
           {mission.minutesParJourSurcharge === null ? ' (hérité)' : ''}
         </span>
+        <Origine
+          dansDolibarr={mission.dolibarrProjectId !== null}
+          detail={
+            projetRef === null
+              ? 'aucun projet Dolibarr : les temps de cette mission ne partiront pas'
+              : `projet ${projetRef}`
+          }
+        />
       </h2>
 
       <ul className="mb-4 text-sm">
@@ -221,6 +248,14 @@ function Detail({ mission }: { mission: MissionForUser }) {
                   d'une table exhaustive : un ternaire affichait « saisi ici »
                   pour un engagement repris d'une commande. */}
               <span className="text-muted">Engagement : {libelleEngagement(l.engagementSource)}</span>
+              <Origine
+                dansDolibarr={l.dolibarrTaskId !== null}
+                detail={
+                  l.dolibarrTaskId === null
+                    ? 'aucune tâche Dolibarr : les temps de cette prestation ne partiront pas'
+                    : `tâche n° ${l.dolibarrTaskId}`
+                }
+              />
             </div>
             <LigneForm line={l} />
           </li>
