@@ -101,9 +101,6 @@ export async function addMission(formData: FormData) {
   revalidatePath('/missions')
 
   const phrases: string[] = []
-  if (resultat.tiersCree) {
-    phrases.push('Le client a été créé dans Dolibarr pour porter le projet.')
-  }
   phrases.push(
     resultat.projetCree
       ? `Mission créée, avec le projet « ${resultat.projet?.ref} ».`

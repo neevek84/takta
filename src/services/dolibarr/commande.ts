@@ -34,7 +34,6 @@ import {
   attachMission,
   createClientFromDolibarr,
   createMissionFromDolibarr,
-  pushClientToDolibarr,
   tiersAttendu,
   type AttachMissionResult,
 } from './import'
@@ -630,8 +629,6 @@ export interface MissionCreeeResult {
   /** le projet rattaché, `null` quand la mission reste locale */
   projet: DolibarrProject | null
   projetCree: boolean
-  /** le tiers a été créé dans Dolibarr pour porter le projet */
-  tiersCree: boolean
 }
 
 /**
@@ -673,7 +670,6 @@ export async function creerMissionAvecProjet(args: {
   // Tout ce qui peut être refusé l'est **avant** la création de la mission :
   // un refus après coup laisserait une mission orpheline, jamais rattachée,
   // mais bien réelle en base.
-  let tiersCree = false
   let projet: DolibarrProject | null = null
 
   if (args.projet.type === 'EXISTANT') {
@@ -687,12 +683,19 @@ export async function creerMissionAvecProjet(args: {
 
   if (args.projet.type === 'CREER') {
     const api = args.api as DolibarrApi
-    const deja = await tiersAttendu(client.id)
-    if (deja === null) {
-      await pushClientToDolibarr({ userId: args.userId, clientId: client.id, api })
-      tiersCree = true
+    const socid = await tiersAttendu(client.id)
+    // Un client qui ne vient pas de Dolibarr **reste local**. Le pousser
+    // d'ici créerait un tiers en douce, depuis un écran qui ne parle pas de
+    // ça — et le porteur découvrirait dans son ERP un client qu'il n'a pas
+    // demandé. Le rattachement et la création passent par Administration ·
+    // Dolibarr, et par là seulement.
+    if (socid === null) {
+      throw new DolibarrRequestError(
+        `« ${client.name} » n'est rattaché à aucun tiers Dolibarr : aucun projet ne peut être ` +
+          'ouvert pour lui. Rattachez-le, ou créez-le, dans Administration · Dolibarr — ' +
+          'puis revenez. La mission reste créable sans projet.',
+      )
     }
-    const socid = (await tiersAttendu(client.id)) as number
 
     projet = await api.createProject({
       socid,
@@ -738,6 +741,5 @@ export async function creerMissionAvecProjet(args: {
     missionId: mission.id,
     projet,
     projetCree: projet !== null,
-    tiersCree,
   }
 }

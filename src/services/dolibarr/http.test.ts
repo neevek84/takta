@@ -340,6 +340,31 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     })
   })
 
+  it('reprend le motif de Dolibarr au lieu de le jeter', async () => {
+    // « Dolibarr a refusé la requête /projects (400) » ne dit pas quel champ
+    // manque : c'est un mur. Dolibarr, lui, le dit.
+    const api = createHttpDolibarrApi({
+      baseUrl: BASE,
+      apiKey: 'k',
+      fetchImpl: async () =>
+        reponse({ error: { code: 400, message: 'Ref is mandatory' } }, 400),
+    })
+
+    await expect(
+      api.createProject({ socid: 3, title: 'T', refExt: '', description: '' }),
+    ).rejects.toThrow(/Ref is mandatory/)
+  })
+
+  it('reste lisible quand le refus n a pas de corps exploitable', async () => {
+    const api = createHttpDolibarrApi({
+      baseUrl: BASE,
+      apiKey: 'k',
+      fetchImpl: async () => new Response('pas du json', { status: 400 }),
+    })
+
+    await expect(api.listProjects()).rejects.toThrow(/refusé la requête/)
+  })
+
   it('distingue une ligne de service d une ligne de produit', async () => {
     // Une ligne de produit vend des objets : la reprendre en prestation ferait
     // « 5 jours vendus » d'une commande de cinq t-shirts.

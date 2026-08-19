@@ -492,10 +492,35 @@ describe('creerMissionAvecProjet', () => {
     expect(await prisma.externalLink.count({ where: { entityId: r.missionId } })).toBe(0)
   })
 
-  it('ouvre un projet pour la mission, et crée le tiers s’il manque', async () => {
-    // Refuser ici obligerait à sortir de la création de mission pour aller
-    // rattacher le client dans les réglages, puis à y revenir.
+  it('refuse d’ouvrir un projet pour un client qui n’est pas dans Dolibarr', async () => {
+    // Le pousser d'ici créerait un tiers en douce, depuis un écran qui ne
+    // parle pas de ça : le porteur découvrirait dans son ERP un client qu'il
+    // n'a pas demandé.
     const client = await createClient('CMD SANS TIERS')
+
+    await expect(
+      creerMissionAvecProjet({
+        userId,
+        clientId: client.id,
+        label: 'CMD Sans Tiers',
+        minutesParJour: null,
+        signataireNom: '',
+        signataireEmail: '',
+        projet: { type: 'CREER' },
+        api,
+      }),
+    ).rejects.toThrow(/Administration · Dolibarr/)
+
+    expect(api.appels.createProject).toBe(0)
+    expect(api.thirdparties).toHaveLength(0)
+    expect(await prisma.mission.count({ where: { label: 'CMD Sans Tiers' } })).toBe(0)
+  })
+
+  it('ouvre un projet pour la mission quand le client est rattaché', async () => {
+    const tiers = api.seedThirdparty('CMD ACME')
+    const client = await createClient('CMD ACME local')
+    await attachClient({ userId, clientId: client.id, dolibarrThirdpartyId: tiers.id })
+
     const r = await creerMissionAvecProjet({
       userId,
       clientId: client.id,
@@ -507,7 +532,6 @@ describe('creerMissionAvecProjet', () => {
       api,
     })
 
-    expect(r.tiersCree).toBe(true)
     expect(r.projetCree).toBe(true)
     expect(r.projet?.title).toBe('CMD Nouvelle')
     const lien = await prisma.externalLink.findUnique({

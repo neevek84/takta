@@ -55,6 +55,29 @@ function nombreOuNull(valeur: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
+/**
+ * Ce que Dolibarr dit de son refus, prêt à être accolé au message.
+ *
+ * Le corps d'erreur prend deux formes selon les versions : `{ error: { message } }`
+ * ou `{ error: '…' }`. Une lecture qui échoue ne doit surtout pas masquer le
+ * refus lui-même : on rend une chaîne vide et le code du statut suffit.
+ */
+async function motif(reponse: Response): Promise<string> {
+  try {
+    const brut = (await reponse.json()) as { error?: unknown }
+    const erreur = brut.error
+    const texte =
+      typeof erreur === 'string'
+        ? erreur
+        : typeof erreur === 'object' && erreur !== null
+          ? String((erreur as { message?: unknown }).message ?? '')
+          : ''
+    return texte === '' ? '' : ` : ${texte}`
+  } catch {
+    return ''
+  }
+}
+
 async function appel(ctx: Contexte, chemin: string, options: Options = {}): Promise<unknown> {
   const { statutsToleres = [], method, body } = options
   const controller = new AbortController()
@@ -110,7 +133,12 @@ async function appel(ctx: Contexte, chemin: string, options: Options = {}): Prom
   }
 
   if (!reponse.ok) {
-    throw new DolibarrRequestError(`Dolibarr a refusé la requête ${chemin} (${reponse.status}).`)
+    // Le motif de Dolibarr est **repris**, pas jeté. « Dolibarr a refusé la
+    // requête /projects (400) » ne dit pas quel champ manque : c'est un mur.
+    // Dolibarr, lui, le dit — et sans cette phrase il faut deviner.
+    throw new DolibarrRequestError(
+      `Dolibarr a refusé la requête ${chemin} (${reponse.status})${await motif(reponse)}`,
+    )
   }
 
   // Une suppression rend parfois un corps vide : `json()` lèverait, et la
