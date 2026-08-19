@@ -23,6 +23,12 @@ export interface CommandeOuverte {
   thirdpartyName: string
   /** client local auquel ce tiers est rattaché, `null` s'il n'en a pas encore */
   clientId: string | null
+  /** projet Dolibarr déjà porté par la commande, `null` sinon */
+  projectId: number | null
+  /** mission locale suivant déjà ce projet, `null` sinon */
+  missionId: string | null
+  /** `null` aussi quand cette mission appartient à un autre consultant */
+  missionLabel: string | null
 }
 
 /** Le volet de droite : une mission, ou la création d'une nouvelle. */
@@ -307,19 +313,35 @@ function Nouvelle({
                           ? 'Aucune référence client : le projet prendra la référence de la commande.'
                           : `Référence client : ${c.refClient}`}
                       </p>
-                      <form
-                        action={creerMissionDepuisCommande}
-                        className="mt-2 flex flex-wrap items-end gap-2"
-                      >
-                        <input type="hidden" name="orderId" value={c.id} />
-                        <Button
-                          type="submit"
-                          variant="primary"
-                          aria-label={`Créer la mission depuis « ${c.ref} »`}
+                      {c.projectId !== null && c.missionId === null && (
+                        <p className="mt-1 text-sm text-muted">
+                          Cette commande porte déjà un projet Dolibarr : la mission s’y rattachera,
+                          aucun second projet ne sera créé.
+                        </p>
+                      )}
+                      {c.missionId === null ? (
+                        <form
+                          action={creerMissionDepuisCommande}
+                          className="mt-2 flex flex-wrap items-end gap-2"
                         >
-                          Créer la mission
-                        </Button>
-                      </form>
+                          <input type="hidden" name="orderId" value={c.id} />
+                          <Button
+                            type="submit"
+                            variant="primary"
+                            aria-label={`Créer la mission depuis « ${c.ref} »`}
+                          >
+                            Créer la mission
+                          </Button>
+                        </form>
+                      ) : (
+                        // En créer une seconde sur le même projet ferait partir
+                        // deux CRA vers les mêmes tâches.
+                        <p className="mt-2 text-sm text-muted">
+                          {c.missionLabel === null
+                            ? 'Son projet est déjà suivi par la mission d’un autre consultant.'
+                            : `Son projet est déjà suivi par la mission « ${c.missionLabel} ».`}
+                        </p>
+                      )}
                     </fieldset>
                   </li>
                 ))}

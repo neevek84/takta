@@ -62,6 +62,9 @@ const COMMANDES: CommandeOuverte[] = [
     socid: 7,
     thirdpartyName: 'SILKHOM',
     clientId: 'c1',
+    projectId: null,
+    missionId: null,
+    missionLabel: null,
   },
   {
     id: 52,
@@ -73,6 +76,11 @@ const COMMANDES: CommandeOuverte[] = [
     // le proposer, sans quoi il faut passer par les réglages pour revenir ici.
     thirdpartyName: 'MACERTIF',
     clientId: null,
+    // Elle porte déjà un projet créé à la main dans Dolibarr : c'est le cas
+    // normal du porteur, et la masquer la rendait introuvable.
+    projectId: 49,
+    missionId: null,
+    missionLabel: null,
   },
 ]
 
@@ -174,6 +182,31 @@ describe('MissionsExplorer — créer depuis une commande', () => {
 
     expect(screen.getByRole('button', { name: /Créer la mission depuis « CO2411-0001 »/ })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /CO2410-0002/ })).toBeNull()
+  })
+
+  it('propose une commande qui porte déjà un projet, en disant ce qui se passera', () => {
+    // Le défaut mesuré sur l'instance du porteur : ses deux seules commandes en
+    // cours pointaient chacune vers un projet créé à la main, et n'apparaissaient
+    // donc nulle part. Or c'est le cas normal — le projet existe, la mission
+    // manque.
+    rendre()
+    fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
+    fireEvent.change(screen.getByLabelText('Client Dolibarr'), { target: { value: '9' } })
+
+    expect(screen.getByRole('button', { name: /Créer la mission depuis « CO2411-0001 »/ })).toBeTruthy()
+    expect(screen.getByText(/porte déjà un projet Dolibarr/)).toBeTruthy()
+  })
+
+  it('ne propose pas de doubler une mission qui suit déjà ce projet', () => {
+    // Deux missions sur le même projet feraient partir deux CRA vers les mêmes
+    // tâches.
+    rendre({
+      commandes: [{ ...COMMANDES[1]!, missionId: 'm9', missionLabel: 'Guichet unique' }],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
+
+    expect(screen.queryByRole('button', { name: /Créer la mission depuis/ })).toBeNull()
+    expect(screen.getByText(/déjà suivi par la mission « Guichet unique »/)).toBeTruthy()
   })
 
   it('affiche la référence client, et son absence quand il n’y en a pas', () => {

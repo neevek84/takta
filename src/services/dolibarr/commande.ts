@@ -36,7 +36,7 @@ import {
   tiersAttendu,
   type AttachMissionResult,
 } from './import'
-import { LIEN_CLIENT, LIEN_COMMANDE } from './liens'
+import { LIEN_CLIENT, LIEN_COMMANDE, LIEN_MISSION } from './liens'
 
 /** Une commande proposée à l'écran, avec ce qu'il faut pour la choisir. */
 export interface CommandeCandidate {
@@ -118,14 +118,33 @@ export async function listerCommandes(api: DolibarrApi): Promise<CommandeCandida
  * aucune mission ne peut encore naître dessus, et le dire vaut mieux que la
  * cacher.
  *
- * Les commandes qui portent déjà un projet sont écartées : la mission se
- * rattache alors au projet existant, ce qui est un autre geste.
+ * **Une commande qui porte déjà un projet reste proposée.** L'écarter était une
+ * erreur mesurée sur l'instance du porteur : ses deux seules commandes en cours
+ * — validées, non facturées — pointent chacune vers un projet créé à la main
+ * dans Dolibarr, et n'apparaissaient donc nulle part. Or c'est le cas normal de
+ * son flux : le projet existe, il manque la mission. `creerProjetDepuisCommande`
+ * sait déjà réutiliser ce projet au lieu d'en créer un second.
+ *
+ * En revanche, une commande dont le projet est **déjà suivi par une mission
+ * locale** porte le nom de cette mission : en créer une seconde sur le même
+ * projet ferait partir deux CRA vers les mêmes tâches.
  */
 export async function listerCommandesRattachables(args: {
+  userId: string
   api: DolibarrApi
-}): Promise<Array<CommandeCandidate & { clientId: string | null; thirdpartyName: string }>> {
+}): Promise<
+  Array<
+    CommandeCandidate & {
+      clientId: string | null
+      thirdpartyName: string
+      /** mission locale suivant déjà le projet de cette commande, `null` sinon */
+      missionId: string | null
+      missionLabel: string | null
+    }
+  >
+> {
   const [commandes, tiers] = await Promise.all([
-    listerCommandes(args.api).then((liste) => liste.filter((c) => c.projectId === null)),
+    listerCommandes(args.api),
     // Le nom du tiers ne vient pas de la commande — elle ne porte que `socid`.
     // Sans lui, l'écran ne proposerait que des numéros.
     args.api.listThirdparties(),
@@ -135,16 +154,38 @@ export async function listerCommandesRattachables(args: {
   // Sans filtre sur `userId`, comme partout ailleurs : une correspondance
   // appartient à l'instance, pas à celui qui l'a posée.
   const liens = await prisma.externalLink.findMany({
-    where: { entityType: LIEN_CLIENT, provider: DOLIBARR },
-    select: { entityId: true, externalId: true },
+    where: { entityType: { in: [LIEN_CLIENT, LIEN_MISSION] }, provider: DOLIBARR },
+    select: { entityType: true, entityId: true, externalId: true },
   })
-  const clientParTiers = new Map(liens.map((l) => [l.externalId, l.entityId]))
+  const clientParTiers = new Map(
+    liens.filter((l) => l.entityType === LIEN_CLIENT).map((l) => [l.externalId, l.entityId]),
+  )
+  const missionParProjet = new Map(
+    liens.filter((l) => l.entityType === LIEN_MISSION).map((l) => [l.externalId, l.entityId]),
+  )
 
-  return commandes.map((c) => ({
-    ...c,
-    clientId: clientParTiers.get(String(c.socid)) ?? null,
-    thirdpartyName: nomParTiers.get(c.socid) ?? `Tiers n° ${c.socid}`,
-  }))
+  // Les libellés restent scopés : on dit qu'un projet est pris, jamais sous
+  // quel nom un autre consultant l'a rangé.
+  const missions = await prisma.mission.findMany({
+    where: {
+      id: { in: [...missionParProjet.values()] },
+      OR: [{ lines: { none: {} } }, { lines: { some: { assignments: { some: { userId: args.userId } } } } }],
+    },
+    select: { id: true, label: true },
+  })
+  const libelleMission = new Map(missions.map((m) => [m.id, m.label]))
+
+  return commandes.map((c) => {
+    const missionId = c.projectId === null ? null : (missionParProjet.get(String(c.projectId)) ?? null)
+    return {
+      ...c,
+      clientId: clientParTiers.get(String(c.socid)) ?? null,
+      thirdpartyName: nomParTiers.get(c.socid) ?? `Tiers n° ${c.socid}`,
+      missionId,
+      /** `null` aussi quand la mission appartient à un autre consultant */
+      missionLabel: missionId === null ? null : (libelleMission.get(missionId) ?? null),
+    }
+  })
 }
 
 /**

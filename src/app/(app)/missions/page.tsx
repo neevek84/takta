@@ -31,7 +31,7 @@ export default async function MissionsPage({
   let panneDolibarr: string | null = null
   if (api !== null) {
     try {
-      commandes = await listerCommandesRattachables({ api })
+      commandes = await listerCommandesRattachables({ userId: user.id, api })
     } catch (err) {
       panneDolibarr = err instanceof Error ? err.message : String(err)
     }

@@ -6,7 +6,12 @@ import { FakeDolibarr } from './fake'
 import { DOLIBARR } from './api'
 import { LIEN_COMMANDE, LIEN_MISSION } from './liens'
 import { attachClient } from './import'
-import { attachOrderLine, creerProjetDepuisCommande, listerCommandes } from './commande'
+import {
+  attachOrderLine,
+  creerProjetDepuisCommande,
+  listerCommandes,
+  listerCommandesRattachables,
+} from './commande'
 
 let userId = ''
 let autreUserId = ''
@@ -66,6 +71,39 @@ describe('listerCommandes', () => {
 
     const commandes = await listerCommandes(api)
     expect(commandes.map((c) => c.ref).sort()).toEqual(['CO-EN-COURS', 'CO-VALIDEE'])
+  })
+})
+
+describe('listerCommandesRattachables', () => {
+  it('propose aussi les commandes qui portent déjà un projet', async () => {
+    // Les deux seules commandes en cours de l'instance du porteur pointent
+    // chacune vers un projet créé à la main : les écarter les rendait
+    // introuvables, alors que c'est le cas normal — le projet existe, la
+    // mission manque.
+    const { tiersId } = await contexte()
+    const projet = api.seedProject({ ref: 'PJ-EXISTANT', title: 'I26-EPM', socid: tiersId })
+    api.seedOrder({ ref: 'CO-SANS-PROJET', socid: tiersId })
+    api.seedOrder({ ref: 'CO-AVEC-PROJET', socid: tiersId, projectId: projet.id })
+
+    const liste = await listerCommandesRattachables({ userId, api })
+    expect(liste.map((c) => c.ref).sort()).toEqual(['CO-AVEC-PROJET', 'CO-SANS-PROJET'])
+  })
+
+  it('nomme la mission qui suit déjà le projet d’une commande', async () => {
+    const { tiersId, missionId } = await contexte()
+    const projet = api.seedProject({ ref: 'PJ-PRIS', title: 'Guichet', socid: tiersId })
+    const commande = api.seedOrder({ ref: 'CO-PRISE', socid: tiersId, projectId: projet.id })
+    await creerProjetDepuisCommande({
+      userId,
+      orderId: commande.id,
+      cible: { type: 'MISSION', missionId },
+      api,
+    })
+
+    const liste = await listerCommandesRattachables({ userId, api })
+    const prise = liste.find((c) => c.ref === 'CO-PRISE')
+    expect(prise?.missionId).toBe(missionId)
+    expect(prise?.missionLabel).toBe('CMD Mission')
   })
 })
 
