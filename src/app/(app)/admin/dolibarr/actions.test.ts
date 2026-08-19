@@ -168,6 +168,26 @@ describe('connecterDolibarr', () => {
     expect(createHttpDolibarrApi).not.toHaveBeenCalled()
   })
 
+  it('dit ce qu est l identifiant utilisateur, et ou le trouver', async () => {
+    // Ce nombre n'apparaît nulle part dans l'application, et se confond avec
+    // l'identifiant de connexion. « Requis » tout seul laisse chercher.
+    const state = await connecterDolibarr(
+      null,
+      formulaireConnexion({ dolibarrUserId: 'keveen' }),
+    )
+
+    const message = state !== null && state.ok === false ? state.erreurs.join(' ') : ''
+    expect(message).toMatch(/nombre/i)
+    expect(message).toMatch(/identifiant de connexion/i)
+    expect(message).toMatch(/Utilisateurs & groupes/i)
+    expect(createHttpDolibarrApi).not.toHaveBeenCalled()
+  })
+
+  it('accepte un identifiant utilisateur numerique', async () => {
+    const state = await connecterDolibarr(null, formulaireConnexion({ dolibarrUserId: '1' }))
+    expect(state?.ok).toBe(true)
+  })
+
   it('refuse ce qui n est pas une adresse web', async () => {
     // Un `fetch` sur une chaîne pareille lève un « Invalid URL » que le client
     // traduirait en « Dolibarr est injoignable » : un diagnostic faux.

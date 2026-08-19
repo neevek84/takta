@@ -67,7 +67,14 @@ export async function connecterDolibarr(
   }
   if (apiKey === '') erreurs.push("La clé d'API est requise.")
   if (!/^\d+$/.test(dolibarrUserId)) {
-    erreurs.push("L'identifiant de l'utilisateur Dolibarr est requis : un temps passé en exige un.")
+    // Dire ce qui est attendu **et** où le trouver : c'est un nombre que rien
+    // dans cette application ne révèle, et qui se confond avec l'identifiant
+    // de connexion. « Requis » tout seul laisse chercher.
+    erreurs.push(
+      "L'identifiant de l'utilisateur Dolibarr doit être un nombre — celui de votre fiche " +
+        'utilisateur, pas votre identifiant de connexion. Dans Dolibarr : Utilisateurs & groupes, ' +
+        'ouvrez votre fiche, le nombre est à la fin de son adresse (…?id=3). Un temps passé en exige un.',
+    )
   }
   if (erreurs.length > 0) return { ok: false, erreurs }
 

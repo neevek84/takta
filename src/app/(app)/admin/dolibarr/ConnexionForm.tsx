@@ -73,7 +73,7 @@ export function ConnexionForm({
           name="dolibarrUserId"
           defaultValue={dolibarrUserId}
           inputMode="numeric"
-          hint="Un temps passé en exige un."
+          hint="Un nombre, pas votre identifiant de connexion : celui de votre fiche dans Dolibarr."
           className="w-56"
         />
         <Button type="submit" variant="primary" loading={enCours}>
