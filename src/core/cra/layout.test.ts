@@ -198,11 +198,16 @@ describe('layoutCraDocument', () => {
   })
 
   it('couche la page, et lui donne le format qu elle dessine', () => {
+    // `width` et `height` sont facultatifs au type `PdfPage` — sans valeur,
+    // l'écrivain retombe sur le portrait. Les deux égalités ci-dessous sont
+    // donc la vraie garde : elles échouent aussi bien sur une page sans
+    // dimensions que sur une page dressée.
     for (const page of layoutCraDocument(document(2))) {
       expect(page.width).toBe(A4_PAYSAGE_WIDTH_PT)
       expect(page.height).toBe(A4_PAYSAGE_HEIGHT_PT)
-      expect(page.width).toBeGreaterThan(page.height)
     }
+    // Et ce que ces valeurs signifient : la page est couchée.
+    expect(A4_PAYSAGE_WIDTH_PT).toBeGreaterThan(A4_PAYSAGE_HEIGHT_PT)
   })
 
   it('tient dans les marges de la page', () => {
