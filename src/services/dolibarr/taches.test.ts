@@ -167,6 +167,33 @@ describe('ouvrirLaTacheDeLaPrestation', () => {
   })
 })
 
+describe('quand Dolibarr refuse de créer la tâche', () => {
+  it('nomme la tâche, le projet, et la cause la plus fréquente', async () => {
+    // Le refus de Dolibarr est un « Error creating task » nu. La cause la plus
+    // fréquente ne se devine pas : la tâche existe déjà chez lui sans que
+    // l'API la rende — mesuré sur l'instance du porteur, où
+    // `GET /projects/{id}/tasks` rend une liste vide sur un projet qui en
+    // porte une à l'écran.
+    const { mission, ligne } = await decor()
+    api.createTask = async () => {
+      throw new Error('Dolibarr a répondu 500 sur /tasks : Error creating task')
+    }
+
+    const r = await ouvrirLaTacheDeLaPrestation({
+      userId,
+      missionId: mission.id,
+      lineId: ligne.id,
+      label: 'Consultant',
+      api,
+    })
+
+    expect(r.echec).toContain('Error creating task')
+    expect(r.echec).toContain('« Consultant »')
+    expect(r.echec).toMatch(/projet n° \d+/)
+    expect(r.echec).toContain('ne la voit pas')
+  })
+})
+
 describe('projetDeLaMission', () => {
   it('rend le projet rattaché, et null quand il n’y en a pas', async () => {
     const { mission, projet } = await decor()

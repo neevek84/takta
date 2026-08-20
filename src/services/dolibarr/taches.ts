@@ -50,7 +50,25 @@ export async function assurerLaTache(args: {
   const connues = args.connues ?? (await args.api.listTasks(args.projectId))
 
   const deja = connues.find((t) => t.label === args.label)
-  const tache = deja ?? (await args.api.createTask({ projectId: args.projectId, label: args.label }))
+  let tache = deja
+  if (tache === undefined) {
+    try {
+      tache = await args.api.createTask({ projectId: args.projectId, label: args.label })
+    } catch (err) {
+      // Le contexte que Dolibarr ne donne pas. Son refus de créer une tâche est
+      // un « Error creating task » nu, et la cause la plus fréquente ne se
+      // devine pas : la tâche **existe déjà** côté Dolibarr sans que l'API la
+      // rende — mesuré sur l'instance du porteur, où `GET /projects/{id}/tasks`
+      // rend une liste vide sur un projet qui en porte une à l'écran. On croit
+      // alors devoir la créer, et sa référence est déjà prise.
+      const motif = err instanceof Error ? err.message : String(err)
+      throw new Error(
+        `${motif} — tâche « ${args.label} » dans le projet n° ${args.projectId}. ` +
+          "Si elle existe déjà chez Dolibarr, c'est que l'utilisateur de la clé d'API ne la voit " +
+          'pas : vérifiez ses droits sur les projets, ou assignez-la-lui.',
+      )
+    }
+  }
   if (deja === undefined) connues.push(tache)
 
   // `upsert` et non `create` : réouvrir une prestation déjà rattachée ne doit
