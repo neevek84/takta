@@ -5,7 +5,7 @@ import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
 import { saveEntry, convertPastForecast } from '@/services/time-entries'
 import { enqueueSync, enqueueTimeEntry, flushOutbox, RETENTION_JOURS } from './outbox'
-import { listFailedSyncRows, retrySyncRow } from './queue'
+import { listFailedSyncRows, listPendingSyncRows, retrySyncRow } from './queue'
 import type { SyncHandler, SyncJob, SyncOutcome } from './types'
 
 // Un interrupteur pour faire échouer la mise en file à la demande. C'est le
@@ -907,5 +907,73 @@ describe('journal de preuve — ce que le drainage générique consigne', () => 
     expect(entrees, 'aucune entrée `synchro.echec`').toHaveLength(1)
     expect(entrees[0]!.entityId).toBe('cra-recul')
     expect(JSON.parse(entrees[0]!.payloadJson)).toMatchObject({ erreur: 'projet inconnu' })
+  })
+})
+
+describe('la file en attente, telle que la supervision la montre', () => {
+  it('ne montre que celle de son propre consultant', async () => {
+    // Une supervision qui montrerait la file d'un autre serait pire que pas de
+    // supervision : elle inviterait à forcer l'envoi du CRA de quelqu'un
+    // d'autre.
+    await prisma.syncOutbox.deleteMany({ where: { userId: { in: [userId, autreId] } } })
+    await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'Cra',
+        entityId: 'cra-a-moi',
+        provider: 'DOLIBARR',
+        operation: 'UPSERT',
+        state: 'PENDING',
+      },
+    })
+    await prisma.syncOutbox.create({
+      data: {
+        userId: autreId,
+        entityType: 'Cra',
+        entityId: 'cra-de-l-autre',
+        provider: 'DOLIBARR',
+        operation: 'UPSERT',
+        state: 'PENDING',
+      },
+    })
+
+    const miennes = await listPendingSyncRows(userId)
+    expect(miennes.map((r) => r.entityId)).toEqual(['cra-a-moi'])
+  })
+
+  it('écarte ce qui a échoué : les échecs ont leur propre écran', async () => {
+    await prisma.syncOutbox.deleteMany({ where: { userId } })
+    await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'Cra',
+        entityId: 'cra-echoue',
+        provider: 'DOLIBARR',
+        operation: 'UPSERT',
+        state: 'FAILED',
+        lastError: 'refus',
+      },
+    })
+
+    expect(await listPendingSyncRows(userId)).toEqual([])
+  })
+
+  it('dit depuis combien de temps la plus ancienne attend', async () => {
+    // C'est ce chiffre, et lui seul, qui revele qu'aucun drainage ne tourne.
+    await prisma.syncOutbox.deleteMany({ where: { userId } })
+    await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'Cra',
+        entityId: 'cra-vieux',
+        provider: 'DOLIBARR',
+        operation: 'UPSERT',
+        state: 'PENDING',
+        updatedAt: new Date(Date.now() - 30 * 3_600_000),
+      },
+    })
+
+    const [ligne] = await listPendingSyncRows(userId)
+    expect(ligne?.attenteHeures).toBe(30)
   })
 })

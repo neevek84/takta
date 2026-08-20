@@ -67,6 +67,70 @@ export async function listFailedSyncRows(userId: string): Promise<FailedSyncRow[
   })
 }
 
+/**
+ * Une ligne **en attente**, telle que l'écran de supervision la montre.
+ *
+ * L'écran ne montrait que les échecs. Or une file qui ne part pas ne produit
+ * aucun échec : elle reste pleine, en silence, et rien ne le disait — c'est
+ * dans cet angle mort qu'un CRA validé peut attendre des semaines. Le porteur
+ * doit voir ce qui attend autant que ce qui a raté.
+ */
+export interface PendingSyncRow {
+  id: string
+  entityId: string
+  entityType: string
+  provider: string
+  operation: SyncOperation
+  /** depuis quand elle attend, en heures pleines */
+  attenteHeures: number
+  attempts: number
+  libelle: string
+}
+
+/**
+ * Ce qui attend de partir, du plus ancien au plus récent.
+ *
+ * L'ordre n'est pas cosmétique : c'est la ligne la plus vieille qui dit depuis
+ * quand plus rien ne s'écoule.
+ */
+export async function listPendingSyncRows(userId: string): Promise<PendingSyncRow[]> {
+  const rows = await prisma.syncOutbox.findMany({
+    where: { userId, state: 'PENDING' },
+    orderBy: { updatedAt: 'asc' },
+  })
+  if (rows.length === 0) return []
+
+  const saisies = rows.filter((r) => r.entityType === ENTITY_TIME_ENTRY)
+  const entries =
+    saisies.length === 0
+      ? []
+      : await prisma.timeEntry.findMany({
+          where: { userId, id: { in: saisies.map((r) => r.entityId) } },
+          include: { line: { include: { mission: { include: { client: true } } } } },
+        })
+  const parId = new Map(entries.map((e) => [e.id, e]))
+  const maintenant = Date.now()
+
+  return rows.map((r) => {
+    const entry = parId.get(r.entityId)
+    return {
+      id: r.id,
+      entityId: r.entityId,
+      entityType: r.entityType,
+      provider: r.provider,
+      operation: r.operation as SyncOperation,
+      attenteHeures: Math.max(0, Math.floor((maintenant - r.updatedAt.getTime()) / 3_600_000)),
+      attempts: r.attempts,
+      libelle:
+        entry !== undefined
+          ? `${toIsoDate(entry.date)} · ${entry.line.mission.client.name} · ${entry.line.mission.label} · ${entry.line.label}`
+          : r.entityType === ENTITY_TIME_ENTRY
+            ? 'Saisie supprimée'
+            : `${r.entityType} · ${r.entityId}`,
+    }
+  })
+}
+
 /** Remet une ligne en attente immédiate. Rend `false` si elle n'est pas à cet utilisateur. */
 export async function retrySyncRow(userId: string, rowId: string): Promise<boolean> {
   const r = await prisma.syncOutbox.updateMany({

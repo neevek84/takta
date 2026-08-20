@@ -3,7 +3,7 @@ import { PageShell } from '@/components/ui/PageShell'
 import { requireUser } from '@/auth'
 import { getConnectionState } from '@/services/google/connect'
 import { listOpenConflicts } from '@/services/sync/conflicts'
-import { listFailedSyncRows } from '@/services/sync/queue'
+import { listFailedSyncRows, listPendingSyncRows } from '@/services/sync/queue'
 import { SyncClient } from './SyncClient'
 
 /**
@@ -25,10 +25,11 @@ export default async function AdminSyncPage({
   // ne doit pouvoir se faire passer pour une réussite.
   const toneMessage = tone === 'success' ? 'success' : tone === 'danger' ? 'danger' : 'warning'
 
-  const [connection, conflicts, failures] = await Promise.all([
+  const [connection, conflicts, failures, pending] = await Promise.all([
     getConnectionState(user.id),
     listOpenConflicts(user.id),
     listFailedSyncRows(user.id),
+    listPendingSyncRows(user.id),
   ])
 
   return (
@@ -38,7 +39,12 @@ export default async function AdminSyncPage({
           <Banner tone={toneMessage}>{message}</Banner>
         </div>
       )}
-      <SyncClient connection={connection} conflicts={conflicts} failures={failures} />
+      <SyncClient
+        connection={connection}
+        conflicts={conflicts}
+        failures={failures}
+        pending={pending}
+      />
     </PageShell>
   )
 }

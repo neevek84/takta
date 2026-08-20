@@ -48,7 +48,9 @@ const CONNECTE = {
 function renderSync(
   overrides: Partial<React.ComponentProps<typeof SyncClient>> = {},
 ): ReturnType<typeof render> {
-  return render(<SyncClient connection={CONNECTE} conflicts={[]} failures={[]} {...overrides} />)
+  return render(
+    <SyncClient connection={CONNECTE} conflicts={[]} failures={[]} pending={[]} {...overrides} />,
+  )
 }
 
 beforeEach(() => {
@@ -333,5 +335,44 @@ describe('quand une action serveur échoue', () => {
     // Le bouton reste utilisable : un échec ne doit pas laisser l'écran inerte.
     const bouton = screen.getByRole('button', { name: 'Synchroniser maintenant' })
     expect(bouton.hasAttribute('disabled')).toBe(false)
+  })
+})
+
+describe('la file en attente', () => {
+  const enAttente = {
+    id: 'row-9',
+    entityId: 'cra-1',
+    entityType: 'Cra',
+    provider: 'DOLIBARR',
+    operation: 'UPSERT' as const,
+    attenteHeures: 30,
+    attempts: 0,
+    libelle: 'Cra · cra-1',
+  }
+
+  it('montre ce qui attend, et depuis combien de temps', () => {
+    // Une file qui ne s'écoule pas ne produit **aucun** échec : elle reste
+    // pleine, en silence. C'est dans cet angle mort qu'un CRA validé peut
+    // attendre des semaines.
+    renderSync({ pending: [enAttente] })
+    const texte = document.body.textContent ?? ''
+
+    expect(texte).toContain('Cra · cra-1')
+    expect(texte).toContain('en attente depuis 30 h')
+    expect(texte).toContain('Rien ne s’écoule tout seul')
+  })
+
+  it('le dit quand la file est vide, au lieu de ne rien montrer', () => {
+    renderSync({ pending: [] })
+    expect(document.body.textContent ?? '').toContain('La file est vide')
+  })
+
+  it('force une ligne à repartir', async () => {
+    rejouer.mockResolvedValue(true)
+    renderSync({ pending: [enAttente] })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Forcer maintenant' }))
+
+    await waitFor(() => expect(rejouer).toHaveBeenCalledWith('row-9'))
   })
 })

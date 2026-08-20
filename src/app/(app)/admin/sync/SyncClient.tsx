@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import type { ConflictResolution } from '@/core/sync/policy'
 import type { OpenConflict } from '@/services/sync/conflicts'
-import type { FailedSyncRow } from '@/services/sync/queue'
+import type { FailedSyncRow, PendingSyncRow } from '@/services/sync/queue'
 import type { DrainReport } from '@/services/sync/flush'
 import { arbitrer, deconnecterGoogle, rejouer, synchroniserMaintenant } from './actions'
 
@@ -94,6 +94,14 @@ export function SyncClient(props: {
   connection: { connected: boolean; calendarId: string; scope: string; connectedAt: Date | null }
   conflicts: OpenConflict[]
   failures: FailedSyncRow[]
+  /**
+   * Ce qui attend de partir.
+   *
+   * L'écran ne montrait que les échecs. Or une file qui ne s'écoule pas ne
+   * produit **aucun** échec : elle reste pleine, en silence. C'est dans cet
+   * angle mort qu'un CRA validé peut attendre des semaines.
+   */
+  pending: PendingSyncRow[]
 }) {
   const [message, setMessage] = useState<Message | null>(null)
   const [enCours, setEnCours] = useState(false)
@@ -226,6 +234,37 @@ export function SyncClient(props: {
               </li>
             ))}
           </ul>
+        )}
+      </Card>
+
+      <Card title="En attente">
+        {props.pending.length === 0 ? (
+          <p className="text-sm text-muted">La file est vide : tout est parti.</p>
+        ) : (
+          <>
+            <p className="mb-3 text-sm text-muted">
+              {props.pending.length} enregistrement{props.pending.length > 1 ? 's' : ''} attend
+              {props.pending.length > 1 ? 'ent' : ''} de partir. Rien ne s’écoule tout seul :
+              utilisez « Synchroniser maintenant » ci-dessus, ou forcez une ligne.
+            </p>
+            <ul className="flex flex-col gap-3">
+              {props.pending.map((p) => (
+                <li key={p.id} className="rounded-md border border-rule p-3 text-sm">
+                  <p className="font-medium">{p.libelle}</p>
+                  <p className="text-muted">
+                    {p.provider} · {p.operation}
+                    {/* L'attente est dite en clair : c'est elle qui révèle qu'un
+                        drainage manque, là où un simple compte ne dirait rien. */}
+                    {p.attenteHeures > 0 && ` · en attente depuis ${p.attenteHeures} h`}
+                    {p.attempts > 0 && ` · ${p.attempts} tentative(s)`}
+                  </p>
+                  <Button className="mt-2" onClick={() => void onRejouer(p.id)}>
+                    Forcer maintenant
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </Card>
 
