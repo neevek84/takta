@@ -86,6 +86,32 @@ export async function isDolibarrPushArmed(missionId: string): Promise<boolean> {
 }
 
 /**
+ * Parmi ces missions, celles pour lesquelles la validation d'un CRA mettra
+ * réellement quelque chose en file.
+ *
+ * Même règle qu'`isDolibarrPushArmed`, en une seule lecture : l'écran des CRA
+ * en affiche autant que de missions, et une requête par ligne ferait payer la
+ * page au nombre de missions.
+ */
+export async function missionsArmeesPourDolibarr(
+  missionIds: ReadonlyArray<string>,
+): Promise<Set<string>> {
+  if (missionIds.length === 0) return new Set()
+  const credential = await getInstanceCredential(DOLIBARR)
+  if (credential === null) return new Set()
+
+  const liens = await prisma.externalLink.findMany({
+    where: {
+      entityType: LIEN_MISSION,
+      provider: DOLIBARR,
+      entityId: { in: [...missionIds] },
+    },
+    select: { entityId: true },
+  })
+  return new Set(liens.map((l) => l.entityId))
+}
+
+/**
  * Pousse les temps **réalisés** d'un CRA validé sur les tâches de son projet
  * Dolibarr, et retire de Dolibarr ce qui n'a plus de saisie locale.
  *

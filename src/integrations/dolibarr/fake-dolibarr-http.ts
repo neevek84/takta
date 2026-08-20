@@ -334,6 +334,12 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
         if (String(corps.title ?? '').trim() === '') return refus('Title is mandatory')
         // Le refus exact de l'instance du porteur, mesuré le 20 août 2026.
         if (String(corps.ref ?? '').trim() === '') return refus('Bad Request: ref field missing')
+        // Un projet cree sans statut naît « brouillon » chez Dolibarr, et un
+        // brouillon n'accepte aucun temps consommé. Le double l'exige donc,
+        // comme l'instance le ferait sentir au premier push.
+        if (Number(corps.status) !== 1) {
+          return refus('A project created for time tracking must be open (status 1)')
+        }
         if (projects.some((p) => p.ref === String(corps.ref))) {
           return refus(`Project ${String(corps.ref)} already exists`)
         }

@@ -6,6 +6,7 @@ import { getDolibarrApi } from '@/services/dolibarr/resolve'
 import {
   listerCommandesRattachables,
   listerProjetsCandidats,
+  tiersParClient,
   type ProjetCandidat,
 } from '@/services/dolibarr/commande'
 import { Banner } from '@/components/ui/Banner'
@@ -33,11 +34,18 @@ export default async function MissionsPage({
   // page : la création manuelle des missions n'en dépend pas.
   let commandes: CommandeOuverte[] = []
   let projets: ProjetCandidat[] = []
+  let tiers: Array<{ clientId: string; socid: number }> = []
   let panneDolibarr: string | null = null
   if (api !== null) {
     try {
       commandes = await listerCommandesRattachables({ userId: user.id, api })
       projets = await listerProjetsCandidats(api)
+      // Lu pour lui-même : déduire le tiers d'un client de ses commandes
+      // rendait invisibles les projets des clients qui n'en ont aucune.
+      tiers = [...(await tiersParClient()).entries()].map(([clientId, socid]) => ({
+        clientId,
+        socid,
+      }))
     } catch (err) {
       panneDolibarr = err instanceof Error ? err.message : String(err)
     }
@@ -57,6 +65,7 @@ export default async function MissionsPage({
         heuresParJourDefaut={settings.minutesParJour / 60}
         commandes={commandes}
         projets={projets}
+        tiersParClient={tiers}
         dolibarrActif={api !== null}
         panneDolibarr={panneDolibarr}
       />

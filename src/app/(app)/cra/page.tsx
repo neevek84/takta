@@ -4,6 +4,8 @@ import { listMissionsForUser } from '@/services/missions'
 import { canTransition, type CraTransition } from '@/core/cra/state-machine'
 import { SignatureCard } from '@/components/cra/SignatureCard'
 import { StatusBadge } from '@/components/cra/StatusBadge'
+import { Origine } from '@/components/ui/Origine'
+import { formatJours, libelleMois } from '@/core/cra/document'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -87,7 +89,69 @@ export default async function CraPage({
             <h2 className="text-lg">
               {cra.clientName} · {cra.missionLabel}
             </h2>
+            {/* La période, sur la carte et pas seulement en tête de page : deux
+                missions aux noms voisins et un mois implicite, et l'on ne sait
+                plus quel CRA on vient d'engendrer. */}
+            <span className="text-sm text-muted">{libelleMois(cra.month)}</span>
             <StatusBadge status={cra.status} />
+            <Origine
+              dansDolibarr={cra.iraDansDolibarr}
+              detail={
+                cra.iraDansDolibarr
+                  ? 'les temps de ce CRA partiront à la validation'
+                  : 'aucun projet Dolibarr sur cette mission : la validation n’enverra rien'
+              }
+            />
+          </div>
+
+          {/* Dit **avant** la validation. Un CRA validé sans correspondance ne
+              met rien en file : rien n'arrive chez le client, l'écran de
+              synchronisation reste muet, et on ne s'en aperçoit qu'à la facture
+              manquante. */}
+          {!cra.iraDansDolibarr && cra.status !== 'VALIDE' && (
+            <div className="mb-4">
+              <Banner tone="warning" title="Ce CRA n’ira pas dans Dolibarr">
+                <p>
+                  La mission « {cra.missionLabel} » n’est rattachée à aucun projet Dolibarr. La
+                  validation ne mettra aucun temps en file, et rien n’arrivera chez le client.
+                </p>
+                <p>
+                  Rattachez-la depuis l’écran Missions si c’est bien elle que vous voulez pousser —
+                  le rattachement rattrape les mois déjà validés.
+                </p>
+              </Banner>
+            </div>
+          )}
+
+          {/* La synthèse : ce que le client signera, en un coup d'œil. Sans
+              elle, il fallait ouvrir le PDF pour savoir combien de jours et
+              sur quoi. */}
+          <div className="mb-4 rounded-md border border-rule p-3">
+            {cra.synthese.lignes.length === 0 ? (
+              <p className="text-sm text-muted">
+                Aucun temps réalisé sur ce mois. Le CRA serait vide.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm">
+                  <span className="text-lg font-medium">
+                    {formatJours(cra.synthese.totalCentiemes)} j
+                  </span>{' '}
+                  <span className="text-muted">
+                    réalisés sur {cra.synthese.joursServis} jour
+                    {cra.synthese.joursServis > 1 ? 's' : ''}
+                  </span>
+                </p>
+                <ul className="mt-2 flex flex-col gap-1 text-sm">
+                  {cra.synthese.lignes.map((l) => (
+                    <li key={l.label} className="flex justify-between gap-4">
+                      <span>{l.label}</span>
+                      <span className="text-muted">{formatJours(l.centiemes)} j</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
 
           {cra.signature !== null && <SignatureCard signature={cra.signature} />}

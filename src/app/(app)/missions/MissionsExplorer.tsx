@@ -66,6 +66,7 @@ export function MissionsExplorer({
   heuresParJourDefaut,
   commandes,
   projets,
+  tiersParClient,
   dolibarrActif,
   panneDolibarr,
 }: {
@@ -76,6 +77,13 @@ export function MissionsExplorer({
   commandes: CommandeOuverte[]
   /** les projets facturables au temps, tiers compris */
   projets: ProjetOuvert[]
+  /**
+   * Le tiers Dolibarr de chaque client local.
+   *
+   * Il ne se déduit pas des commandes : un client sans commande en cours
+   * n'apparaissait alors nulle part, et ses projets non plus.
+   */
+  tiersParClient: Array<{ clientId: string; socid: number }>
   /** Dolibarr est connecté sur cette instance */
   dolibarrActif: boolean
   /** message d'une instance Dolibarr injoignable, `null` sinon */
@@ -191,6 +199,7 @@ export function MissionsExplorer({
             setTiersCible={setTiersCible}
             commandes={commandesDuTiers}
             projets={projets}
+            tiersParClient={tiersParClient}
             dolibarrActif={dolibarrActif}
             panneDolibarr={panneDolibarr}
           />
@@ -302,6 +311,7 @@ function Nouvelle({
   setTiersCible,
   commandes,
   projets,
+  tiersParClient,
   dolibarrActif,
   panneDolibarr,
 }: {
@@ -312,6 +322,7 @@ function Nouvelle({
   setTiersCible: (socid: number) => void
   commandes: CommandeOuverte[]
   projets: ProjetOuvert[]
+  tiersParClient: Array<{ clientId: string; socid: number }>
   dolibarrActif: boolean
   panneDolibarr: string | null
 }) {
@@ -321,7 +332,7 @@ function Nouvelle({
   // suit : rattacher deux missions au même projet ferait partir deux CRA vers
   // les mêmes tâches, et un projet d'un autre tiers serait refusé par le
   // service — le proposer ne ferait qu'inviter à un refus.
-  const tiersDuClient = tiers.find((t) => t.clientId === clientManuel)?.socid ?? null
+  const tiersDuClient = tiersParClient.find((t) => t.clientId === clientManuel)?.socid ?? null
   const projetsDuClient = projets.filter(
     (p) => p.missionId === null && tiersDuClient !== null && p.socid === tiersDuClient,
   )

@@ -196,6 +196,22 @@ export async function listerCommandesRattachables(args: {
   })
 }
 
+/**
+ * Le tiers Dolibarr de chaque client local, quand il en a un.
+ *
+ * Lu pour lui-même, et non déduit des commandes : un client sans commande en
+ * cours n'apparaissait alors nulle part, et **ses projets non plus** — on ne
+ * pouvait pas rattacher une mission à un projet qui n'était né d'aucun bon de
+ * commande.
+ */
+export async function tiersParClient(): Promise<Map<string, number>> {
+  const liens = await prisma.externalLink.findMany({
+    where: { entityType: LIEN_CLIENT, provider: DOLIBARR },
+    select: { entityId: true, externalId: true },
+  })
+  return new Map(liens.map((l) => [l.entityId, Number(l.externalId)]))
+}
+
 /** Un projet Dolibarr proposable à une mission, avec son tiers. */
 export interface ProjetCandidat {
   id: number

@@ -275,6 +275,11 @@ export function createHttpDolibarrApi(args: {
           ref: a.ref,
           title: a.title,
           socid: a.socid,
+          // **Ouvert, pas brouillon.** Dolibarr crée un projet en statut 0 quand
+          // on ne dit rien : son interface le montre « Brouillon », et un projet
+          // brouillon n'accepte pas de temps consommé. Le porteur a validé un
+          // CRA et n'a rien vu arriver — c'est ce champ qui manquait.
+          status: 1,
           ref_ext: a.refExt,
           description: a.description,
           // Imposés, jamais paramétrables : sans eux le projet n'accepte

@@ -58,6 +58,15 @@ const PROJETS = [
   { id: 49, ref: 'PJ2605-0036', title: 'I26-EPM', socid: 9, missionId: null },
 ]
 
+/**
+ * Le tiers de chaque client, lu pour lui-même. `c2` n'a **aucune commande** :
+ * ses projets doivent quand même être proposés.
+ */
+const TIERS_PAR_CLIENT = [
+  { clientId: 'c1', socid: 7 },
+  { clientId: 'c2', socid: 9 },
+]
+
 const CLIENTS = [
   { id: 'c1', name: 'SILKHOM' },
   { id: 'c2', name: 'MACERTIF' },
@@ -102,6 +111,7 @@ function rendre(patch: Partial<Parameters<typeof MissionsExplorer>[0]> = {}) {
       heuresParJourDefaut={7}
       commandes={COMMANDES}
       projets={PROJETS}
+      tiersParClient={TIERS_PAR_CLIENT}
       dolibarrActif={true}
       panneDolibarr={null}
       {...patch}
@@ -325,6 +335,18 @@ describe('MissionsExplorer — créer depuis une commande', () => {
 
     expect(rendu).not.toContain('PJ2511-0034')
     expect(rendu).not.toContain('PJ2605-0036')
+  })
+
+  it('propose les projets d’un client qui n’a aucune commande', () => {
+    // Le tiers se déduisait des commandes : un client sans commande en cours
+    // n'apparaissait nulle part, et ses projets non plus — impossible de
+    // rattacher une mission à un projet né d'aucun bon de commande.
+    rendre({ commandes: [] })
+    fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
+
+    // Le formulaire manuel vise `c1` par défaut ; son projet doit être offert.
+    const choix = screen.getByLabelText('Projet Dolibarr') as HTMLSelectElement
+    expect(Array.from(choix.options).map((o) => o.textContent).join(' ')).toContain('PJ2511-0033')
   })
 
   it('ne propose aucun projet quand Dolibarr n’est pas connecté', () => {

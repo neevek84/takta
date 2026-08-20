@@ -356,6 +356,10 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     expect(corps.ref).toBe('CO2605-0021')
     expect(corps.usage_task).toBe(1)
     expect(corps.usage_bill_time).toBe(1)
+    // **Ouvert, pas brouillon.** Sans statut, Dolibarr crée le projet en
+    // « Brouillon », et un brouillon n'accepte aucun temps consommé : le CRA
+    // part, et rien n'arrive.
+    expect(corps.status).toBe(1)
   })
 
   it('reprend le motif de Dolibarr au lieu de le jeter', async () => {
