@@ -201,6 +201,24 @@ function lignesVendues(brut: Record<string, unknown>): DolibarrPropalLine[] {
   }))
 }
 
+/**
+ * La date d'un temps passé, au format que l'API de Dolibarr exige :
+ * `YYYY-MM-DD HH:MI:SS`, en GMT.
+ *
+ * L'application raisonne en journées — un temps passé appartient à un jour,
+ * pas à un instant — mais l'API refuse la date nue. Envoyée sans heure, elle
+ * fait répondre **500 avec un corps vide** : une erreur fatale de PHP, donc
+ * sans un mot pour l'expliquer. Mesuré sur l'instance 23.0.1 du porteur, où
+ * `{"date":"2026-08-03","duration":25200,"user_id":1}` échouait ainsi.
+ *
+ * Minuit GMT, et non midi : c'est le début du jour demandé. Le décalage ne
+ * peut ramener l'enregistrement à la veille que sur un fuseau en retard sur
+ * GMT, ce que la France n'est jamais.
+ */
+function dateTempsPasse(jour: string): string {
+  return `${jour} 00:00:00`
+}
+
 function versCommande(brut: Record<string, unknown>): DolibarrOrder {
   return {
     id: Number(brut.id),
@@ -393,7 +411,7 @@ export function createHttpDolibarrApi(args: {
         // `duration` est un nombre de secondes, tel quel : ni le réglage local
         // ni `TIMESHEET_DAY_DURATION` n'entrent ici (voir core/dolibarr/timespent).
         body: JSON.stringify({
-          date: a.date,
+          date: dateTempsPasse(a.date),
           duration: a.durationSeconds,
           user_id: a.dolibarrUserId,
           note: a.note,
@@ -413,7 +431,11 @@ export function createHttpDolibarrApi(args: {
     }): Promise<void> {
       await appel(ctx, `/tasks/${a.taskId}/timespent/${a.timespentId}`, {
         method: 'PUT',
-        body: JSON.stringify({ date: a.date, duration: a.durationSeconds, note: a.note }),
+        body: JSON.stringify({
+          date: dateTempsPasse(a.date),
+          duration: a.durationSeconds,
+          note: a.note,
+        }),
       })
     },
 

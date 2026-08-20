@@ -222,7 +222,7 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     expect(vues[0]!.method).toBe('POST')
     expect(vues[0]!.url).toBe(`${BASE}/tasks/41/addtimespent`)
     expect(JSON.parse(vues[0]!.body!)).toEqual({
-      date: '2026-05-04',
+      date: '2026-05-04 00:00:00',
       duration: 12_600,
       user_id: 7,
       note: 'Développement',
@@ -259,7 +259,7 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     expect(vues[0]!.method).toBe('PUT')
     expect(vues[0]!.url).toBe(`${BASE}/tasks/41/timespent/88`)
     expect(JSON.parse(vues[0]!.body!)).toEqual({
-      date: '2026-05-04',
+      date: '2026-05-04 00:00:00',
       duration: 3600,
       note: 'corrigé',
     })
@@ -500,5 +500,39 @@ describe('un 500 sans JSON', () => {
     })
 
     await expect(api.listThirdparties()).rejects.toThrow(/Fatal error.*task\.class\.php:1234/)
+  })
+})
+
+describe("la date d'un temps passé", () => {
+  it("part au format horodaté que l'API exige, jamais en date nue", async () => {
+    const envoyes: string[] = []
+    const api = createHttpDolibarrApi({
+      baseUrl: 'https://exemple.test/api/index.php',
+      apiKey: 'k',
+      fetchImpl: async (_url, init) => {
+        envoyes.push(String((init as RequestInit).body))
+        return new Response('12', { status: 200 })
+      },
+    })
+
+    await api.addTimeSpent({
+      taskId: 7,
+      dolibarrUserId: 1,
+      date: '2026-08-03',
+      durationSeconds: 25200,
+      note: '',
+    })
+    await api.updateTimeSpent({
+      taskId: 7,
+      timespentId: 12,
+      date: '2026-08-03',
+      durationSeconds: 25200,
+      note: '',
+    })
+
+    expect(envoyes).toHaveLength(2)
+    for (const corps of envoyes) {
+      expect(JSON.parse(corps).date).toBe('2026-08-03 00:00:00')
+    }
   })
 })

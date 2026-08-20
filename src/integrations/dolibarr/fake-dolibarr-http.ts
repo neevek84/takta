@@ -26,8 +26,8 @@ import { CATALOGUE_DOLIBARR } from './catalogue'
 /** Base du double : `.test` est réservé par l'IANA et ne se résout nulle part. */
 export const BASE_FACTICE = 'https://erp.invalide.test/api/index.php'
 
-/** Le format de date de l'API Dolibarr, et le seul qu'elle interprète. */
-const DATE_ISO = /^\d{4}-\d{2}-\d{2}$/
+/** Le format de date des temps passés, tel que l'API le documente : GMT, avec heure. */
+const DATE_HORODATEE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
 
 export interface FakeDolibarrHttp {
   fetchImpl: typeof fetch
@@ -445,8 +445,11 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
     corps: Record<string, unknown>,
     options: { avecUtilisateur: boolean },
   ): string | null {
-    if (typeof corps.date !== 'string' || !DATE_ISO.test(corps.date)) {
-      return "Date must be 'YYYY-MM-DD'"
+    // Le format que l'API documente : « YYYY-MM-DD HH:MI:SS in GMT ». La date
+    // nue était acceptée ici, et c'est pour ça que l'écart n'a été vu que sur
+    // l'instance réelle.
+    if (typeof corps.date !== 'string' || !DATE_HORODATEE.test(corps.date)) {
+      return "Date must be 'YYYY-MM-DD HH:MI:SS'"
     }
     if (!entierPositif(corps.duration)) return 'Duration must be a positive integer of seconds'
     if (options.avecUtilisateur && !entierPositif(corps.user_id)) return 'User id is mandatory'
