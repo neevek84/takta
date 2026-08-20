@@ -487,3 +487,18 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     expect((await api.listProjects())[0]!.socid).toBeNull()
   })
 })
+
+describe('un 500 sans JSON', () => {
+  it("reprend le texte de la page d'erreur au lieu de se taire", async () => {
+    const api = createHttpDolibarrApi({
+      baseUrl: 'https://exemple.test/api/index.php',
+      apiKey: 'k',
+      fetchImpl: async () =>
+        new Response('<b>Fatal error</b>: Uncaught Error in task.class.php:1234', {
+          status: 500,
+        }),
+    })
+
+    await expect(api.listThirdparties()).rejects.toThrow(/Fatal error.*task\.class\.php:1234/)
+  })
+})

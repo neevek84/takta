@@ -30,6 +30,23 @@ export async function projetDeLaMission(missionId: string): Promise<number | nul
   return lien === null ? null : Number(lien.externalId)
 }
 
+/** L'identifiant de tâche Dolibarr déjà mémorisé pour une prestation, s'il existe. */
+async function tacheMemorisee(lineId: string): Promise<number | null> {
+  const lien = await prisma.externalLink.findUnique({
+    where: {
+      entityType_entityId_provider: {
+        entityType: LIEN_LIGNE,
+        entityId: lineId,
+        provider: DOLIBARR,
+      },
+    },
+    select: { externalId: true },
+  })
+  if (lien === null) return null
+  const id = Number(lien.externalId)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
 /**
  * Pose la tâche d'une prestation dans le projet, et la correspondance qui va
  * avec.
@@ -47,6 +64,24 @@ export async function assurerLaTache(args: {
   api: DolibarrApi
   connues?: DolibarrTask[]
 }): Promise<{ tache: DolibarrTask; creee: boolean }> {
+  // La correspondance déjà mémorisée est consultée **avant** la liste, et
+  // vérifiée par une lecture directe.
+  //
+  // `GET /projects/{id}/tasks` ne rend que les tâches auxquelles l'utilisateur
+  // de la clé est affecté. Une tâche qu'on a soi-même créée peut donc
+  // disparaître de la liste sans avoir bougé — mesuré sur l'instance du porteur.
+  // Se fier à la liste seule revient alors à recréer une tâche qui existe, et
+  // Dolibarr refuse par « Error creating task » puisque la référence est prise.
+  const memorisee = await tacheMemorisee(args.lineId)
+  if (memorisee !== null) {
+    const relue = await args.api.getTask(memorisee)
+    // Le projet est revérifié : une tâche déplacée ailleurs dans Dolibarr ne
+    // doit plus recevoir les temps de cette mission.
+    if (relue !== null && relue.projectId === args.projectId) {
+      return { tache: relue, creee: false }
+    }
+  }
+
   const connues = args.connues ?? (await args.api.listTasks(args.projectId))
 
   const deja = connues.find((t) => t.label === args.label)
@@ -58,16 +93,18 @@ export async function assurerLaTache(args: {
       // Le contexte que Dolibarr ne donne pas. Son refus de créer une tâche est
       // un « Error creating task » nu, et la cause la plus fréquente ne se
       // devine pas : la tâche **existe déjà** côté Dolibarr sans que l'API la
-      // rende — mesuré sur l'instance du porteur, où `GET /projects/{id}/tasks`
-      // rend une liste vide sur un projet qui en porte une à l'écran. On croit
-      // alors devoir la créer, et sa référence est déjà prise.
+      // rende. `GET /projects/{id}/tasks` ne liste que les tâches auxquelles
+      // l'utilisateur de la clé est affecté — mesuré sur l'instance du porteur,
+      // liste vide sur un projet qui en portait une à l'écran, jusqu'à ce que
+      // l'affectation soit posée. On croit alors devoir la créer, et sa
+      // référence est déjà prise.
       const motif = err instanceof Error ? err.message : String(err)
       throw new Error(
         `${motif} — tâche « ${args.label} » dans le projet n° ${args.projectId}. ` +
-          'Deux causes connues, toutes deux côté Dolibarr : un **champ complémentaire des ' +
-          'tâches dont la formule calculée est invalide** — il fait échouer la création et ' +
-          'disparaître la tâche des listes, mesuré sur une instance 23.0.1 — ou un utilisateur ' +
-          "de clé d'API qui ne voit pas les tâches de ce projet.",
+          "Cause la plus fréquente, côté Dolibarr : **l'utilisateur de la clé d'API n'est " +
+          'affecté à aucune tâche de ce projet** — Dolibarr ne les lui liste alors pas, même ' +
+          "s'il est administrateur, et la tâche paraît manquante alors qu'elle existe. " +
+          'Affectez-le au projet dans Dolibarr, puis rejouez.',
       )
     }
   }

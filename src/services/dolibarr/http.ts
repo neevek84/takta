@@ -63,19 +63,38 @@ function nombreOuNull(valeur: unknown): number | null {
  * refus lui-même : on rend une chaîne vide et le code du statut suffit.
  */
 async function motif(reponse: Response): Promise<string> {
+  let texte: string
   try {
-    const brut = (await reponse.json()) as { error?: unknown }
+    texte = await reponse.text()
+  } catch {
+    return ''
+  }
+
+  try {
+    const brut = JSON.parse(texte) as { error?: unknown }
     const erreur = brut.error
-    const texte =
+    const message =
       typeof erreur === 'string'
         ? erreur
         : typeof erreur === 'object' && erreur !== null
           ? String((erreur as { message?: unknown }).message ?? '')
           : ''
-    return texte === '' ? '' : ` : ${texte}`
+    if (message !== '') return ` : ${message}`
   } catch {
-    return ''
+    // pas du JSON : voir plus bas
   }
+
+  // Le corps n'était pas le JSON d'erreur attendu. C'est le cas d'une **erreur
+  // fatale de PHP**, que Dolibarr rend en page HTML : rendre `''` laissait alors
+  // « Dolibarr a répondu 500 » sans un mot de plus, et la file rejouait sans fin
+  // une requête dont personne ne pouvait connaître le défaut — constaté sur
+  // `POST /tasks/{id}/addtimespent`. Le texte est donc repris, débarrassé de son
+  // balisage et tronqué : illisible vaut mieux que muet.
+  const nu = texte
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return nu === '' ? '' : ` : ${nu.slice(0, 300)}`
 }
 
 async function appel(ctx: Contexte, chemin: string, options: Options = {}): Promise<unknown> {
@@ -264,6 +283,22 @@ export function createHttpDolibarrApi(args: {
         label: String(t.label ?? ''),
         projectId,
       }))
+    },
+
+    async getTask(taskId: number): Promise<DolibarrTask | null> {
+      // 404 toléré : une tâche supprimée chez Dolibarr n'est pas une panne, et
+      // la correspondance qui la visait doit alors être abandonnée.
+      const brut = (await appel(ctx, `/tasks/${taskId}`, { statutsToleres: [404] })) as Record<
+        string,
+        unknown
+      > | null
+      if (brut === null) return null
+      return {
+        id: Number(brut.id),
+        ref: String(brut.ref ?? ''),
+        label: String(brut.label ?? ''),
+        projectId: Number(brut.fk_project ?? brut.fk_projet ?? 0),
+      }
     },
 
     async createTask(a: { projectId: number; label: string }): Promise<DolibarrTask> {

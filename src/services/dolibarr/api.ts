@@ -109,6 +109,18 @@ export interface DolibarrApi {
   /** déjà filtrés sur `usage_bill_time = 1` */
   listProjects(): Promise<DolibarrProject[]>
   listTasks(projectId: number): Promise<DolibarrTask[]>
+  /**
+   * Relit une tâche par son identifiant, ou rend `null` si elle n'existe plus.
+   *
+   * **Pourquoi une lecture directe en plus de la liste.** `GET /projects/{id}/tasks`
+   * ne rend que les tâches **auxquelles l'utilisateur de la clé est affecté** :
+   * mesuré sur l'instance 23.0.1 du porteur, où la liste du projet 178 rendait
+   * `[]` — même pour un administrateur — tant que personne n'était affecté à la
+   * tâche 34, puis les deux tâches dès l'affectation posée. Une correspondance
+   * mémorisée ne doit donc pas être jetée sur la foi d'une liste : on interroge
+   * la tâche elle-même.
+   */
+  getTask(taskId: number): Promise<DolibarrTask | null>
   createTask(args: { projectId: number; label: string }): Promise<DolibarrTask>
   /**
    * Crée un projet **facturable au temps**, et rien d'autre.

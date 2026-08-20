@@ -190,7 +190,7 @@ describe('quand Dolibarr refuse de créer la tâche', () => {
     expect(r.echec).toContain('Error creating task')
     expect(r.echec).toContain('« Consultant »')
     expect(r.echec).toMatch(/projet n° \d+/)
-    expect(r.echec).toContain('formule calculée est invalide')
+    expect(r.echec).toContain("n'est affecté à aucune tâche")
   })
 })
 
@@ -201,5 +201,72 @@ describe('projetDeLaMission', () => {
 
     const orpheline = await decor({ rattachee: false })
     expect(await projetDeLaMission(orpheline.mission.id)).toBeNull()
+  })
+})
+
+describe('une tâche que la liste de Dolibarr ne rend pas', () => {
+  it("est retrouvée par la correspondance mémorisée, au lieu d'être recréée", async () => {
+    const { mission, projet, ligne } = await decor()
+
+    // La tâche existe et la correspondance la vise ; mais la liste du projet ne
+    // la rend pas — ce que fait Dolibarr quand l'utilisateur de la clé n'y est
+    // pas affecté.
+    const tache = await api.createTask({ projectId: projet.id, label: 'Consultant' })
+    await prisma.externalLink.create({
+      data: {
+        userId,
+        entityType: LIEN_LIGNE,
+        entityId: ligne.id,
+        provider: DOLIBARR,
+        externalId: String(tache.id),
+        syncState: 'SYNCED',
+      },
+    })
+    api.tasks.length = 0
+    api.tasks.push({ ...tache })
+    api.listTasks = async () => []
+    const creationsAvant = api.appels.createTask
+
+    const r = await ouvrirLaTacheDeLaPrestation({
+      userId,
+      missionId: mission.id,
+      lineId: ligne.id,
+      label: 'Consultant',
+      api,
+    })
+
+    expect(r.echec).toBeNull()
+    expect(api.appels.createTask).toBe(creationsAvant)
+  })
+
+  it('est recréée si elle a été déplacée dans un autre projet', async () => {
+    const { mission, projet, ligne } = await decor()
+    const ailleurs = api.seedProject({ ref: 'PJ-AUTRE', title: 'Ailleurs', socid: projet.socid })
+    const tache = await api.createTask({ projectId: ailleurs.id, label: 'Consultant' })
+    await prisma.externalLink.create({
+      data: {
+        userId,
+        entityType: LIEN_LIGNE,
+        entityId: ligne.id,
+        provider: DOLIBARR,
+        externalId: String(tache.id),
+        syncState: 'SYNCED',
+      },
+    })
+    api.listTasks = async () => []
+
+    const r = await ouvrirLaTacheDeLaPrestation({
+      userId,
+      missionId: mission.id,
+      lineId: ligne.id,
+      label: 'Consultant',
+      api,
+    })
+
+    expect(r.creee).toBe(true)
+    const lien = await prisma.externalLink.findFirst({
+      where: { entityType: LIEN_LIGNE, entityId: ligne.id, provider: DOLIBARR },
+    })
+    expect(lien?.externalId).not.toBe(String(tache.id))
   })
 })

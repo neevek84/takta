@@ -218,6 +218,11 @@ export class FakeDolibarr implements DolibarrApi {
     return t
   }
 
+  async getTask(taskId: number): Promise<DolibarrTask | null> {
+    this.garde()
+    return this.tasks.find((t) => t.id === taskId) ?? null
+  }
+
   async createProject(args: DolibarrProjectCreation): Promise<DolibarrProject> {
     this.garde()
     this.appels.createProject += 1
