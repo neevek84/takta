@@ -190,7 +190,7 @@ describe('quand Dolibarr refuse de créer la tâche', () => {
     expect(r.echec).toContain('Error creating task')
     expect(r.echec).toContain('« Consultant »')
     expect(r.echec).toMatch(/projet n° \d+/)
-    expect(r.echec).toContain('ne la voit pas')
+    expect(r.echec).toContain('formule calculée est invalide')
   })
 })
 

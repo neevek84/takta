@@ -64,8 +64,10 @@ export async function assurerLaTache(args: {
       const motif = err instanceof Error ? err.message : String(err)
       throw new Error(
         `${motif} — tâche « ${args.label} » dans le projet n° ${args.projectId}. ` +
-          "Si elle existe déjà chez Dolibarr, c'est que l'utilisateur de la clé d'API ne la voit " +
-          'pas : vérifiez ses droits sur les projets, ou assignez-la-lui.',
+          'Deux causes connues, toutes deux côté Dolibarr : un **champ complémentaire des ' +
+          'tâches dont la formule calculée est invalide** — il fait échouer la création et ' +
+          'disparaître la tâche des listes, mesuré sur une instance 23.0.1 — ou un utilisateur ' +
+          "de clé d'API qui ne voit pas les tâches de ce projet.",
       )
     }
   }
