@@ -29,7 +29,7 @@ export default async function AdminSyncPage({
     getConnectionState(user.id),
     listOpenConflicts(user.id),
     listFailedSyncRows(user.id),
-    listPendingSyncRows(user.id),
+    listPendingSyncRows(),
   ])
 
   return (

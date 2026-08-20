@@ -83,9 +83,10 @@ describe('page Administration · Synchronisation', () => {
     expect(getConnectionState).toHaveBeenCalledWith('u1')
     expect(listOpenConflicts).toHaveBeenCalledWith('u1')
     expect(listFailedSyncRows).toHaveBeenCalledWith('u1')
-    // La file en attente est lue pour le **même** utilisateur : une supervision
-    // qui montrerait celle d'un autre serait pire que pas de supervision.
-    expect(listPendingSyncRows).toHaveBeenCalledWith('u1')
+    // La file en attente est lue pour **toute l'instance** : un CRA appartient
+    // à une mission, et le pousser est un acte d'instance. Arbitrage du
+    // porteur, 20 août 2026 ; les rôles poseront la restriction.
+    expect(listPendingSyncRows).toHaveBeenCalledWith()
 
     // Et elle les transmet : un écran câblé sur des tableaux vides afficherait
     // « aucune divergence » pendant qu'une divergence attend en base.

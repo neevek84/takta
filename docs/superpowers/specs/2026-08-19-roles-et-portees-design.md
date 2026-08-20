@@ -101,3 +101,32 @@ Ce que l'évolution doit trancher :
 missions propose désormais les **tiers Dolibarr** et crée le client local, avec
 sa correspondance, au moment où la mission naît. Le rattachement préalable dans
 les réglages n'est plus un passage obligé.
+
+
+---
+
+# Arbitrage du 20 août : la file de synchronisation est de portée instance
+
+Le porteur a tranché : **tout le monde voit tout**, et les rôles poseront la
+restriction plus tard.
+
+Le raisonnement est le sien, et il est juste : *« un CRA s'envoie par mission,
+pas par consultant »*. Le pousser est un acte d'instance — la clé d'API l'est,
+la correspondance mission → projet l'est. Filtrer la supervision sur « qui a
+créé la ligne de file » était le mauvais axe.
+
+Ce qui a changé, et qu'il ne faut pas « réparer » par inadvertance :
+
+- `listPendingSyncRows()` et `retrySyncRow()` ne prennent plus de `userId` ;
+- chaque ligne porte le nom de son **propriétaire**, affiché à l'écran — c'est
+  ce que les rôles exploiteront, et ce qui rend la liste lisible dès qu'il y a
+  deux comptes ;
+- la session reste exigée : c'est le seul garde-fou d'ici là, et c'est assumé.
+
+Deux mutations gardent la décision : remettre un filtre par `userId`, ou cesser
+de nommer le propriétaire, font tomber les tests.
+
+**Ce que les rôles devront poser**, quand ils arriveront : un `CONSULTANT` ne
+voit que les missions qui le concernent, un `ADMIN` voit toute l'instance. La
+donnée nécessaire est déjà là — le propriétaire de chaque ligne, et
+l'affectation des prestations.

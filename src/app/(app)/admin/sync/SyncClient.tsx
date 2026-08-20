@@ -252,7 +252,7 @@ export function SyncClient(props: {
                 <li key={p.id} className="rounded-md border border-rule p-3 text-sm">
                   <p className="font-medium">{p.libelle}</p>
                   <p className="text-muted">
-                    {p.provider} · {p.operation}
+                    {p.proprietaire} · {p.provider} · {p.operation}
                     {/* L'attente est dite en clair : c'est elle qui révèle qu'un
                         drainage manque, là où un simple compte ne dirait rien. */}
                     {p.attenteHeures > 0 && ` · en attente depuis ${p.attenteHeures} h`}

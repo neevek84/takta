@@ -345,6 +345,7 @@ describe('la file en attente', () => {
     entityType: 'Cra',
     provider: 'DOLIBARR',
     operation: 'UPSERT' as const,
+    proprietaire: 'Keveen',
     attenteHeures: 30,
     attempts: 0,
     libelle: 'Cra · cra-1',

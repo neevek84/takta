@@ -108,9 +108,12 @@ describe('chaque action agit sur le seul compte de la session', () => {
     })
   })
 
-  it('rejoue une ligne pour la session', async () => {
+  it('rejoue une ligne sans la filtrer sur son propriétaire', async () => {
+    // La file est de portée instance : un CRA appartient à une mission, pas à
+    // celui qui a créé la ligne. La session reste exigée — c'est le seul
+    // garde-fou tant que les rôles n'existent pas.
     expect(await rejouer('r1')).toBe(true)
-    expect(retrySyncRow).toHaveBeenCalledWith('u1', 'r1')
+    expect(retrySyncRow).toHaveBeenCalledWith('r1')
   })
 
   it('déconnecte le compte Google de la session', async () => {
