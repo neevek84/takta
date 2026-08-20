@@ -76,6 +76,23 @@ export async function poserDurabiliteSqlite(
   await prisma.$queryRawUnsafe('PRAGMA journal_mode=WAL')
   await prisma.$executeRawUnsafe('PRAGMA synchronous=FULL')
 
+  // Replier le journal souvent, et pas tous les quatre mégaoctets.
+  //
+  // SQLite ne reporte le contenu du `-wal` dans le fichier principal qu'au bout
+  // de mille pages par défaut — soit environ 4 Mo, que cette application met
+  // des semaines à écrire. Le journal a donc porté des heures de saisie, seul,
+  // sans que rien ne l'y oblige. Tant qu'il vit, il est le seul exemplaire :
+  // le perdre, c'est perdre tout ce qu'il portait, la base principale restant
+  // parfaitement valide et parfaitement périmée. Constaté ici — un journal
+  // effacé, une base intacte, une demi-journée de saisie envolée.
+  //
+  // Cent pages (~400 Ko) bornent la fenêtre à quelques minutes de travail sans
+  // rien coûter de perceptible : le repli est incrémental et ne bloque pas les
+  // lecteurs.
+  // En lecture, comme `journal_mode` : ce pragma rend la valeur en vigueur, et
+  // SQLite refuse une écriture qui rendrait des lignes.
+  await prisma.$queryRawUnsafe('PRAGMA wal_autocheckpoint=100')
+
   const mode = String(
     premiereValeur(await prisma.$queryRawUnsafe('PRAGMA journal_mode'), 'journal_mode') ?? '',
   ).toLowerCase()
