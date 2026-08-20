@@ -127,8 +127,14 @@ async function appel(ctx: Contexte, chemin: string, options: Options = {}): Prom
   }
 
   if (reponse.status >= 500) {
+    // Le motif est repris ici **aussi**. Un 500 reste rejouable — c'est une
+    // panne, pas un refus — mais il peut cacher une charge utile que Dolibarr
+    // n'a pas su traiter, et la file rejouera alors indéfiniment la même. Sans
+    // sa phrase, on ne saurait jamais laquelle : constaté sur `POST /tasks`,
+    // rejoué en boucle sans qu'aucun écran ne dise pourquoi.
     throw new DolibarrUnavailableError(
-      `Dolibarr a répondu ${reponse.status} sur ${chemin}. La synchronisation réessaiera.`,
+      `Dolibarr a répondu ${reponse.status} sur ${chemin}${await motif(reponse)}. ` +
+        'La synchronisation réessaiera.',
     )
   }
 

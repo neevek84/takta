@@ -377,6 +377,25 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     ).rejects.toThrow(/Ref is mandatory/)
   })
 
+  it('reprend aussi le motif d une panne, pour savoir quoi rejouer', async () => {
+    // Un 500 reste rejouable, mais il peut cacher une charge utile que
+    // Dolibarr n'a pas su traiter : la file rejoue alors la même
+    // indéfiniment, et sans sa phrase on ne sait jamais laquelle.
+    const api = createHttpDolibarrApi({
+      baseUrl: BASE,
+      apiKey: 'k',
+      fetchImpl: async () =>
+        reponse({ error: { code: 500, message: 'Call to a member function on null' } }, 500),
+    })
+
+    await expect(api.createTask({ projectId: 3, label: 'X' })).rejects.toThrow(
+      /Call to a member function/,
+    )
+    await expect(api.createTask({ projectId: 3, label: 'X' })).rejects.toThrow(
+      DolibarrUnavailableError,
+    )
+  })
+
   it('reste lisible quand le refus n a pas de corps exploitable', async () => {
     const api = createHttpDolibarrApi({
       baseUrl: BASE,
