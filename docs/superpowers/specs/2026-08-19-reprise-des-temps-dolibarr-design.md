@@ -42,7 +42,7 @@ factures émises, que Dolibarr ne rend pas. Le rappel remplace le risque par une
 consigne — et la coupure au dernier jour du mois précédent fait que ce que le
 porteur a à supprimer tient dans un mois, pas dans un historique.
 
-## Cinq questions que la spec devra trancher
+## Deux questions techniques que la spec devra trancher
 
 1. **La route de lecture n'existe pas.** Le port sait ajouter, modifier et
    supprimer un temps passé ; il ne sait pas les lire. Il faut une route,
