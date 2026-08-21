@@ -184,6 +184,10 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
     prisma.mission.findMany({
       where: {
         archived: false,
+        // Ranger un client range ses missions avec lui : sans cette condition,
+        // elles resteraient dans la liste sous un client qui n'y est plus, et
+        // l'archivage ne rangerait rien.
+        client: { archived: false },
         OR: [{ lines: { none: {} } }, { lines: { some: { assignments: { some: { userId } } } } }],
       },
       include: {

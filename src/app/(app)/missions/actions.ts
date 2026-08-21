@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireUser } from '@/auth'
+import { prisma } from '@/db/client'
 import { createClient } from '@/services/clients'
 import {
   createMission,
@@ -32,6 +33,13 @@ import {
   type RepriseTempsEffectuee,
 } from '@/services/dolibarr/reprise-temps'
 import { getSettings } from '@/services/settings'
+import {
+  archiverMission,
+  impactSuppressionMission,
+  supprimerMission,
+  type ImpactSuppression,
+} from '@/services/archivage'
+import { detachEntity } from '@/services/dolibarr/import'
 import type { DisplayUnit } from '@/core/types'
 
 /**
@@ -442,6 +450,92 @@ export async function appliquerRepriseTemps(missionId: string): Promise<RepriseT
     })
     revalidatePath('/missions')
     return { ok: true, resultat }
+  } catch (err) {
+    return { ok: false, erreur: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** Ce qu'une suppression de mission emporterait — montré **avant** de la proposer. */
+export async function chargerImpactMission(missionId: string): Promise<ImpactSuppression> {
+  await requireUser()
+  return impactSuppressionMission(missionId)
+}
+
+export type GestionMissionState = { ok: true; message: string } | { ok: false; erreur: string } | null
+
+/**
+ * Range une mission, ou la sort de l'archive. Réversible : rien n'est perdu.
+ */
+export async function rangerMission(
+  missionId: string,
+  archive: boolean,
+): Promise<GestionMissionState> {
+  await requireUser()
+  try {
+    await archiverMission(missionId, archive)
+    revalidatePath('/missions')
+    return { ok: true, message: archive ? 'Mission archivée.' : 'Mission désarchivée.' }
+  } catch (err) {
+    return { ok: false, erreur: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Rompt le lien avec Dolibarr sans rien détruire.
+ *
+ * Le geste qui convient quand le projet distant a disparu : la mission redevient
+ * locale et ses saisies restent. Rien n'est supprimé chez Dolibarr — ce qui y a
+ * été poussé est l'historique du client.
+ */
+export async function detacherMissionDeDolibarr(
+  missionId: string,
+): Promise<GestionMissionState> {
+  const user = await requireUser()
+  try {
+    await detachEntity({ userId: user.id, entityType: 'Mission', entityId: missionId })
+    revalidatePath('/missions')
+    return {
+      ok: true,
+      message:
+        'Mission détachée de Dolibarr. Ses saisies sont intactes, et rien n’a été supprimé là-bas.',
+    }
+  } catch (err) {
+    return { ok: false, erreur: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Détruit une mission et tout ce qu'elle contient, **localement**.
+ *
+ * Le libellé exact de la mission est exigé en confirmation. Ce n'est pas une
+ * politesse : la suppression emporte des CRA peut-être signés, et un clic ne
+ * doit pas suffire à les faire disparaître.
+ */
+export async function detruireMission(
+  missionId: string,
+  confirmation: string,
+): Promise<GestionMissionState> {
+  await requireUser()
+
+  const mission = await prisma.mission.findUnique({
+    where: { id: missionId },
+    select: { label: true },
+  })
+  if (mission === null) return { ok: false, erreur: 'Cette mission n’existe plus.' }
+  if (confirmation.trim() !== mission.label) {
+    return {
+      ok: false,
+      erreur: `Pour supprimer, recopiez exactement le libellé de la mission : « ${mission.label} ».`,
+    }
+  }
+
+  try {
+    const impact = await supprimerMission(missionId)
+    revalidatePath('/missions')
+    return {
+      ok: true,
+      message: `Mission supprimée : ${impact.prestations} prestation(s), ${impact.saisies} saisie(s), ${impact.cras} CRA et ${impact.correspondances} correspondance(s). Rien n’a été supprimé dans Dolibarr.`,
+    }
   } catch (err) {
     return { ok: false, erreur: err instanceof Error ? err.message : String(err) }
   }

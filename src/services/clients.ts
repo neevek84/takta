@@ -34,10 +34,15 @@ export async function createClient(
  * d'une première mission serait impossible sur une base vide), ou si
  * l'utilisateur a une affectation sur au moins une ligne d'une de ses
  * missions.
+ *
+ * Un client **archivé** n'apparaît nulle part : ni dans la liste, ni comme
+ * choix à la création d'une mission. Le ranger n'aurait aucun effet s'il
+ * continuait de s'offrir au premier formulaire venu.
  */
 export async function listClients(userId: string): Promise<Array<{ id: string; name: string }>> {
   return prisma.client.findMany({
     where: {
+      archived: false,
       OR: [
         { missions: { none: {} } },
         { missions: { some: { lines: { none: {} } } } },

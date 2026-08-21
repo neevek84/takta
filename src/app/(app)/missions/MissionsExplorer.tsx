@@ -13,6 +13,7 @@ import { addClient, addMission, addLine, creerMissionDepuisCommande } from './ac
 import { LigneForm } from './LigneForm'
 import { RepriseTaches } from './RepriseTaches'
 import { RepriseTemps } from './RepriseTemps'
+import { GestionMission } from './GestionMission'
 import { SignataireForm } from './SignataireForm'
 
 /** Une commande Dolibarr sur laquelle une mission peut naître. */
@@ -311,6 +312,12 @@ function Detail({
         missionId={mission.id}
         signataireNom={mission.signataireNom}
         signataireEmail={mission.signataireEmail}
+      />
+
+      <GestionMission
+        missionId={mission.id}
+        label={mission.label}
+        dansDolibarr={mission.dolibarrProjectId !== null}
       />
     </Card>
   )
