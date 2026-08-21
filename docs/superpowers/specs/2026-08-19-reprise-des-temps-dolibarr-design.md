@@ -35,6 +35,7 @@ rien créer du tout : mieux vaut un engagement faux qu'une double facture.
 | Apparier tâche et prestation | **Une fenêtre de conversion**, où le porteur fait correspondre chaque tâche à une prestation. |
 | Jusqu'où reprendre | **Jusqu'au dernier jour du mois précédent.** Le mois en cours se saisit dans l'application, qui le poussera. |
 | Effacer les temps repris chez Dolibarr | **Jamais par l'application.** C'est le porteur qui supprime, dans Dolibarr, les temps du mois en cours qu'il va ressaisir. L'application **rappelle** ce geste au moment de l'import, et la procédure de mise en œuvre le documente. |
+| Quelle heure porter sur un temps repris | **Celle de Dolibarr si elle existe, 9 h sinon.** Le porteur ne l'a jamais renseignée ; un autre utilisateur a pu le faire, et sa saisie fait alors foi. L'heure d'une reprise n'engage rien : elle sert l'unicité, pas la mesure. |
 
 La dernière décision est la plus importante, et elle est juste : une suppression
 faite par l'application porterait sur des temps peut-être déjà rattachés à des
@@ -42,17 +43,39 @@ factures émises, que Dolibarr ne rend pas. Le rappel remplace le risque par une
 consigne — et la coupure au dernier jour du mois précédent fait que ce que le
 porteur a à supprimer tient dans un mois, pas dans un historique.
 
-## Deux questions techniques que la spec devra trancher
+## L'heure des temps repris, arbitrée le 21 août
 
-1. **La route de lecture n'existe pas.** Le port sait ajouter, modifier et
-   supprimer un temps passé ; il ne sait pas les lire. Il faut une route,
-   cataloguée et éprouvée contre l'instance du porteur — sa forme n'est pas
-   connue avec certitude sur la 23.0.1.
-2. **Où se posent les heures.** Un temps Dolibarr porte une date et une durée,
-   jamais un créneau. Les saisies locales ont un créneau, une heure de début et
-   une heure de fin, et leur clé d'unicité porte l'heure de début : deux temps
-   du même jour sur la même prestation doivent recevoir deux heures distinctes,
-   inventées.
+Un temps Dolibarr porte une date et une durée ; l'heure y est facultative, et
+elle est vide chez le porteur. Nos saisies, elles, ont un créneau dont l'heure
+de début fait partie de la clé d'unicité. Il faut donc en poser une, et la règle
+est celle-ci :
+
+1. **L'heure de Dolibarr, quand elle existe.** Un autre utilisateur a pu la
+   renseigner ; sa saisie fait foi, on ne la réécrit pas.
+2. **9 h sinon.**
+3. **Puis à la suite, en chaînant les durées**, quand plusieurs temps tombent le
+   même jour sur la même prestation : le second commence à la fin du premier.
+   Deux temps ne peuvent pas partager une heure de début, et **décaler est le
+   seul choix qui n'invente pas de durée** — un pas fixe d'une heure mentirait
+   sur des saisies d'une demi-journée.
+
+Cette troisième règle est **déduite**, pas arbitrée : l'arbitrage porte sur « 9 h
+par défaut », le chaînage n'en est que la conséquence mécanique quand deux
+saisies se télescopent. Si le porteur préfère un autre décalage, il prime.
+
+L'heure d'une reprise ne prétend à rien. Elle n'est pas une mesure, elle est
+l'étiquette qui permet à deux lignes de coexister.
+
+## La route de lecture n'existe pas
+
+Le port sait ajouter, modifier et supprimer un temps passé ; il ne sait pas les
+lire. Il faut une route, cataloguée et éprouvée contre l'instance du porteur —
+sa forme n'est pas connue avec certitude sur la 23.0.1, et la mésaventure
+d'`addtimespent` a montré ce que valent les suppositions sur cette API.
+
+Cette route conditionne la règle ci-dessus : rien ne garantit encore qu'elle
+expose l'heure (`element_datehour`) en plus de la date. Si elle ne la rend pas,
+la première règle tombe d'elle-même et tout part à 9 h.
 
 ## Ce qui reste vrai quoi qu'il arrive
 
