@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildTimeSpentPayloads, compareDayLength, type PushableEntry } from './timespent'
+import { chargePrevueEnSecondes, buildTimeSpentPayloads, compareDayLength, type PushableEntry } from './timespent'
 
 function saisie(over: Partial<PushableEntry> = {}): PushableEntry {
   return {
@@ -145,5 +145,33 @@ describe('compareDayLength', () => {
     expect(() =>
       compareDayLength({ minutesParJourLocal: 480, heuresParJourDolibarr: 0 }),
     ).toThrow(/inexploitable/)
+  })
+})
+
+describe('chargePrevueEnSecondes', () => {
+  // `planned_workload` est en secondes chez Dolibarr : `projet/tasks/task.php`
+  // le compose en `heures × 3600 + minutes × 60`.
+  it('convertit des jours vendus en secondes, au facteur de la prestation', () => {
+    // 5 jours sur une journée de 7 h : 5 × 420 × 60
+    expect(chargePrevueEnSecondes({ soldCentiemes: 500, minutesParJour: 420 })).toBe(126_000)
+  })
+
+  it("suit le facteur, qui n'est pas toujours sept heures", () => {
+    // La même vente sur une journée de 8 h pèse plus lourd.
+    expect(chargePrevueEnSecondes({ soldCentiemes: 500, minutesParJour: 480 })).toBe(144_000)
+  })
+
+  it('rend un entier sur une demi-journée', () => {
+    expect(chargePrevueEnSecondes({ soldCentiemes: 50, minutesParJour: 420 })).toBe(12_600)
+  })
+
+  // Rien de vendu n'est pas zéro heure de charge : c'est une charge inconnue,
+  // et Dolibarr distingue les deux — `null` laisse la colonne vide.
+  it("rend null quand rien n'est vendu", () => {
+    expect(chargePrevueEnSecondes({ soldCentiemes: 0, minutesParJour: 420 })).toBeNull()
+  })
+
+  it("rend null sur un facteur inexploitable plutôt qu'une charge fausse", () => {
+    expect(chargePrevueEnSecondes({ soldCentiemes: 500, minutesParJour: 0 })).toBeNull()
   })
 })

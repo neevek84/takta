@@ -45,6 +45,13 @@ export interface DolibarrPropalLine {
    * ferait « 5 jours vendus » d'une commande de cinq t-shirts.
    */
   service: boolean
+  /**
+   * Début de la période vendue (`date_start` de la ligne), `'YYYY-MM-DD'`, ou
+   * `null` — le cas le plus courant : sur l'instance du porteur, 9 lignes de
+   * commande sur 75 en portent une. C'est d'elle que le projet tire sa date de
+   * démarrage quand elle existe.
+   */
+  dateStart: string | null
 }
 
 export interface DolibarrProposal {
@@ -89,6 +96,12 @@ export interface DolibarrProjectCreation {
   /** `ref_ext` : la référence client reportée, `''` quand la commande n'en porte pas */
   refExt: string
   description: string
+  /**
+   * Date de démarrage du projet, `'YYYY-MM-DD'`, ou `null` quand elle est
+   * inconnue. Reprise des lignes de service de la commande quand elles en
+   * portent une, saisie à la création de la mission sinon.
+   */
+  dateStart: string | null
 }
 
 /**
@@ -121,7 +134,17 @@ export interface DolibarrApi {
    * la tâche elle-même.
    */
   getTask(taskId: number): Promise<DolibarrTask | null>
-  createTask(args: { projectId: number; label: string }): Promise<DolibarrTask>
+  createTask(args: {
+    projectId: number
+    label: string
+    /**
+     * Charge de travail prévue, **en secondes** — c'est l'unité de
+     * `llx_projet_task.planned_workload`, vérifiée dans `projet/tasks/task.php`
+     * qui compose `heures × 3600 + minutes × 60`. `null` quand la prestation
+     * ne vend rien de chiffré.
+     */
+    plannedWorkloadSeconds: number | null
+  }): Promise<DolibarrTask>
   /**
    * Crée un projet **facturable au temps**, et rien d'autre.
    *
@@ -130,6 +153,15 @@ export interface DolibarrApi {
    * viendrait de fabriquer elle-même le cas qu'elle refuse de rattacher.
    */
   createProject(args: DolibarrProjectCreation): Promise<DolibarrProject>
+  /**
+   * Affecte l'utilisateur de la clé au projet, comme chef de projet.
+   *
+   * Sur un projet **privé**, Dolibarr ne rend ses tâches qu'aux utilisateurs
+   * qui y ont un rôle : sans affectation, `listTasks` revient vide même sur un
+   * projet qui en porte. Sans identifiant d'utilisateur configuré, l'appel ne
+   * fait rien — il n'y a personne à affecter.
+   */
+  assignerAuProjet(projectId: number): Promise<void>
   /** déjà filtrées : ni brouillon, ni annulée */
   listOrders(): Promise<DolibarrOrder[]>
   getOrder(id: number): Promise<DolibarrOrder>

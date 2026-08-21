@@ -48,6 +48,18 @@ export async function addClient(formData: FormData) {
 }
 
 /**
+ * Un champ date de formulaire, rendu en `'YYYY-MM-DD'` ou `null`.
+ *
+ * Un `<input type="date">` vide rend `''`, et un navigateur qui n'en gère pas
+ * le type rend ce que l'utilisateur a tapé : tout ce qui n'a pas la forme
+ * attendue vaut « pas de date » plutôt qu'une date inventée.
+ */
+function jourOuNull(valeur: FormDataEntryValue | null): string | null {
+  const texte = String(valeur ?? '').trim()
+  return /^\d{4}-\d{2}-\d{2}$/.test(texte) ? texte : null
+}
+
+/**
  * Crée une mission à la main, avec le projet Dolibarr demandé — ou sans.
  *
  * Le champ `projet` porte trois valeurs : vide pour aucun projet, `CREER` pour
@@ -78,6 +90,9 @@ export async function addMission(formData: FormData) {
     minutesParJour: surchargeOuNull(formData.get('heuresParJour')),
     signataireNom: String(formData.get('signataireNom') ?? ''),
     signataireEmail: String(formData.get('signataireEmail') ?? ''),
+    // Le projet Dolibarr en tire son `date_start`. Une commande qui porte une
+    // période vendue la fournit ; ici il n'y en a pas, donc on la demande.
+    startDate: jourOuNull(formData.get('startDate')),
     userId: user.id,
   }
 

@@ -61,6 +61,59 @@ async function decor(options: { rattachee?: boolean } = {}) {
 }
 
 describe('ouvrirLaTacheDeLaPrestation', () => {
+  // `planned_workload` renseigne l'avancement dans Dolibarr. Sans elle, la
+  // tâche affiche « Charge de travail non définie » et aucun pourcentage de
+  // consommation — constaté sur l'instance du porteur.
+  it('porte la charge prévue de la prestation sur la tâche créée', async () => {
+    const { mission, ligne } = await decor()
+    // Facteur posé sur la prestation elle-même : le test ne doit pas dépendre
+    // du réglage global, qui vaut 8 h sur cette base et 7 h ailleurs.
+    await prisma.missionLine.update({
+      where: { id: ligne.id },
+      data: { minutesParJour: 420 },
+    })
+
+    await ouvrirLaTacheDeLaPrestation({
+      userId,
+      missionId: mission.id,
+      lineId: ligne.id,
+      label: 'Consultant',
+      api,
+    })
+
+    // `decor()` vend 1000 centièmes, soit 10 jours ; la journée vaut 7 h par
+    // défaut : 10 × 420 × 60 = 252 000 s.
+    expect(api.dernierePlannedWorkload).toBe(252_000)
+  })
+
+  // **Le piège que ce comportement ferme.** Un projet privé ne rend ses tâches
+  // qu'aux utilisateurs qui y ont un rôle : `getTasksArray` écarte tout le
+  // reste. Une tâche existante devenait donc invisible, le connecteur la
+  // croyait absente, la recréait, et Dolibarr refusait par « Error creating
+  // task » puisque la référence était déjà prise. Plutôt que de demander au
+  // porteur de poser l'affectation à la main, on la pose.
+  it('affecte au projet puis relit quand la liste des tâches revient vide', async () => {
+    const { mission, projet, ligne } = await decor()
+    const existante = await api.createTask({ projectId: projet.id, label: 'Consultant', plannedWorkloadSeconds: null })
+    api.masquerTachesSansAffectation()
+
+    const r = await ouvrirLaTacheDeLaPrestation({
+      userId,
+      missionId: mission.id,
+      lineId: ligne.id,
+      label: 'Consultant',
+      api,
+    })
+
+    expect(r.echec).toBeNull()
+    // Retrouvée, pas recréée : c'est toute la différence.
+    expect(r.creee).toBe(false)
+    const lien = await prisma.externalLink.findFirst({
+      where: { entityType: LIEN_LIGNE, entityId: ligne.id, provider: DOLIBARR },
+    })
+    expect(lien?.externalId).toBe(String(existante.id))
+  })
+
   it('crée la tâche dès que la prestation existe', async () => {
     // Sans cela, une prestation ajoutée à la main attendait le premier envoi
     // de temps : le projet ne montrait qu'une partie de ce qui a été vendu.
@@ -95,7 +148,7 @@ describe('ouvrirLaTacheDeLaPrestation', () => {
     // Le push la cherche par son libellé : deux tâches feraient partir les
     // temps sur l'une et laisseraient l'autre vide.
     const { mission, projet, ligne } = await decor()
-    const dejaLa = await api.createTask({ projectId: projet.id, label: 'Consultant' })
+    const dejaLa = await api.createTask({ projectId: projet.id, label: 'Consultant', plannedWorkloadSeconds: null })
     const avant = api.appels.createTask
 
     const r = await ouvrirLaTacheDeLaPrestation({
@@ -190,7 +243,11 @@ describe('quand Dolibarr refuse de créer la tâche', () => {
     expect(r.echec).toContain('Error creating task')
     expect(r.echec).toContain('« Consultant »')
     expect(r.echec).toMatch(/projet n° \d+/)
-    expect(r.echec).toContain("n'est affecté à aucune tâche")
+    // La cause nommée doit être la **vraie** : le rôle sur le projet, pas
+    // l'affectation à la tâche — c'est `getUserRolesForProjectsOrTasks` sur le
+    // projet que `getTasksArray` interroge.
+    expect(r.echec).toContain("l'utilisateur de la clé d'API n'est renseigné nulle part")
+    expect(r.echec).toContain('non public')
   })
 })
 
@@ -211,7 +268,7 @@ describe('une tâche que la liste de Dolibarr ne rend pas', () => {
     // La tâche existe et la correspondance la vise ; mais la liste du projet ne
     // la rend pas — ce que fait Dolibarr quand l'utilisateur de la clé n'y est
     // pas affecté.
-    const tache = await api.createTask({ projectId: projet.id, label: 'Consultant' })
+    const tache = await api.createTask({ projectId: projet.id, label: 'Consultant', plannedWorkloadSeconds: null })
     await prisma.externalLink.create({
       data: {
         userId,
@@ -242,7 +299,7 @@ describe('une tâche que la liste de Dolibarr ne rend pas', () => {
   it('est recréée si elle a été déplacée dans un autre projet', async () => {
     const { mission, projet, ligne } = await decor()
     const ailleurs = api.seedProject({ ref: 'PJ-AUTRE', title: 'Ailleurs', socid: projet.socid })
-    const tache = await api.createTask({ projectId: ailleurs.id, label: 'Consultant' })
+    const tache = await api.createTask({ projectId: ailleurs.id, label: 'Consultant', plannedWorkloadSeconds: null })
     await prisma.externalLink.create({
       data: {
         userId,

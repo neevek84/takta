@@ -28,5 +28,13 @@ export async function getDolibarrApi(): Promise<DolibarrApi | null> {
   const secret = await readInstanceSecret(DOLIBARR)
   if (secret === null || secret === '') return null
 
-  return createHttpDolibarrApi({ baseUrl: vue.baseUrl, apiKey: secret })
+  // L'utilisateur auquel la clé appartient, saisi dans Administration ·
+  // Dolibarr. Il sert à affecter cet utilisateur aux projets et aux tâches que
+  // l'application crée : sans rôle sur un projet privé, Dolibarr ne lui rend
+  // aucune de ses tâches. Absent ou illisible, on passe `null` et les créations
+  // se font sans affectation plutôt que d'échouer.
+  const brut = Number(vue.metadata?.dolibarrUserId ?? '')
+  const dolibarrUserId = Number.isFinite(brut) && brut > 0 ? brut : null
+
+  return createHttpDolibarrApi({ baseUrl: vue.baseUrl, apiKey: secret, dolibarrUserId })
 }

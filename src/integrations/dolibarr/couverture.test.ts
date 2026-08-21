@@ -20,6 +20,9 @@ async function exercerTout(): Promise<string[]> {
   const api = createHttpDolibarrApi({
     baseUrl: BASE_FACTICE,
     apiKey: 'cle-factice',
+    // Sans lui, les affectations ne partent pas et le catalogue les
+    // déclarerait sans que rien ne les exerce.
+    dolibarrUserId: 7,
     fetchImpl: faux.fetchImpl,
   })
 
@@ -43,7 +46,7 @@ async function exercerTout(): Promise<string[]> {
   await api.createThirdparty('Autre Client Exemple')
   await api.listProjects()
   await api.listTasks(projet.id)
-  const tache = await api.createTask({ projectId: projet.id, label: 'Conseil' })
+  const tache = await api.createTask({ projectId: projet.id, label: 'Conseil', plannedWorkloadSeconds: null })
   await api.getProposal(propale.id)
   await api.listOrders()
   await api.getOrder(commande.id)
@@ -53,7 +56,9 @@ async function exercerTout(): Promise<string[]> {
     title: 'BDC-EXEMPLE — Libellé de la commande',
     refExt: 'BDC-EXEMPLE',
     description: 'Projet ouvert depuis la commande CO-EXEMPLE.',
+    dateStart: null,
   })
+  await api.assignerAuProjet(projetCree.id)
   await api.linkOrderToProject({ orderId: commande.id, projectId: projetCree.id })
   const { timespentId } = await api.addTimeSpent({
     taskId: tache.id,

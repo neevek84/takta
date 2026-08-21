@@ -74,6 +74,38 @@ describe('résolution du client Dolibarr', () => {
     expect(vues[0]!.headers.get('DOLAPIKEY')).toBe(CLE_FACTICE)
   })
 
+  // Sans cet identifiant, le client ne peut affecter personne aux projets qu'il
+  // crée — et un projet privé sans rôle ne rend aucune tâche à la clé qui vient
+  // de le créer.
+  it("transmet au client l identifiant Dolibarr de l utilisateur de la cle", async () => {
+    await saveInstanceCredential({
+      provider: DOLIBARR,
+      secret: CLE_FACTICE,
+      baseUrl: URL_FACTICE,
+      metadata: { dolibarrUserId: '7' },
+    })
+
+    const urls: string[] = []
+    vi.stubGlobal('fetch', async (input: unknown, init?: RequestInit) => {
+      const url = String(input)
+      urls.push(url)
+      // La lecture des contacts existants précède l'affectation.
+      const corps =
+        url.endsWith('/contacts') && (init?.method ?? 'GET') === 'GET'
+          ? []
+          : { id: 12, ref: 'PJ2608-0007' }
+      return new Response(JSON.stringify(corps), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+
+    const api = await getDolibarrApi()
+    await api!.createProject({ socid: 3, ref: 'R', title: 'T', refExt: '', description: '', dateStart: null })
+
+    expect(urls).toContain(`${URL_FACTICE}/projects/12/contacts`)
+  })
+
   it('ne confond pas le fournisseur Dolibarr avec un autre', async () => {
     await saveInstanceCredential({
       provider: 'autre-fournisseur',

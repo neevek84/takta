@@ -88,6 +88,20 @@ export class FakeDolibarr implements DolibarrApi {
   }
 
   private sequence = 0
+  /** Projets auxquels l'utilisateur de la clé est affecté. */
+  private affectes = new Set<number>()
+  /**
+   * Reproduit la règle de Dolibarr sur un projet **privé** : ses tâches ne sont
+   * rendues qu'aux utilisateurs qui y ont un rôle. Sans ce masque, le double
+   * laisserait passer un connecteur qui, en face d'une vraie instance,
+   * recréerait une tâche existante et se ferait refuser.
+   */
+  private masqueActif = false
+
+  /** Active la règle de visibilité des projets privés. */
+  masquerTachesSansAffectation(): void {
+    this.masqueActif = true
+  }
 
   private next(): number {
     this.sequence += 1
@@ -145,7 +159,7 @@ export class FakeDolibarr implements DolibarrApi {
       statut: args.statut ?? 1,
       facturee: args.facturee ?? false,
       projectId: args.projectId ?? null,
-      lines: (args.lines ?? []).map((l) => ({ service: true, ...l, id: this.next() })),
+      lines: (args.lines ?? []).map((l) => ({ service: true, dateStart: null, ...l, id: this.next() })),
     }
     this.orders.push(c)
     return c
@@ -159,13 +173,20 @@ export class FakeDolibarr implements DolibarrApi {
   seedProposal(args: {
     ref: string
     socid: number
-    lines: Array<{ label: string; qty: number; subpriceCents: number; service?: boolean }>
+    lines: Array<{
+      label: string
+      qty: number
+      subpriceCents: number
+      service?: boolean
+      /** début de la période vendue, comme sur une ligne de service Dolibarr */
+      dateStart?: string | null
+    }>
   }): DolibarrProposal {
     const p: DolibarrProposal = {
       id: this.next(),
       ref: args.ref,
       socid: args.socid,
-      lines: args.lines.map((l) => ({ service: true, ...l, id: this.next() })),
+      lines: args.lines.map((l) => ({ service: true, dateStart: null, ...l, id: this.next() })),
     }
     this.proposals.push(p)
     return p
@@ -196,12 +217,27 @@ export class FakeDolibarr implements DolibarrApi {
   async listTasks(projectId: number): Promise<DolibarrTask[]> {
     this.garde()
     this.projet(projectId)
+    if (this.masqueActif && !this.affectes.has(projectId)) return []
     return this.tasks.filter((t) => t.projectId === projectId)
   }
 
-  async createTask(args: { projectId: number; label: string }): Promise<DolibarrTask> {
+  async assignerAuProjet(projectId: number): Promise<void> {
+    this.garde()
+    this.projet(projectId)
+    this.affectes.add(projectId)
+  }
+
+  /** La charge prévue du dernier `createTask` — ce que le test observe. */
+  dernierePlannedWorkload: number | null = null
+
+  async createTask(args: {
+    projectId: number
+    label: string
+    plannedWorkloadSeconds: number | null
+  }): Promise<DolibarrTask> {
     this.garde()
     this.appels.createTask += 1
+    this.dernierePlannedWorkload = args.plannedWorkloadSeconds
     this.projet(args.projectId)
     if (args.label.trim() === '') {
       throw new DolibarrRequestError('Dolibarr refuse une tâche sans libellé.')

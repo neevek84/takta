@@ -35,6 +35,12 @@ export async function createMission(args: {
   minutesParJour?: number | null
   signataireNom?: string
   signataireEmail?: string
+  /**
+   * Début de la mission, `'YYYY-MM-DD'`. Reprise de la période vendue quand la
+   * commande en porte une, saisie à l'écran sinon. C'est elle qui alimente
+   * `date_start` du projet Dolibarr.
+   */
+  startDate?: string | null
   userId?: string
 }): Promise<{ id: string }> {
   const m = await prisma.mission.create({
@@ -44,6 +50,13 @@ export async function createMission(args: {
       minutesParJour: args.minutesParJour ?? null,
       signataireNom: args.signataireNom ?? '',
       signataireEmail: args.signataireEmail ?? '',
+      // Minuit UTC : la mission commence un **jour**, pas à un instant. Sans le
+      // `Z`, le fuseau du serveur déciderait, et la date reculerait d'un jour
+      // sur toute machine en avance sur GMT.
+      startDate:
+        args.startDate === undefined || args.startDate === null || args.startDate === ''
+          ? null
+          : new Date(`${args.startDate}T00:00:00Z`),
     },
   })
 

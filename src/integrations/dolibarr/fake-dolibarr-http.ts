@@ -297,7 +297,53 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
           userId: Number(corps.user_id),
           note: String(corps.note ?? ''),
         })
-        return json(id)
+        // Ce que Dolibarr rend **réellement** : un accusé, sans l'identifiant
+        // de la ligne créée. Rendre `id` ici ferait passer au vert un client
+        // qui, en face d'une vraie instance, n'obtiendrait que `NaN`.
+        return json({ success: { code: 200, message: 'Time spent added' } })
+      }
+
+      case 'GET /projects/{projectId}/contacts': {
+        const projet = projects.find((p) => p.id === Number(params.projectId))
+        if (projet === undefined) return refus('Project not found')
+        return json([])
+      }
+
+      case 'GET /tasks/{taskId}/contacts': {
+        const tache = tasks.find((t) => t.id === Number(params.taskId))
+        if (tache === undefined) return refus('Task not found')
+        return json([])
+      }
+
+      case 'POST /projects/{projectId}/contacts': {
+        const projet = projects.find((p) => p.id === Number(params.projectId))
+        if (projet === undefined) return refus('Project not found')
+        if (!estObjet(corps)) return refus('Body is mandatory')
+        return json({ success: { code: 200, message: 'Contact added' } })
+      }
+
+      case 'POST /tasks/{taskId}/contacts': {
+        const tache = tasks.find((t) => t.id === Number(params.taskId))
+        if (tache === undefined) return refus('Task not found')
+        if (!estObjet(corps)) return refus('Body is mandatory')
+        return json({ success: { code: 200, message: 'Contact added' } })
+      }
+
+      case 'GET /tasks/{taskId}/timespent': {
+        const tache = tasks.find((t) => t.id === Number(params.taskId))
+        if (tache === undefined) return refus('Task not found')
+        return json(
+          timespents
+            .filter((t) => t.taskId === tache.id)
+            .map((t) => ({
+              timespent_line_id: t.id,
+              timespent_line_date: t.date,
+              timespent_line_duration: t.duration,
+              timespent_line_fk_user: t.userId,
+              timespent_line_note: t.note,
+              fk_task: t.taskId,
+            })),
+        )
       }
 
       case 'PUT /tasks/{taskId}/timespent/{timespentId}': {

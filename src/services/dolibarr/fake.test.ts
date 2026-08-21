@@ -11,7 +11,7 @@ describe('double de l API Dolibarr', () => {
   it('crée une tâche et la retrouve', async () => {
     const api = new FakeDolibarr()
     const projet = api.seedProject({ ref: 'PJ001', title: 'ITSM', socid: 1 })
-    const t = await api.createTask({ projectId: projet.id, label: 'Développement' })
+    const t = await api.createTask({ projectId: projet.id, label: 'Développement', plannedWorkloadSeconds: null })
 
     expect(await api.listTasks(projet.id)).toEqual([t])
   })
@@ -19,7 +19,7 @@ describe('double de l API Dolibarr', () => {
   it('enregistre et met à jour un temps passé', async () => {
     const api = new FakeDolibarr()
     const projet = api.seedProject({ ref: 'PJ001', title: 'ITSM', socid: 1 })
-    const t = await api.createTask({ projectId: projet.id, label: 'Dev' })
+    const t = await api.createTask({ projectId: projet.id, label: 'Dev', plannedWorkloadSeconds: null })
 
     const { timespentId } = await api.addTimeSpent({
       taskId: t.id,
@@ -79,7 +79,7 @@ describe('double de l API Dolibarr — ce qu il refuse', () => {
 
   it('refuse une tâche sur un projet inconnu', async () => {
     const api = new FakeDolibarr()
-    await expect(api.createTask({ projectId: 4242, label: 'Dev' })).rejects.toThrow(
+    await expect(api.createTask({ projectId: 4242, label: 'Dev', plannedWorkloadSeconds: null })).rejects.toThrow(
       DolibarrRequestError,
     )
   })
@@ -87,7 +87,7 @@ describe('double de l API Dolibarr — ce qu il refuse', () => {
   it('refuse une tâche sans libellé', async () => {
     const api = new FakeDolibarr()
     const projet = api.seedProject({ ref: 'PJ001', title: 'ITSM', socid: 1 })
-    await expect(api.createTask({ projectId: projet.id, label: '' })).rejects.toThrow(
+    await expect(api.createTask({ projectId: projet.id, label: '', plannedWorkloadSeconds: null })).rejects.toThrow(
       DolibarrRequestError,
     )
   })
@@ -113,7 +113,7 @@ describe('double de l API Dolibarr — ce qu il refuse', () => {
   it('refuse une date qui n est pas au format de Dolibarr', async () => {
     const api = new FakeDolibarr()
     const projet = api.seedProject({ ref: 'PJ001', title: 'ITSM', socid: 1 })
-    const t = await api.createTask({ projectId: projet.id, label: 'Dev' })
+    const t = await api.createTask({ projectId: projet.id, label: 'Dev', plannedWorkloadSeconds: null })
 
     await expect(
       api.addTimeSpent({
@@ -132,7 +132,7 @@ describe('double de l API Dolibarr — ce qu il refuse', () => {
     // durée fractionnaire trahit une conversion oubliée en amont.
     const api = new FakeDolibarr()
     const projet = api.seedProject({ ref: 'PJ001', title: 'ITSM', socid: 1 })
-    const t = await api.createTask({ projectId: projet.id, label: 'Dev' })
+    const t = await api.createTask({ projectId: projet.id, label: 'Dev', plannedWorkloadSeconds: null })
 
     for (const durationSeconds of [0, -60, 90.5]) {
       await expect(
@@ -151,7 +151,7 @@ describe('double de l API Dolibarr — ce qu il refuse', () => {
   it('refuse un temps passé sans utilisateur Dolibarr', async () => {
     const api = new FakeDolibarr()
     const projet = api.seedProject({ ref: 'PJ001', title: 'ITSM', socid: 1 })
-    const t = await api.createTask({ projectId: projet.id, label: 'Dev' })
+    const t = await api.createTask({ projectId: projet.id, label: 'Dev', plannedWorkloadSeconds: null })
 
     await expect(
       api.addTimeSpent({
@@ -236,7 +236,7 @@ describe('double de l API Dolibarr — garde-fou inverse', () => {
     const api = new FakeDolibarr()
     const tiers = api.seedThirdparty('ACME')
     const projet = api.seedProject({ ref: 'PJ001', title: 'ITSM', socid: tiers.id })
-    const tache = await api.createTask({ projectId: projet.id, label: 'Développement' })
+    const tache = await api.createTask({ projectId: projet.id, label: 'Développement', plannedWorkloadSeconds: null })
 
     for (const p of buildTimeSpentPayloads(SAISIES)) {
       await api.addTimeSpent({
@@ -263,7 +263,7 @@ describe('createProject — le double refuse ce que l’instance refuse', () => 
     const tiers = api.seedThirdparty('ACME')
 
     await expect(
-      api.createProject({ socid: tiers.id, ref: '  ', title: 'T', refExt: '', description: '' }),
+      api.createProject({ socid: tiers.id, ref: '  ', title: 'T', refExt: '', description: '', dateStart: null }),
     ).rejects.toThrow(/ref field missing/)
   })
 
@@ -272,7 +272,14 @@ describe('createProject — le double refuse ce que l’instance refuse', () => 
     // se heurte à la référence plutôt que d'ouvrir un second projet.
     const api = new FakeDolibarr()
     const tiers = api.seedThirdparty('ACME')
-    const commun = { socid: tiers.id, ref: 'CO-1', title: 'T', refExt: '', description: '' }
+    const commun = {
+      socid: tiers.id,
+      ref: 'CO-1',
+      title: 'T',
+      refExt: '',
+      description: '',
+      dateStart: null,
+    }
 
     await api.createProject(commun)
     await expect(api.createProject(commun)).rejects.toThrow(/existe déjà/)
@@ -287,6 +294,7 @@ describe('createProject — le double refuse ce que l’instance refuse', () => 
       title: 'T',
       refExt: '',
       description: '',
+      dateStart: null,
     })
     expect(p.ref).toBe('CO2605-0021')
   })

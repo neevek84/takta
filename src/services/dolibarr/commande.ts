@@ -23,6 +23,7 @@ import {
   referenceProjetDepuisCommande,
   referenceProjetDepuisMission,
   titreProjetDepuisCommande,
+  dateDeDemarrageDeLaCommande,
 } from '@/core/dolibarr/commande'
 import { reprendreLigneVendue } from '@/core/dolibarr/ligne-vendue'
 import {
@@ -398,6 +399,9 @@ export async function creerProjetDepuisCommande(args: {
         description: `Projet ouvert depuis la commande ${commande.ref}${
           refExt === '' ? '' : ` (référence client ${refExt})`
         }.`,
+        // La période vendue vit sur les lignes de service de la commande.
+        // Absente le plus souvent — la mission la demandera alors à la saisie.
+        dateStart: dateDeDemarrageDeLaCommande(commande.lines),
       })
 
   const rattachement =
@@ -670,6 +674,12 @@ export async function creerMissionAvecProjet(args: {
   signataireNom: string
   signataireEmail: string
   projet: ProjetVoulu
+  /**
+   * Date de démarrage saisie à la création, `'YYYY-MM-DD'`, ou `null`.
+   * Cette mission ne vient d'aucune commande : il n'y a pas de période vendue
+   * d'où la tirer, elle est donc demandée à l'écran.
+   */
+  startDate: string | null
   /** `null` quand Dolibarr n'est pas connecté : seul `AUCUN` est alors possible */
   api: DolibarrApi | null
 }): Promise<MissionCreeeResult> {
@@ -723,6 +733,7 @@ export async function creerMissionAvecProjet(args: {
       // est pas un.
       refExt: '',
       description: `Projet ouvert pour la mission « ${args.label} ».`,
+      dateStart: args.startDate,
     })
   }
 
@@ -732,6 +743,7 @@ export async function creerMissionAvecProjet(args: {
     minutesParJour: args.minutesParJour,
     signataireNom: args.signataireNom,
     signataireEmail: args.signataireEmail,
+    startDate: args.startDate,
     userId: args.userId,
   })
 

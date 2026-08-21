@@ -6,6 +6,7 @@ import {
   referenceProjetDepuisCommande,
   referenceProjetDepuisMission,
   titreProjetDepuisCommande,
+  dateDeDemarrageDeLaCommande,
 } from './commande'
 
 describe('titreProjetDepuisCommande', () => {
@@ -147,5 +148,40 @@ describe('referenceProjetDepuisMission', () => {
 
   it('refuse un libellé dont il ne reste rien', () => {
     expect(() => referenceProjetDepuisMission({ label: '«»' })).toThrow(/libellé/i)
+  })
+})
+
+describe('dateDeDemarrageDeLaCommande', () => {
+  // La période vendue vit sur les lignes de **service** : un produit n'a pas de
+  // début de prestation. Prendre la plus petite, c'est prendre le moment où le
+  // chantier commence réellement.
+  it('retient la plus petite date parmi les lignes de service', () => {
+    expect(
+      dateDeDemarrageDeLaCommande([
+        { service: true, dateStart: '2026-10-01' },
+        { service: true, dateStart: '2026-09-01' },
+        { service: true, dateStart: null },
+      ]),
+    ).toBe('2026-09-01')
+  })
+
+  it('ignore les lignes de produit, qui ne vendent aucune période', () => {
+    expect(
+      dateDeDemarrageDeLaCommande([
+        { service: false, dateStart: '2026-01-01' },
+        { service: true, dateStart: '2026-09-01' },
+      ]),
+    ).toBe('2026-09-01')
+  })
+
+  // Le cas courant : sur l'instance du porteur, 9 lignes sur 75 portent une
+  // date. La date sera alors demandée à la création de la mission.
+  it('rend null quand aucune ligne de service ne porte de date', () => {
+    expect(
+      dateDeDemarrageDeLaCommande([
+        { service: true, dateStart: null },
+        { service: false, dateStart: '2026-01-01' },
+      ]),
+    ).toBeNull()
   })
 })

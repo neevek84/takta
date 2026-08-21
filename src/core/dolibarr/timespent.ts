@@ -128,3 +128,34 @@ export function compareDayLength(args: {
     ),
   }
 }
+
+/**
+ * La charge de travail prévue d'une tâche Dolibarr, **en secondes**, à partir
+ * de ce que la prestation vend.
+ *
+ * **L'unité n'est pas négociable.** `llx_projet_task.planned_workload` est en
+ * secondes : `projet/tasks/task.php` la compose en `heures × 3600 + minutes ×
+ * 60` et la relit par `convertSecondToTime`. Y écrire des heures produirait une
+ * charge 3 600 fois trop petite, que rien ne signalerait — la tâche afficherait
+ * simplement « 0 h 00 » sur cinq jours vendus.
+ *
+ * **`null` n'est pas zéro.** Une prestation qui ne vend rien de chiffré a une
+ * charge *inconnue*, pas une charge nulle ; Dolibarr distingue les deux et
+ * laisse la colonne vide. Écrire `0` afficherait un avancement de 100 % dès la
+ * première heure consommée.
+ *
+ * Le facteur est celui de la prestation, jamais une constante : une journée ne
+ * vaut pas sept heures partout, et c'est déjà ce que respecte le push des
+ * temps.
+ */
+export function chargePrevueEnSecondes(args: {
+  /** jours vendus, en centièmes de jour */
+  soldCentiemes: number
+  /** durée d'une journée, en minutes */
+  minutesParJour: number
+}): number | null {
+  if (args.soldCentiemes <= 0) return null
+  if (!Number.isFinite(args.minutesParJour) || args.minutesParJour <= 0) return null
+
+  return Math.round((args.soldCentiemes / 100) * args.minutesParJour * 60)
+}

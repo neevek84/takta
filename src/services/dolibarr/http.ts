@@ -18,6 +18,12 @@ interface Contexte {
   apiKey: string
   fetchImpl: typeof fetch
   timeoutMs: number
+  /**
+   * L'utilisateur Dolibarr auquel la clé appartient, `null` s'il n'est pas
+   * renseigné. C'est lui qu'on affecte aux projets et aux tâches créés — sans
+   * quoi `GET /projects/{id}/tasks` ne lui rendrait rien sur un projet privé.
+   */
+  dolibarrUserId: number | null
 }
 
 /**
@@ -187,6 +193,24 @@ async function liste(ctx: Contexte, chemin: string): Promise<Array<Record<string
 }
 
 /**
+ * Un jour `'YYYY-MM-DD'` à partir de ce que Dolibarr rend pour une date.
+ *
+ * Dolibarr rend ses dates en **horodatage Unix**, et une chaîne vide quand la
+ * date n'est pas renseignée — le cas courant sur les lignes de commande. Les
+ * versions plus anciennes rendent parfois une chaîne datée : les deux sont
+ * acceptées, tout le reste vaut « pas de date ».
+ */
+function jourDepuisDolibarr(valeur: unknown): string | null {
+  if (valeur === null || valeur === undefined || valeur === '') return null
+
+  const n = Number(valeur)
+  if (Number.isFinite(n) && n > 0) return new Date(n * 1000).toISOString().slice(0, 10)
+
+  const texte = String(valeur)
+  return /^\d{4}-\d{2}-\d{2}/.test(texte) ? texte.slice(0, 10) : null
+}
+
+/**
  * Les lignes d'un document vendeur, propale ou commande : Dolibarr les rend
  * sous la même forme, et les deux se reprennent avec la même règle.
  */
@@ -198,7 +222,49 @@ function lignesVendues(brut: Record<string, unknown>): DolibarrPropalLine[] {
     qty: Number(l.qty),
     subpriceCents: Math.round(Number(l.subprice) * 100),
     service: Number(l.product_type) === 1,
+    dateStart: jourDepuisDolibarr(l.date_start),
   }))
+}
+
+/**
+ * Affecte l'utilisateur de la clé à un projet ou à une tâche.
+ *
+ * **Ce que cette affectation ferme.** `GET /projects/{id}/tasks` passe par
+ * `getTasksArray(null, $user, …)`, qui écarte les tâches d'un projet **non
+ * public** dès lors que l'utilisateur n'y a aucun rôle. Un projet créé par
+ * l'application était donc invisible à la clé qui venait de le créer : la liste
+ * revenait vide, le connecteur croyait la tâche absente, la recréait, et
+ * Dolibarr refusait par « Error creating task » puisque la référence était
+ * déjà prise.
+ *
+ * Sans identifiant d'utilisateur configuré il n'y a personne à affecter :
+ * l'appel est simplement omis, la création reste valable.
+ */
+async function affecter(ctx: Contexte, chemin: string, type: string): Promise<void> {
+  if (ctx.dolibarrUserId === null) return
+
+  // **L'affectation n'est pas idempotente chez Dolibarr.** `add_contact` rend
+  // `0` quand le contact est déjà posé, et l'API traduit ce `0` en **500 sans
+  // message** — mesuré sur l'instance du porteur le 21 août 2026. On lit donc
+  // l'existant avant d'écrire, plutôt que de deviner un refus au motif muet.
+  const deja = await liste(ctx, `${chemin}/contacts`)
+  const present = deja.some(
+    (c) =>
+      String(c.code ?? '') === type &&
+      Number(c.id ?? c.fk_socpeople ?? c.socid ?? 0) === ctx.dolibarrUserId,
+  )
+  if (present) return
+
+  await appel(ctx, `${chemin}/contacts`, {
+    method: 'POST',
+    body: JSON.stringify({
+      fk_socpeople: ctx.dolibarrUserId,
+      type_contact: type,
+      // `internal` : `fk_socpeople` désigne alors un **utilisateur** Dolibarr,
+      // et non un contact de tiers.
+      source: 'internal',
+    }),
+  })
 }
 
 /**
@@ -217,6 +283,17 @@ function lignesVendues(brut: Record<string, unknown>): DolibarrPropalLine[] {
  */
 function dateTempsPasse(jour: string): string {
   return `${jour} 00:00:00`
+}
+
+/**
+ * Un jour `'YYYY-MM-DD'` en secondes depuis l'époque, à minuit GMT.
+ *
+ * C'est la forme que `idate()` attend côté Dolibarr — la même convention que
+ * pour les temps passés, et pour la même raison : l'application raisonne en
+ * journées, l'API en instants.
+ */
+function horodatageDuJour(jour: string): number {
+  return Date.parse(`${jour}T00:00:00Z`) / 1000
 }
 
 function versCommande(brut: Record<string, unknown>): DolibarrOrder {
@@ -248,6 +325,8 @@ const STATUTS_COMMANDE_UTILISABLES = new Set([1, 2])
 export function createHttpDolibarrApi(args: {
   baseUrl: string
   apiKey: string
+  /** `ProviderCredential.metadata.dolibarrUserId`, saisi dans Administration · Dolibarr */
+  dolibarrUserId?: number | null
   fetchImpl?: typeof fetch
   timeoutMs?: number
 }): DolibarrApi {
@@ -256,6 +335,10 @@ export function createHttpDolibarrApi(args: {
     apiKey: args.apiKey,
     fetchImpl: args.fetchImpl ?? fetch,
     timeoutMs: args.timeoutMs ?? DELAI_PAR_DEFAUT_MS,
+    dolibarrUserId:
+      args.dolibarrUserId !== undefined && args.dolibarrUserId !== null && args.dolibarrUserId > 0
+        ? args.dolibarrUserId
+        : null,
   }
 
   return {
@@ -319,12 +402,36 @@ export function createHttpDolibarrApi(args: {
       }
     },
 
-    async createTask(a: { projectId: number; label: string }): Promise<DolibarrTask> {
+    async createTask(a: {
+      projectId: number
+      label: string
+      plannedWorkloadSeconds: number | null
+    }): Promise<DolibarrTask> {
       const id = (await appel(ctx, '/tasks', {
         method: 'POST',
-        body: JSON.stringify({ fk_project: a.projectId, label: a.label, ref: a.label }),
+        body: JSON.stringify({
+          fk_project: a.projectId,
+          label: a.label,
+          ref: a.label,
+          // **Validée, pas brouillon.** Sans ce champ Dolibarr retient
+          // `STATUS_DRAFT = 0`, et la tâche naît inexploitable dans le projet.
+          status: 1,
+          // `planned_workload` est en **secondes** : `projet/tasks/task.php`
+          // le compose en `heures × 3600 + minutes × 60` et le relit par
+          // `convertSecondToTime`. Y envoyer des heures écrirait une charge
+          // 3 600 fois trop petite, sans un mot.
+          ...(a.plannedWorkloadSeconds === null
+            ? {}
+            : { planned_workload: a.plannedWorkloadSeconds }),
+        }),
       })) as number
-      return { id: Number(id), ref: a.label, label: a.label, projectId: a.projectId }
+
+      const taskId = Number(id)
+      // Responsable de la tâche, en miroir du chef de projet posé à la
+      // création du projet : la même personne pilote l'un et l'autre.
+      await affecter(ctx, `/tasks/${taskId}`, 'TASKEXECUTIVE')
+
+      return { id: taskId, ref: a.label, label: a.label, projectId: a.projectId }
     },
 
     async createProject(a: DolibarrProjectCreation): Promise<DolibarrProject> {
@@ -334,6 +441,10 @@ export function createHttpDolibarrApi(args: {
           ref: a.ref,
           title: a.title,
           socid: a.socid,
+          // `Project::create` passe cette valeur à `idate()`, qui attend un
+          // horodatage Unix **en secondes**. Une chaîne y produirait une date
+          // fausse sans le dire. Minuit GMT, comme pour les temps passés.
+          ...(a.dateStart === null ? {} : { date_start: horodatageDuJour(a.dateStart) }),
           // **Ouvert, pas brouillon.** Dolibarr crée un projet en statut 0 quand
           // on ne dit rien : son interface le montre « Brouillon », et un projet
           // brouillon n'accepte pas de temps consommé. Le porteur a validé un
@@ -350,6 +461,11 @@ export function createHttpDolibarrApi(args: {
       })) as number | Record<string, unknown>
 
       const projectId = typeof id === 'number' ? id : Number(id.id)
+
+      // Immédiatement après la création, et avant toute relecture : c'est cette
+      // affectation qui rend le projet visible à la clé qui vient de le créer.
+      await affecter(ctx, `/projects/${projectId}`, 'PROJECTLEADER')
+
       // La référence (`PJxxxx-nnnn`) est attribuée par Dolibarr : on la relit
       // au lieu de l'inventer, sans quoi tout refus ultérieur nommerait un
       // projet qui n'existe pas sous ce nom.
@@ -360,6 +476,10 @@ export function createHttpDolibarrApi(args: {
         title: String(cree.title ?? a.title),
         socid: nombreOuNull(cree.socid),
       }
+    },
+
+    async assignerAuProjet(projectId: number): Promise<void> {
+      await affecter(ctx, `/projects/${projectId}`, 'PROJECTLEADER')
     },
 
     async listOrders(): Promise<DolibarrOrder[]> {
@@ -406,7 +526,7 @@ export function createHttpDolibarrApi(args: {
       durationSeconds: number
       note: string
     }): Promise<{ timespentId: number }> {
-      const id = (await appel(ctx, `/tasks/${a.taskId}/addtimespent`, {
+      await appel(ctx, `/tasks/${a.taskId}/addtimespent`, {
         method: 'POST',
         // `duration` est un nombre de secondes, tel quel : ni le réglage local
         // ni `TIMESHEET_DAY_DURATION` n'entrent ici (voir core/dolibarr/timespent).
@@ -416,9 +536,39 @@ export function createHttpDolibarrApi(args: {
           user_id: a.dolibarrUserId,
           note: a.note,
         }),
-      })) as number | Record<string, unknown>
+      })
 
-      const timespentId = typeof id === 'number' ? id : Number(id.id)
+      // Dolibarr ne rend que `{success:{code,message}}` — **jamais**
+      // l'identifiant de la ligne créée. Vérifié dans le code de son API, en
+      // 23.0.1 comme en 23.0.4. Il faut donc relire la tâche pour retrouver la
+      // ligne qu'on vient de poser : sans elle, la correspondance mémorisée est
+      // inexploitable et toute modification ultérieure de la cellule part sur
+      // une URL invalide.
+      const lignes = await liste(ctx, `/tasks/${a.taskId}/timespent`)
+      // Le triplet qu'on vient d'envoyer sert de signature. Deux saisies
+      // identiques le même jour restent légitimes : c'est alors la plus récente
+      // — le plus grand `rowid` — qui est la nôtre.
+      const timespentId = lignes
+        .filter(
+          (l) =>
+            Number(l.timespent_line_fk_user) === a.dolibarrUserId &&
+            Number(l.timespent_line_duration) === a.durationSeconds &&
+            String(l.timespent_line_note ?? '') === a.note,
+        )
+        .reduce((max, l) => Math.max(max, Number(l.timespent_line_id)), 0)
+
+      if (timespentId <= 0) {
+        // **Un refus, pas une panne.** Le temps est déjà chez Dolibarr : le
+        // POST a réussi et seule la relecture n'a rien reconnu. Lever un
+        // `DolibarrUnavailableError` ferait rejouer la file, et le rejeu
+        // poserait un second temps — la route de création n'est pas idempotente.
+        throw new DolibarrRequestError(
+          `Le temps a bien été enregistré sur la tâche n° ${a.taskId}, mais Dolibarr ne permet ` +
+            'pas de retrouver la ligne créée : elle ne pourra donc pas être modifiée depuis ' +
+            "l'application. Vérifiez le temps passé directement dans Dolibarr.",
+        )
+      }
+
       return { timespentId }
     },
 

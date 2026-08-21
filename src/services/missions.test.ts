@@ -54,6 +54,24 @@ afterAll(async () => {
 })
 
 describe('clients et missions', () => {
+  // `Mission.startDate` existait au schéma sans que rien ne l'écrive jamais.
+  // C'est elle qui alimente `date_start` du projet Dolibarr.
+  it('enregistre la date de démarrage saisie à la création', async () => {
+    const c = await createClient('Avec date')
+    const m = await createMission({ clientId: c.id, label: 'M', startDate: '2026-09-01' })
+
+    const relue = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect(relue.startDate?.toISOString().slice(0, 10)).toBe('2026-09-01')
+  })
+
+  it('accepte une mission sans date de démarrage', async () => {
+    const c = await createClient('Sans date')
+    const m = await createMission({ clientId: c.id, label: 'M' })
+
+    const relue = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect(relue.startDate).toBeNull()
+  })
+
   it('crée un client et le retrouve', async () => {
     const c = await createClient('ACME 38')
     expect(c.id).toBeTruthy()

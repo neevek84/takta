@@ -150,6 +150,13 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
           exemple: 'Consultant ITSM',
         },
         {
+          nom: 'planned_workload',
+          source: 'CALCUL',
+          origine:
+            'src/core/dolibarr/timespent.ts · chargePrevueEnSecondes — jours vendus de la prestation × durée de journée résolue',
+          exemple: '126000',
+        },
+        {
           nom: 'ref',
           source: 'CALCUL',
           origine: 'libellé de la ligne de mission, src/services/dolibarr/push.ts',
@@ -162,7 +169,14 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
         visible: "L'écran de synchronisation compte l'échec ; la file rejoue.",
       },
       reglagesTiers: [],
-      note: '`ref` reçoit le même libellé que `label`. Dolibarr rend un entier nu.',
+      note:
+        '`ref` reçoit le même libellé que `label`. Dolibarr rend un entier nu. ' +
+        '`status: 1` est **obligatoire** : sans lui la tâche naît en brouillon ' +
+        '(`Task::STATUS_DRAFT = 0`) et reste inexploitable dans le projet. ' +
+        '`planned_workload` est envoyée en **secondes** — unité vérifiée dans ' +
+        '`projet/tasks/task.php`, qui la compose en `heures × 3600 + minutes × 60` et la relit ' +
+        'par `convertSecondToTime` ; elle est omise quand la prestation ne vend rien de chiffré, ' +
+        'une charge inconnue ne valant pas une charge nulle.',
     },
     {
       operation: 'Relire une propale pour en reprendre les lignes',
@@ -189,6 +203,164 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
         'Appelée par `src/services/dolibarr/propal.ts` pour reprendre les lignes ' +
         "d'un engagement, après contrôle que la propale appartient bien au tiers " +
         'rattaché au client de la mission.',
+    },
+    {
+      operation: 'Lire les contacts déjà posés sur le projet',
+      methode: 'GET',
+      gabarit: '/projects/{projectId}/contacts',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · createProject, assignerAuProjet',
+      parametres: [
+        {
+          nom: 'projectId',
+          source: 'IDENTIFIANT',
+          origine: 'projet Dolibarr de la mission',
+          exemple: '179',
+        },
+      ],
+      preuve: PAR_L_INSTANCE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible: "L'écran affiche le refus ; aucune affectation n'est tentée.",
+      },
+      reglagesTiers: [],
+      note:
+        "**Lue avant d'écrire, parce que l'affectation n'est pas idempotente.** " +
+        '`CommonObject::add_contact()` rend `0` quand le contact est déjà posé, et ' +
+        "`addToContact` traduit ce `0` en **500 sans message**. Constaté sur l'instance du " +
+        'porteur le 21 août 2026 : la seconde affectation du même utilisateur au projet 179 ' +
+        "a échoué ainsi. On lit donc les contacts existants et on saute l'écriture si le rôle " +
+        'est déjà là.',
+    },
+    {
+      operation: 'Lire les contacts déjà posés sur la tâche',
+      methode: 'GET',
+      gabarit: '/tasks/{taskId}/contacts',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · createTask',
+      parametres: [
+        {
+          nom: 'taskId',
+          source: 'IDENTIFIANT',
+          origine: 'tâche Dolibarr de la prestation',
+          exemple: '317',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible: "L'écran affiche le refus ; aucune affectation n'est tentée.",
+      },
+      reglagesTiers: [],
+      note: "Même raison que côté projet : l'affectation n'est pas idempotente chez Dolibarr.",
+    },
+    {
+      operation: "Affecter l'utilisateur de la clé au projet, comme chef de projet",
+      methode: 'POST',
+      gabarit: '/projects/{projectId}/contacts',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · createProject, assignerAuProjet',
+      parametres: [
+        {
+          nom: 'fk_socpeople',
+          source: 'REGLAGE',
+          origine: 'ProviderCredential.metadata.dolibarrUserId, saisi dans Administration · Dolibarr',
+          exemple: '7',
+        },
+        {
+          nom: 'type_contact',
+          source: 'CONSTANTE',
+          origine: "PROJECTLEADER, code de llx_c_type_contact pour l'élément « project »",
+          exemple: 'PROJECTLEADER',
+        },
+        {
+          nom: 'source',
+          source: 'CONSTANTE',
+          origine: "internal : fk_socpeople désigne alors un utilisateur Dolibarr, pas un contact de tiers",
+          exemple: 'internal',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible:
+          "L'écran affiche le refus. Le projet existe, mais ses tâches resteront invisibles à " +
+          "la clé tant que l'affectation n'est pas posée.",
+      },
+      reglagesTiers: [],
+      note:
+        "**C'est l'appel qui rend le projet lisible à la clé qui vient de le créer.** Sur un " +
+        "projet non public, `Task::getTasksArray()` écarte toute tâche dont le projet ne " +
+        "rend aucun rôle à l'utilisateur (`getUserRolesForProjectsOrTasks`). Le filtre porte " +
+        'sur le **projet**, pas sur la tâche, et ne joue que si le projet est privé. Sans ' +
+        "cette affectation, `GET /projects/{id}/tasks` revient vide, le connecteur croit la " +
+        "tâche absente, la recrée, et Dolibarr refuse par « Error creating task ». Omis quand " +
+        "aucun identifiant d'utilisateur n'est configuré.",
+    },
+    {
+      operation: "Affecter l'utilisateur de la clé à la tâche, comme responsable",
+      methode: 'POST',
+      gabarit: '/tasks/{taskId}/contacts',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · createTask',
+      parametres: [
+        {
+          nom: 'fk_socpeople',
+          source: 'REGLAGE',
+          origine: 'ProviderCredential.metadata.dolibarrUserId, saisi dans Administration · Dolibarr',
+          exemple: '7',
+        },
+        {
+          nom: 'type_contact',
+          source: 'CONSTANTE',
+          origine: "TASKEXECUTIVE, code de llx_c_type_contact pour l'élément « project_task »",
+          exemple: 'TASKEXECUTIVE',
+        },
+        {
+          nom: 'source',
+          source: 'CONSTANTE',
+          origine: 'internal : fk_socpeople désigne un utilisateur Dolibarr',
+          exemple: 'internal',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible: "L'écran affiche le refus ; la tâche existe mais n'est affectée à personne.",
+      },
+      reglagesTiers: [],
+      note:
+        'Miroir de PROJECTLEADER côté projet : la même personne pilote le projet et ses ' +
+        "tâches. Omis quand aucun identifiant d'utilisateur n'est configuré.",
+    },
+    {
+      operation: 'Relire les temps consommés pour identifier la ligne créée',
+      methode: 'GET',
+      gabarit: '/tasks/{taskId}/timespent',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · addTimeSpent',
+      parametres: [
+        {
+          nom: 'taskId',
+          source: 'IDENTIFIANT',
+          origine: 'ExternalLink (ligne de mission → tâche), posé par src/services/dolibarr/push.ts',
+          exemple: '17',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible:
+          "La cellule reste en échec dans l'écran de synchronisation, en disant que le temps " +
+          "est bien parti mais qu'il ne pourra pas être modifié depuis l'application.",
+      },
+      reglagesTiers: [],
+      note:
+        "Appelée juste après `addtimespent`, qui ne rend qu'un accusé " +
+        '`{success:{code,message}}` sans identifiant de ligne — vérifié dans le code de ' +
+        "l'API Dolibarr, en 23.0.1 comme en 23.0.4. La ligne posée est retrouvée par sa " +
+        'signature (utilisateur, durée, note) et son `timespent_line_id` est mémorisé : ' +
+        'sans lui, aucune modification ultérieure de la cellule ne serait possible.',
     },
     {
       operation: 'Pousser un temps consommé sur une tâche',

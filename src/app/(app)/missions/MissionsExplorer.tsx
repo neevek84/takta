@@ -433,6 +433,12 @@ function Nouvelle({
       <Card title="À la main">
         <form action={addMission} className="flex flex-wrap items-end gap-2">
           <Field label="Nouvelle mission" name="label" required />
+          {/*
+            Le projet Dolibarr en tire son `date_start`. Une mission née d'une
+            commande la reprend de la période vendue ; celle-ci ne vient d'aucun
+            document, il n'y a donc qu'ici pour la connaître.
+          */}
+          <Field label="Date de démarrage" name="startDate" type="date" required />
           <Select
             label="Client de la mission"
             name="clientId"

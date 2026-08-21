@@ -420,7 +420,7 @@ describe('les prestations et leurs tâches, à la naissance de la mission', () =
     const client = await createClient('CMD ACME local')
     await attachClient({ userId, clientId: client.id, dolibarrThirdpartyId: tiers.id })
     const projet = api.seedProject({ ref: 'PJ-EXISTANT', title: 'Déjà', socid: tiers.id })
-    const dejaLa = await api.createTask({ projectId: projet.id, label: 'Consultant' })
+    const dejaLa = await api.createTask({ projectId: projet.id, label: 'Consultant', plannedWorkloadSeconds: null })
     const avant = api.appels.createTask
 
     const commande = api.seedOrder({
@@ -485,6 +485,7 @@ describe('creerMissionAvecProjet', () => {
       signataireNom: '',
       signataireEmail: '',
       projet: { type: 'AUCUN' },
+      startDate: null,
       api: null,
     })
 
@@ -507,6 +508,7 @@ describe('creerMissionAvecProjet', () => {
         signataireNom: '',
         signataireEmail: '',
         projet: { type: 'CREER' },
+        startDate: null,
         api,
       }),
     ).rejects.toThrow(/Administration · Dolibarr/)
@@ -529,6 +531,7 @@ describe('creerMissionAvecProjet', () => {
       signataireNom: '',
       signataireEmail: '',
       projet: { type: 'CREER' },
+      startDate: null,
       api,
     })
 
@@ -559,6 +562,7 @@ describe('creerMissionAvecProjet', () => {
       minutesParJour: null,
       signataireNom: '',
       signataireEmail: '',
+      startDate: null,
       projet: {
         type: 'EXISTANT',
         projectId: projet.id,
@@ -587,6 +591,7 @@ describe('creerMissionAvecProjet', () => {
         signataireNom: '',
         signataireEmail: '',
         projet: { type: 'EXISTANT', projectId: 999, projectRef: 'PJ-X', projectSocid: autre.id },
+        startDate: null,
         api,
       }),
     ).rejects.toThrow(/mauvais client/i)
@@ -605,6 +610,7 @@ describe('creerMissionAvecProjet', () => {
         signataireNom: '',
         signataireEmail: '',
         projet: { type: 'CREER' },
+        startDate: null,
         api: null,
       }),
     ).rejects.toThrow(/pas connecté/i)

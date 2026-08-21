@@ -139,3 +139,31 @@ export function referenceProjetDepuisMission(mission: { label: string }): string
   }
   return `MIS-${slug}`.slice(0, LONGUEUR_MAX_REF).replace(/-+$/, '')
 }
+
+/**
+ * La date de démarrage que porte une commande, ou `null` si elle n'en porte
+ * aucune.
+ *
+ * **Où Dolibarr la range.** Pas sur l'en-tête de la commande — `date_commande`
+ * est la date du document, `date_livraison` celle de la livraison prévue — mais
+ * sur chaque **ligne de service**, dans `date_start` de `llx_commandedet`
+ * (« date debut si service »). Une ligne de produit n'en porte pas : elle vend
+ * des objets, pas une période.
+ *
+ * La plus petite l'emporte : c'est le moment où le chantier commence
+ * réellement, même si les prestations qui le composent démarrent en ordre
+ * dispersé.
+ *
+ * `null` est le cas **courant**, pas l'exception : sur l'instance du porteur,
+ * 9 lignes de commande sur 75 portent une date. La date est alors demandée à la
+ * création de la mission.
+ */
+export function dateDeDemarrageDeLaCommande(
+  lignes: ReadonlyArray<{ service: boolean; dateStart: string | null }>,
+): string | null {
+  const dates = lignes
+    .filter((l) => l.service && l.dateStart !== null)
+    .map((l) => l.dateStart as string)
+    .sort()
+  return dates[0] ?? null
+}

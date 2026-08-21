@@ -14,6 +14,7 @@ import {
   type DolibarrTask,
 } from './api'
 import { LIEN_LIGNE, LIEN_MISSION, LIEN_TEMPS, SEPARATEUR } from './liens'
+import { chargePrevueDeLaPrestation } from './taches'
 
 export interface PushResult {
   poussees: number
@@ -276,7 +277,15 @@ export async function pushCraTimes(args: {
     const label = labelParLigne.get(lineId) ?? lineId
     const existantes = await tachesProjet()
     const deja = existantes.find((t) => t.label === label)
-    const tache = deja ?? (await args.api.createTask({ projectId, label }))
+    const tache =
+      deja ??
+      (await args.api.createTask({
+        projectId,
+        label,
+        // Même charge qu'à l'ouverture d'une prestation : les deux chemins
+        // créent la même tâche, ils ne doivent pas la décrire différemment.
+        plannedWorkloadSeconds: await chargePrevueDeLaPrestation(lineId),
+      }))
     if (deja === undefined) {
       resultat.tachesCreees += 1
       existantes.push(tache)
