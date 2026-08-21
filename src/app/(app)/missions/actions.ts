@@ -18,6 +18,13 @@ import {
   creerProjetDepuisCommande,
   type ProjetVoulu,
 } from '@/services/dolibarr/commande'
+import {
+  reprendreLesTaches,
+  tachesReprenables,
+  type DecisionReprise,
+  type EtatReprise,
+  type RepriseEffectuee,
+} from '@/services/dolibarr/reprise-taches'
 import type { DisplayUnit } from '@/core/types'
 
 /**
@@ -344,4 +351,47 @@ export async function creerMissionDepuisCommande(formData: FormData): Promise<vo
 /** Un message porté par la redirection, avec sa tonalité. */
 function annonceMission(message: string, tone: 'success' | 'danger' = 'success'): string {
   return `/missions?message=${encodeURIComponent(message)}&tone=${tone}`
+}
+
+/**
+ * Ce que l'écran de conversion a besoin de savoir : les tâches du projet, ce
+ * qui est déjà repris, et les prestations auxquelles on peut les apparier.
+ *
+ * Appelée à l'ouverture du volet et non au rendu de la page : elle interroge
+ * Dolibarr, et la page des missions se charge sans lui.
+ */
+export async function chargerTachesReprenables(missionId: string): Promise<EtatReprise> {
+  await requireUser()
+  return tachesReprenables({ missionId, api: await getDolibarrApi() })
+}
+
+export type RepriseTachesState =
+  | { ok: true; resultat: RepriseEffectuee }
+  | { ok: false; erreur: string }
+  | null
+
+/**
+ * Applique les décisions du porteur, tâche par tâche.
+ *
+ * Le refus de Dolibarr — injoignable, droit manquant — est rendu à l'écran
+ * plutôt que levé : la page se recomposerait à l'identique et le porteur
+ * croirait sa reprise faite.
+ */
+export async function appliquerRepriseTaches(
+  missionId: string,
+  decisions: DecisionReprise[],
+): Promise<RepriseTachesState> {
+  const user = await requireUser()
+  try {
+    const resultat = await reprendreLesTaches({
+      missionId,
+      userId: user.id,
+      decisions,
+      api: await getDolibarrApi(),
+    })
+    revalidatePath('/missions')
+    return { ok: true, resultat }
+  } catch (err) {
+    return { ok: false, erreur: err instanceof Error ? err.message : String(err) }
+  }
 }

@@ -11,6 +11,7 @@ import { Origine } from '@/components/ui/Origine'
 import { Select } from '@/components/ui/Select'
 import { addClient, addMission, addLine, creerMissionDepuisCommande } from './actions'
 import { LigneForm } from './LigneForm'
+import { RepriseTaches } from './RepriseTaches'
 import { SignataireForm } from './SignataireForm'
 
 /** Une commande Dolibarr sur laquelle une mission peut naître. */
@@ -293,6 +294,10 @@ function Detail({
           Ajouter
         </Button>
       </form>
+
+      {/* Seulement quand la mission suit un projet : sans projet il n'y a
+          aucune tâche à reprendre, et le bouton mentirait. */}
+      {mission.dolibarrProjectId !== null && <RepriseTaches missionId={mission.id} />}
 
       <SignataireForm
         missionId={mission.id}
