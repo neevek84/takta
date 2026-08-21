@@ -63,6 +63,8 @@ export interface FakeDolibarrHttp {
   projets: Array<{ id: number; ref: string; title: string; refExt: string; usageBillTime: boolean }>
   commandes: Array<{ id: number; ref: string; projectId: number | null }>
   seedSetup(constante: string, valeur: string): void
+  /** Un utilisateur Dolibarr, tel que la reprise des temps a besoin de le lire. */
+  seedUser(args: { nom: string; prenom?: string; email: string }): { id: number }
   timespents: Array<{
     id: number
     taskId: number
@@ -70,6 +72,8 @@ export interface FakeDolibarrHttp {
     duration: number
     userId: number
     note: string
+    /** instant de début, `null` quand le temps n'en porte pas */
+    debutUnix: number | null
   }>
 }
 
@@ -99,6 +103,8 @@ interface FauxTache {
   ref: string
   label: string
   projectId: number
+  /** `planned_workload`, en secondes, `null` quand la tâche n'en porte pas */
+  plannedWorkload: number | null
 }
 
 interface FauxPropale {
@@ -145,6 +151,7 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
   const proposals: FauxPropale[] = []
   const orders: FauxCommande[] = []
   const timespents: FakeDolibarrHttp['timespents'] = []
+  const users: Array<{ id: number; nom: string; prenom: string; email: string }> = []
   const setup: Record<string, string> = {}
 
   let sequence = 0
@@ -257,6 +264,11 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
           ref: String(corps.ref ?? corps.label),
           label: String(corps.label),
           projectId: projet.id,
+          // Relue telle qu'elle a été posée : c'est d'elle que la reprise tire
+          // les jours vendus, et un double qui l'oublierait laisserait passer
+          // un aller-retour qui perd l'engagement.
+          plannedWorkload:
+            corps.planned_workload === undefined ? null : Number(corps.planned_workload),
         })
         return json(id)
       }
@@ -296,6 +308,9 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
           duration: Number(corps.duration),
           userId: Number(corps.user_id),
           note: String(corps.note ?? ''),
+          // Dolibarr pose `withhour = 1` sur ce qu'il reçoit horodaté, et notre
+          // charge l'est toujours — mais à minuit, ce qui ne situe rien.
+          debutUnix: Math.trunc(Date.parse(String(corps.date).replace(' ', 'T') + 'Z') / 1000),
         })
         // Ce que Dolibarr rend **réellement** : un accusé, sans l'identifiant
         // de la ligne créée. Rendre `id` ici ferait passer au vert un client
@@ -307,6 +322,32 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
         const projet = projects.find((p) => p.id === Number(params.projectId))
         if (projet === undefined) return refus('Project not found')
         return json([])
+      }
+
+      case 'GET /tasks/{taskId}': {
+        const tache = tasks.find((t) => t.id === Number(params.taskId))
+        // 404 et non refus : une tâche supprimée chez Dolibarr n'est pas une
+        // panne, et le client doit pouvoir abandonner la correspondance.
+        if (tache === undefined) return new Response('{}', { status: 404 })
+        return json({
+          id: tache.id,
+          ref: tache.ref,
+          label: tache.label,
+          fk_project: String(tache.projectId),
+          planned_workload: tache.plannedWorkload === null ? null : String(tache.plannedWorkload),
+        })
+      }
+
+      case 'GET /users/{userId}': {
+        const u = users.find((x) => x.id === Number(params.userId))
+        if (u === undefined) return new Response('{}', { status: 404 })
+        return json({
+          id: String(u.id),
+          login: u.email,
+          firstname: u.prenom,
+          lastname: u.nom,
+          email: u.email,
+        })
       }
 
       case 'GET /tasks/{taskId}/contacts': {
@@ -336,12 +377,18 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
           timespents
             .filter((t) => t.taskId === tache.id)
             .map((t) => ({
-              timespent_line_id: t.id,
-              timespent_line_date: t.date,
-              timespent_line_duration: t.duration,
-              timespent_line_fk_user: t.userId,
+              timespent_line_id: String(t.id),
+              // **Un horodatage Unix, pas une chaîne.** C'est ce que rend
+              // l'instance : `timespent_line_date` vaut minuit GMT du jour.
+              // Rendre ici la chaîne envoyée laisserait passer un client qui,
+              // en face d'une vraie instance, lirait `NaN` puis rien du tout.
+              timespent_line_date: Math.trunc(Date.parse(`${t.date.slice(0, 10)}T00:00:00Z`) / 1000),
+              timespent_line_datehour: t.debutUnix,
+              timespent_line_withhour: t.debutUnix === null ? '0' : '1',
+              timespent_line_duration: String(t.duration),
+              timespent_line_fk_user: String(t.userId),
               timespent_line_note: t.note,
-              fk_task: t.taskId,
+              fk_task: String(t.taskId),
             })),
         )
       }
@@ -531,7 +578,13 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
 
     seedTask(a) {
       const id = suivant()
-      tasks.push({ id, ref: `TK${String(id).padStart(4, '0')}`, label: a.label, projectId: a.projectId })
+      tasks.push({
+        id,
+        ref: `TK${String(id).padStart(4, '0')}`,
+        label: a.label,
+        projectId: a.projectId,
+        plannedWorkload: null,
+      })
       return { id }
     },
 
@@ -564,6 +617,11 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
 
     seedSetup(constante, valeur) {
       setup[constante] = valeur
+    },
+    seedUser(args) {
+      const u = { id: suivant(), nom: args.nom, prenom: args.prenom ?? '', email: args.email }
+      users.push(u)
+      return u
     },
   }
 }

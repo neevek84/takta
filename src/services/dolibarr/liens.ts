@@ -1,5 +1,5 @@
 /**
- * Les six natures de correspondance que ce connecteur pose, et le seul
+ * Les huit natures de correspondance que ce connecteur pose, et le seul
  * endroit qui les nomme.
  *
  * Elles vivaient dispersées — deux dans `push.ts`, une dans `propal.ts`, deux
@@ -50,6 +50,27 @@ export const LIEN_TEMPS = 'CraTimeSpent'
 /** Sépare les quatre parts de la clé de cellule. Aucun `cuid` n'en contient. */
 export const SEPARATEUR = '|'
 
+/**
+ * Un utilisateur local ↔ un utilisateur Dolibarr. `externalId` = son identifiant.
+ *
+ * Posée par la reprise des temps : un temps consommé chez Dolibarr porte son
+ * auteur, et l'attribuer au porteur qui importe réécrirait l'histoire. L'auteur
+ * devient donc un utilisateur de l'application — **sans mot de passe**, donc
+ * incapable de se connecter : c'est une identité, pas un compte.
+ */
+export const LIEN_UTILISATEUR = 'User'
+
+/**
+ * Une saisie locale ↔ le temps consommé Dolibarr **dont elle est issue**.
+ * `externalId` = `timespent_line_id`.
+ *
+ * À ne pas confondre avec `CraTimeSpent`, qui va dans l'autre sens : celui-là
+ * dit « cette cellule a été poussée là-bas », celui-ci dit « cette saisie vient
+ * de là-bas ». C'est lui qui rend la reprise rejouable sans importer deux fois
+ * le même temps.
+ */
+export const LIEN_TEMPS_REPRIS = 'TimeEntryReprise'
+
 export const LIENS_DOLIBARR = [
   LIEN_CLIENT,
   LIEN_MISSION,
@@ -57,6 +78,8 @@ export const LIENS_DOLIBARR = [
   LIEN_PROPALE,
   LIEN_COMMANDE,
   LIEN_TEMPS,
+  LIEN_UTILISATEUR,
+  LIEN_TEMPS_REPRIS,
 ] as const
 
 export type LienDolibarr = (typeof LIENS_DOLIBARR)[number]

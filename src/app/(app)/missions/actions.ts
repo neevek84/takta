@@ -25,6 +25,13 @@ import {
   type EtatReprise,
   type RepriseEffectuee,
 } from '@/services/dolibarr/reprise-taches'
+import {
+  reprendreLesTemps,
+  tempsReprenables,
+  type EtatRepriseTemps,
+  type RepriseTempsEffectuee,
+} from '@/services/dolibarr/reprise-temps'
+import { getSettings } from '@/services/settings'
 import type { DisplayUnit } from '@/core/types'
 
 /**
@@ -388,6 +395,50 @@ export async function appliquerRepriseTaches(
       userId: user.id,
       decisions,
       api: await getDolibarrApi(),
+    })
+    revalidatePath('/missions')
+    return { ok: true, resultat }
+  } catch (err) {
+    return { ok: false, erreur: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Le jour d'aujourd'hui **dans le fuseau de l'application**, `'YYYY-MM-DD'`.
+ *
+ * La coupure de la reprise est une frontière de mois : lue en UTC sur une
+ * machine en avance sur GMT, elle changerait de mois quelques heures trop tôt
+ * le premier du mois — et reprendrait un mois de trop.
+ */
+async function aujourdhui(): Promise<string> {
+  const { timeZone } = await getSettings()
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
+}
+
+/** Ce que l'écran de reprise des temps montre avant d'importer quoi que ce soit. */
+export async function chargerTempsReprenables(missionId: string): Promise<EtatRepriseTemps> {
+  await requireUser()
+  return tempsReprenables({ missionId, api: await getDolibarrApi(), aujourdhui: await aujourdhui() })
+}
+
+export type RepriseTempsState =
+  | { ok: true; resultat: RepriseTempsEffectuee }
+  | { ok: false; erreur: string }
+  | null
+
+export async function appliquerRepriseTemps(missionId: string): Promise<RepriseTempsState> {
+  const user = await requireUser()
+  try {
+    const resultat = await reprendreLesTemps({
+      missionId,
+      userId: user.id,
+      api: await getDolibarrApi(),
+      aujourdhui: await aujourdhui(),
     })
     revalidatePath('/missions')
     return { ok: true, resultat }

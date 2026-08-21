@@ -89,6 +89,39 @@ export interface DolibarrOrder {
   lines: DolibarrOrderLine[]
 }
 
+/** Un utilisateur Dolibarr, tel que la reprise a besoin de le connaître. */
+export interface DolibarrUser {
+  id: number
+  login: string
+  /** `''` quand Dolibarr ne le porte pas */
+  nom: string
+  email: string
+}
+
+/**
+ * Un temps déjà consommé chez Dolibarr, lu pour être repris.
+ *
+ * Forme mesurée sur l'instance 23.0.4 du porteur le 21 août 2026 :
+ * `timespent_line_date` est un horodatage Unix à minuit GMT,
+ * `timespent_line_datehour` porte l'instant réel, et
+ * `timespent_line_withhour` dit si cette heure a un sens.
+ */
+export interface DolibarrTimeSpent {
+  id: number
+  taskId: number
+  dolibarrUserId: number
+  /** jour du temps, `'YYYY-MM-DD'` */
+  date: string
+  durationSeconds: number
+  note: string
+  /**
+   * Instant de début, en secondes depuis l'époque, **ou `null` quand Dolibarr
+   * n'a pas d'heure** (`withhour = 0`). La distinction est celle que le porteur
+   * a arbitrée : l'heure d'un autre fait foi, l'absence vaut 9 h.
+   */
+  debutUnix: number | null
+}
+
 /** Ce qu'il faut à Dolibarr pour créer un projet facturable au temps. */
 export interface DolibarrProjectCreation {
   socid: number
@@ -195,6 +228,16 @@ export interface DolibarrApi {
     note: string
   }): Promise<void>
   deleteTimeSpent(args: { taskId: number; timespentId: number }): Promise<void>
+  /**
+   * Les temps déjà consommés sur une tâche. Liste vide quand il n'y en a
+   * aucun — Dolibarr répond alors 404, qui n'est pas une panne.
+   */
+  listTimeSpent(taskId: number): Promise<DolibarrTimeSpent[]>
+  /**
+   * Un utilisateur Dolibarr, `null` s'il n'existe plus. La reprise s'en sert
+   * pour créer l'utilisateur local auquel elle attribuera ses temps.
+   */
+  getUser(id: number): Promise<DolibarrUser | null>
   getSetupValue(constant: string): Promise<string | null>
 }
 

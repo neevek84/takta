@@ -338,7 +338,7 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
       methode: 'GET',
       gabarit: '/tasks/{taskId}/timespent',
       emis: true,
-      emisPar: 'src/services/dolibarr/http.ts · addTimeSpent',
+      emisPar: 'src/services/dolibarr/http.ts · addTimeSpent, listTimeSpent',
       parametres: [
         {
           nom: 'taskId',
@@ -347,7 +347,7 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
           exemple: '17',
         },
       ],
-      preuve: PAR_LE_DOUBLE,
+      preuve: PAR_L_INSTANCE,
       echec: {
         comportement: 'ABANDONNE',
         visible:
@@ -361,6 +361,63 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
         "l'API Dolibarr, en 23.0.1 comme en 23.0.4. La ligne posée est retrouvée par sa " +
         'signature (utilisateur, durée, note) et son `timespent_line_id` est mémorisé : ' +
         'sans lui, aucune modification ultérieure de la cellule ne serait possible.',
+    },
+    {
+      operation: 'Relire une tâche par son identifiant',
+      methode: 'GET',
+      gabarit: '/tasks/{taskId}',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · getTask',
+      parametres: [
+        {
+          nom: 'taskId',
+          source: 'IDENTIFIANT',
+          origine: 'ExternalLink (prestation → tâche), posé par src/services/dolibarr/taches.ts',
+          exemple: '34',
+        },
+      ],
+      preuve: PAR_L_INSTANCE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible:
+          "La prestation est traitée comme si sa tâche n'existait plus, et une nouvelle est " +
+          'ouverte à la place.',
+      },
+      reglagesTiers: [],
+      note:
+        "Une correspondance mémorisée ne se juge pas sur la liste du projet : celle-ci ne rend " +
+        "les tâches qu'aux utilisateurs qui ont un rôle sur le projet, et une tâche existante " +
+        'peut donc en disparaître. Un 404 est toléré et signifie « supprimée chez Dolibarr », ' +
+        'auquel cas la correspondance est abandonnée. La charge prévue est relue au passage : ' +
+        "c'est d'elle que la reprise tire les jours vendus.",
+    },
+    {
+      operation: "Lire un utilisateur Dolibarr pour lui attribuer les temps repris",
+      methode: 'GET',
+      gabarit: '/users/{userId}',
+      emis: true,
+      emisPar: 'src/services/dolibarr/http.ts · getUser',
+      parametres: [
+        {
+          nom: 'userId',
+          source: 'IDENTIFIANT',
+          origine: 'timespent_line_fk_user des temps lus sur la tâche',
+          exemple: '1',
+        },
+      ],
+      preuve: PAR_L_INSTANCE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible:
+          "L'écran de reprise indique que l'auteur du temps n'a pas pu être identifié, et le " +
+          'temps est écarté plutôt que attribué à quelqu un d autre.',
+      },
+      reglagesTiers: [],
+      note:
+        "Appelée une fois par auteur rencontré, pas une fois par temps. L'utilisateur local " +
+        "créé à partir de cette lecture naît **sans mot de passe** : il ne peut pas se " +
+        "connecter — `verify('')` lève et le refus est le comportement par défaut — il n'existe " +
+        "que pour porter l'attribution jusqu'à ce que les rôles arrivent.",
     },
     {
       operation: 'Pousser un temps consommé sur une tâche',

@@ -9,6 +9,8 @@ import {
   type DolibarrProposal,
   type DolibarrTask,
   type DolibarrThirdparty,
+  type DolibarrTimeSpent,
+  type DolibarrUser,
 } from './api'
 
 const DELAI_PAR_DEFAUT_MS = 15_000
@@ -617,6 +619,43 @@ export function createHttpDolibarrApi(args: {
         method: 'DELETE',
         statutsToleres: [404],
       })
+    },
+
+    async listTimeSpent(taskId: number): Promise<DolibarrTimeSpent[]> {
+      const brut = await liste(ctx, `/tasks/${taskId}/timespent`)
+      return brut.map((l) => {
+        // `withhour` distingue une heure saisie d'une heure par défaut. Sans
+        // lui, tout temps paraîtrait situé — et la règle du porteur (« l'heure
+        // d'un autre fait foi, sinon 9 h ») n'aurait plus de « sinon ».
+        const avecHeure = vrai(l.timespent_line_withhour)
+        const instant = Number(l.timespent_line_datehour)
+        return {
+          id: Number(l.timespent_line_id),
+          taskId,
+          dolibarrUserId: Number(l.timespent_line_fk_user),
+          date: jourDepuisDolibarr(l.timespent_line_date) ?? '',
+          durationSeconds: Number(l.timespent_line_duration),
+          note: String(l.timespent_line_note ?? ''),
+          debutUnix: avecHeure && Number.isFinite(instant) && instant > 0 ? instant : null,
+        }
+      })
+    },
+
+    async getUser(id: number): Promise<DolibarrUser | null> {
+      const brut = (await appel(ctx, `/users/${id}`, { statutsToleres: [404] })) as Record<
+        string,
+        unknown
+      > | null
+      if (brut === null) return null
+
+      const prenom = String(brut.firstname ?? '').trim()
+      const nom = String(brut.lastname ?? '').trim()
+      return {
+        id: Number(brut.id),
+        login: String(brut.login ?? ''),
+        nom: [prenom, nom].filter((p) => p !== '').join(' '),
+        email: String(brut.email ?? ''),
+      }
     },
 
     async getSetupValue(constant: string): Promise<string | null> {

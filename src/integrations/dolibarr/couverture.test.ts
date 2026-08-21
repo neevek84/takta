@@ -34,6 +34,7 @@ async function exercerTout(): Promise<string[]> {
     lines: [{ label: 'Conseil', qty: 10, subpriceEuros: 800 }],
   })
   faux.seedSetup('TIMESHEET_DAY_DURATION', '7')
+  const auteur = faux.seedUser({ nom: 'Dupont', prenom: 'Camille', email: 'camille@exemple.test' })
   const commande = faux.seedOrder({
     ref: 'CO-EXEMPLE',
     socid: tiers.id,
@@ -74,6 +75,12 @@ async function exercerTout(): Promise<string[]> {
     durationSeconds: 25200,
     note: 'Atelier de cadrage',
   })
+  // Lectures de la reprise : la tâche par son identifiant, ses temps, et
+  // l'auteur de ces temps.
+  await api.getTask(tache.id)
+  await api.listTimeSpent(tache.id)
+  await api.getUser(auteur.id)
+
   await api.deleteTimeSpent({ taskId: tache.id, timespentId })
   await api.getSetupValue('TIMESHEET_DAY_DURATION')
 

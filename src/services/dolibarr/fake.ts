@@ -29,6 +29,8 @@ import {
   type DolibarrProposal,
   type DolibarrTask,
   type DolibarrThirdparty,
+  type DolibarrTimeSpent,
+  type DolibarrUser,
 } from './api'
 
 interface FakeProject extends DolibarrProject {
@@ -50,6 +52,8 @@ export interface FakeTimeSpent {
   date: string
   durationSeconds: number
   note: string
+  /** instant de début, `null` quand le temps n'en porte pas (`withhour = 0`) */
+  debutUnix?: number | null
 }
 
 /** Le format de date de l'API Dolibarr, et le seul qu'elle interprète. */
@@ -381,6 +385,40 @@ export class FakeDolibarr implements DolibarrApi {
     // toléré par le client HTTP.
     const i = this.timespents.findIndex((x) => x.id === args.timespentId)
     if (i >= 0) this.timespents.splice(i, 1)
+  }
+
+  /** Utilisateurs Dolibarr connus du double, pour la reprise des temps. */
+  readonly users: DolibarrUser[] = []
+
+  seedUser(args: { nom: string; email: string; login?: string }): DolibarrUser {
+    const u: DolibarrUser = {
+      id: this.next(),
+      login: args.login ?? args.email,
+      nom: args.nom,
+      email: args.email,
+    }
+    this.users.push(u)
+    return u
+  }
+
+  async listTimeSpent(taskId: number): Promise<DolibarrTimeSpent[]> {
+    this.garde()
+    return this.timespents
+      .filter((t) => t.taskId === taskId)
+      .map((t) => ({
+        id: t.id,
+        taskId: t.taskId,
+        dolibarrUserId: t.dolibarrUserId,
+        date: t.date,
+        durationSeconds: t.durationSeconds,
+        note: t.note,
+        debutUnix: t.debutUnix ?? null,
+      }))
+  }
+
+  async getUser(id: number): Promise<DolibarrUser | null> {
+    this.garde()
+    return this.users.find((u) => u.id === id) ?? null
   }
 
   async getSetupValue(constant: string): Promise<string | null> {

@@ -9,7 +9,7 @@ describe('catalogue Dolibarr', () => {
     expect(verifierCatalogue(CATALOGUE_DOLIBARR, AUJOURDHUI)).toEqual([])
   })
 
-  it('déclare exactement les vingt appels du client HTTP', () => {
+  it('déclare exactement les vingt-deux appels du client HTTP', () => {
     expect(CATALOGUE_DOLIBARR.appels.map(cleAppel).sort()).toEqual([
       'DELETE /tasks/{taskId}/timespent/{timespentId}',
       'GET /orders',
@@ -20,9 +20,11 @@ describe('catalogue Dolibarr', () => {
       'GET /projects/{projectId}/tasks',
       'GET /proposals/{proposalId}',
       'GET /setup/conf/{constante}',
+      'GET /tasks/{taskId}',
       'GET /tasks/{taskId}/contacts',
       'GET /tasks/{taskId}/timespent',
       'GET /thirdparties',
+      'GET /users/{userId}',
       'POST /projects',
       'POST /projects/{projectId}/contacts',
       'POST /tasks',
