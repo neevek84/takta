@@ -98,6 +98,23 @@ La procédure d'intégration en cours de commande, dans l'ordre :
    l'application rappelle mais ne fait pas ;
 5. saisir le mois en cours dans l'application, qui le poussera à la validation.
 
+## Fait le 21 août 2026
+
+Les deux lots sont construits, dans l'ordre où le porteur les a demandés :
+`src/services/dolibarr/reprise-taches.ts` puis `reprise-temps.ts`, avec leurs
+écrans sous le détail d'une mission.
+
+Deux décisions se sont ajoutées en cours de route :
+
+- **Les auteurs deviennent des utilisateurs.** Un temps Dolibarr porte son
+  auteur ; la reprise crée l'utilisateur local correspondant et mémorise son
+  identifiant, plutôt que d'attribuer au porteur ce qu'un autre a fait. Ces
+  utilisateurs naissent sans mot de passe : une identité, pas un compte.
+- **Les mois repris naissent validés.** « Les temps repris sont considérés comme
+  validés, c'est pour cela qu'on ne reprend pas le mois en cours. » Le
+  verrouillage ne passe pas par `transitionCra`, qui met le push en file — les
+  temps sont déjà chez Dolibarr.
+
 ## Recommandation
 
 Un lot à part entière, à faire **après** la recette de bout en bout du flux
