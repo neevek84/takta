@@ -249,6 +249,10 @@ export class FakeDolibarr implements DolibarrApi {
       ref: `TK${String(id).padStart(4, '0')}`,
       label: args.label,
       projectId: args.projectId,
+      // La charge est **relue** telle qu'elle a été posée : la reprise en tire
+      // les jours vendus, et un double qui l'oublierait laisserait passer un
+      // aller-retour qui perd l'engagement.
+      plannedWorkloadSeconds: args.plannedWorkloadSeconds,
     }
     this.tasks.push(t)
     return t

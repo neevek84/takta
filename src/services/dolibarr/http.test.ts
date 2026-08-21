@@ -446,11 +446,21 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     const { vues, fetchImpl } = espion(() => reponse(51))
     const api = createHttpDolibarrApi({ baseUrl: BASE, apiKey: 'k', fetchImpl })
 
-    const tache = await api.createTask({ projectId: 9, label: 'Développement', plannedWorkloadSeconds: null })
+    const tache = await api.createTask({
+      projectId: 9,
+      label: 'Développement',
+      plannedWorkloadSeconds: null,
+    })
 
     expect(vues[0]!.method).toBe('POST')
     expect(JSON.parse(vues[0]!.body!)).toMatchObject({ fk_project: 9, label: 'Développement' })
-    expect(tache).toEqual({ id: 51, ref: 'Développement', label: 'Développement', projectId: 9 })
+    expect(tache).toEqual({
+      id: 51,
+      ref: 'Développement',
+      label: 'Développement',
+      projectId: 9,
+      plannedWorkloadSeconds: null,
+    })
   })
 
   // Sans statut, Dolibarr retient `STATUS_DRAFT = 0` : la tâche naît en
@@ -524,9 +534,35 @@ describe('client HTTP Dolibarr — la charge utile sur le fil', () => {
     const api = createHttpDolibarrApi({ baseUrl: BASE, apiKey: 'k', fetchImpl })
 
     expect(await api.listTasks(9)).toEqual([
-      { id: 51, ref: 'TK0051', label: 'Développement', projectId: 9 },
+      {
+        id: 51,
+        ref: 'TK0051',
+        label: 'Développement',
+        projectId: 9,
+        // Absente de la réponse : la tâche ne porte pas de charge, elle n'en
+        // porte pas **zéro**. C'est la reprise qui en dépend.
+        plannedWorkloadSeconds: null,
+      },
     ])
     expect(vues[0]!.url).toBe(`${BASE}/projects/9/tasks`)
+  })
+
+  // La reprise des tâches en prestations en tire les jours vendus : une charge
+  // perdue à la lecture ferait naître des prestations sans engagement, et un
+  // reste à consommer faux sur toute la mission.
+  it('rapporte la charge prévue des tâches lues, en secondes', async () => {
+    const { fetchImpl } = espion(() =>
+      reponse([
+        { id: 51, ref: 'TK0051', label: 'Développement', planned_workload: '126000' },
+        { id: 52, ref: 'TK0052', label: 'Recette', planned_workload: '0' },
+      ]),
+    )
+    const api = createHttpDolibarrApi({ baseUrl: BASE, apiKey: 'k', fetchImpl })
+
+    const taches = await api.listTasks(9)
+    expect(taches[0]!.plannedWorkloadSeconds).toBe(126_000)
+    // `'0'` chez Dolibarr veut dire « colonne vide », pas « charge nulle ».
+    expect(taches[1]!.plannedWorkloadSeconds).toBeNull()
   })
 
   it('convertit les euros d une propale en centimes', async () => {

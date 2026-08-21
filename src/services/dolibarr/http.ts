@@ -296,6 +296,19 @@ function horodatageDuJour(jour: string): number {
   return Date.parse(`${jour}T00:00:00Z`) / 1000
 }
 
+/**
+ * `planned_workload` tel que Dolibarr le rend : un nombre de secondes, ou rien.
+ *
+ * Le champ est **omis** sur une tâche qui n'en porte pas — `Number(undefined)`
+ * vaut alors `NaN` — et vaut `'0'` quand il a été mis à zéro. Les deux disent
+ * « pas de charge connue » : une charge nulle n'existe pas chez Dolibarr, la
+ * colonne est simplement vide.
+ */
+function chargeOuNull(valeur: unknown): number | null {
+  const n = Number(valeur ?? Number.NaN)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 function versCommande(brut: Record<string, unknown>): DolibarrOrder {
   return {
     id: Number(brut.id),
@@ -383,6 +396,7 @@ export function createHttpDolibarrApi(args: {
         ref: String(t.ref ?? ''),
         label: String(t.label ?? ''),
         projectId,
+        plannedWorkloadSeconds: chargeOuNull(t.planned_workload),
       }))
     },
 
@@ -399,6 +413,7 @@ export function createHttpDolibarrApi(args: {
         ref: String(brut.ref ?? ''),
         label: String(brut.label ?? ''),
         projectId: Number(brut.fk_project ?? brut.fk_projet ?? 0),
+        plannedWorkloadSeconds: chargeOuNull(brut.planned_workload),
       }
     },
 
@@ -431,7 +446,13 @@ export function createHttpDolibarrApi(args: {
       // création du projet : la même personne pilote l'un et l'autre.
       await affecter(ctx, `/tasks/${taskId}`, 'TASKEXECUTIVE')
 
-      return { id: taskId, ref: a.label, label: a.label, projectId: a.projectId }
+      return {
+        id: taskId,
+        ref: a.label,
+        label: a.label,
+        projectId: a.projectId,
+        plannedWorkloadSeconds: a.plannedWorkloadSeconds,
+      }
     },
 
     async createProject(a: DolibarrProjectCreation): Promise<DolibarrProject> {

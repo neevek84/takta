@@ -159,3 +159,33 @@ export function chargePrevueEnSecondes(args: {
 
   return Math.round((args.soldCentiemes / 100) * args.minutesParJour * 60)
 }
+
+/**
+ * Les jours vendus qu'une tâche Dolibarr laisse deviner, **en centièmes de
+ * jour**, à partir de sa charge prévue.
+ *
+ * C'est l'inverse exact de `chargePrevueEnSecondes`, et il sert la reprise :
+ * une mission qu'on rattache à un projet déjà en cours n'a pas de commande d'où
+ * tirer ses engagements, et `planned_workload` est la seule chose que Dolibarr
+ * sache dire de ce qui a été vendu.
+ *
+ * **Zéro quand la charge est inconnue**, et c'est assumé : une prestation sans
+ * engagement se saisit quand même, elle affiche simplement un reste à consommer
+ * qui ne veut rien dire tant que le porteur ne l'a pas renseigné. L'écran de
+ * reprise le signale — ne rien dire ferait passer un trou pour une mesure.
+ */
+export function joursVendusDepuisCharge(args: {
+  /** `planned_workload` de la tâche, en secondes, `null` quand elle n'en porte pas */
+  plannedWorkloadSeconds: number | null
+  /** durée d'une journée, en minutes */
+  minutesParJour: number
+}): number {
+  const { plannedWorkloadSeconds: charge, minutesParJour } = args
+  // `Number.isFinite` n'est pas décoratif : la charge vient d'un `Number()` sur
+  // un champ que Dolibarr omet quand la tâche n'en porte pas, et `Number(undefined)`
+  // vaut `NaN`. Sans cette garde, `NaN` traverserait jusqu'aux jours vendus.
+  if (charge === null || !Number.isFinite(charge)) return 0
+  if (!Number.isFinite(minutesParJour) || minutesParJour <= 0) return 0
+
+  return Math.round((charge / 60 / minutesParJour) * 100)
+}

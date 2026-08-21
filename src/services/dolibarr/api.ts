@@ -30,6 +30,13 @@ export interface DolibarrTask {
   ref: string
   label: string
   projectId: number
+  /**
+   * `planned_workload` de la tâche, **en secondes**, ou `null` quand elle n'en
+   * porte pas. C'est la seule chose que Dolibarr sache dire de ce qui a été
+   * vendu sur une tâche, et la reprise en tire les jours vendus de la
+   * prestation qu'elle crée.
+   */
+  plannedWorkloadSeconds: number | null
 }
 
 export interface DolibarrPropalLine {

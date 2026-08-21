@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { chargePrevueEnSecondes, buildTimeSpentPayloads, compareDayLength, type PushableEntry } from './timespent'
+import {
+  chargePrevueEnSecondes,
+  joursVendusDepuisCharge,
+  buildTimeSpentPayloads,
+  compareDayLength,
+  type PushableEntry,
+} from './timespent'
 
 function saisie(over: Partial<PushableEntry> = {}): PushableEntry {
   return {
@@ -173,5 +179,41 @@ describe('chargePrevueEnSecondes', () => {
 
   it("rend null sur un facteur inexploitable plutôt qu'une charge fausse", () => {
     expect(chargePrevueEnSecondes({ soldCentiemes: 500, minutesParJour: 0 })).toBeNull()
+  })
+})
+
+describe('joursVendusDepuisCharge', () => {
+  it("rend l'inverse exact de la charge prévue", () => {
+    // 5 jours vendus sur une journée de 7 h : 5 × 7 × 3600 = 126 000 s.
+    const charge = chargePrevueEnSecondes({ soldCentiemes: 500, minutesParJour: 420 })
+    expect(charge).toBe(126_000)
+    expect(joursVendusDepuisCharge({ plannedWorkloadSeconds: charge, minutesParJour: 420 })).toBe(
+      500,
+    )
+  })
+
+  it('suit le facteur, qui ne vaut pas sept heures partout', () => {
+    // 126 000 s valent 5 jours à 7 h, mais 4,375 jours à 8 h.
+    expect(joursVendusDepuisCharge({ plannedWorkloadSeconds: 126_000, minutesParJour: 480 })).toBe(
+      438,
+    )
+  })
+
+  it("rend zéro quand la tâche ne porte aucune charge, sans l'inventer", () => {
+    expect(joursVendusDepuisCharge({ plannedWorkloadSeconds: null, minutesParJour: 420 })).toBe(0)
+    expect(joursVendusDepuisCharge({ plannedWorkloadSeconds: 0, minutesParJour: 420 })).toBe(0)
+  })
+
+  it('rend zéro sur un facteur inexploitable plutôt que de diviser par lui', () => {
+    expect(joursVendusDepuisCharge({ plannedWorkloadSeconds: 126_000, minutesParJour: 0 })).toBe(0)
+  })
+
+  // Dolibarr omet `planned_workload` sur une tâche qui n'en porte pas, et le
+  // `Number()` du transport en fait un `NaN`. Sans garde, il traverserait
+  // jusqu'aux jours vendus de la prestation créée.
+  it("rend zéro sur une charge illisible, jamais un NaN", () => {
+    expect(
+      joursVendusDepuisCharge({ plannedWorkloadSeconds: Number.NaN, minutesParJour: 420 }),
+    ).toBe(0)
   })
 })
