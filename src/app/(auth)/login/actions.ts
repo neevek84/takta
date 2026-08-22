@@ -1,3 +1,4 @@
+import { creerPremierAdministrateur } from '@/services/auth/comptes'
 'use server'
 
 import { redirect } from 'next/navigation'
@@ -38,3 +39,25 @@ export async function login(formData: FormData): Promise<void> {
     throw error
   }
 }
+
+export type PremierAdminState = { ok: boolean; message: string } | null
+
+/**
+ * Crée le premier administrateur d'une instance neuve.
+ *
+ * Le service refuse dès qu'un compte existe, et il le revérifie **dans** sa
+ * transaction : cette action n'a donc pas à garder la porte elle-même.
+ */
+export async function creerPremierAdmin(
+  _precedent: PremierAdminState,
+  formData: FormData,
+): Promise<PremierAdminState> {
+  const r = await creerPremierAdministrateur({
+    email: String(formData.get('email') ?? ''),
+    name: String(formData.get('name') ?? ''),
+    motDePasse: String(formData.get('motDePasse') ?? ''),
+  })
+  if (!r.ok) return { ok: false, message: r.motif }
+  return { ok: true, message: 'Compte créé. Connectez-vous avec ces identifiants.' }
+}
+

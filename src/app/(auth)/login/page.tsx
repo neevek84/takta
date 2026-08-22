@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
 import { login } from './actions'
+import { aucunUtilisateur } from '@/services/auth/comptes'
+import { PremierAdminForm } from './PremierAdminForm'
 
 const MESSAGE_ECHEC = 'Adresse e-mail ou mot de passe incorrect.'
 
@@ -12,6 +14,9 @@ export default async function LoginPage({
   searchParams: Promise<{ erreur?: string; email?: string }>
 }) {
   const { erreur, email } = await searchParams
+  // Une instance neuve est murée : sans cet écran, il n'existe aucun moyen de
+  // créer le premier compte sans terminal.
+  const premierDemarrage = await aucunUtilisateur()
 
   return (
     <main className="mx-auto mt-24 w-full max-w-sm px-4">
@@ -22,7 +27,12 @@ export default async function LoginPage({
           la baseline, et une image décorative annoncée deux fois encombre. */}
       <img src="/takta.svg" alt="" aria-hidden="true" className="mb-2 h-9 w-auto" />
       <p className="mb-6 text-sm text-muted">Le temps qui fait foi.</p>
-      <h1 className="mb-6 text-xl font-semibold">Connexion</h1>
+      <h1 className="mb-6 text-xl font-semibold">
+        {premierDemarrage ? 'Premier démarrage' : 'Connexion'}
+      </h1>
+      {premierDemarrage ? (
+        <PremierAdminForm />
+      ) : (
       <Card>
         <form action={login} className="flex flex-col gap-3">
           {erreur !== undefined && <Banner tone="danger">{MESSAGE_ECHEC}</Banner>}
@@ -39,6 +49,7 @@ export default async function LoginPage({
           </Button>
         </form>
       </Card>
+      )}
     </main>
   )
 }
