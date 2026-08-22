@@ -11,7 +11,15 @@ import {
 import { journalErreur } from '@/services/log'
 import { readGoogleOAuthClient } from './oauth-client'
 
-/** Libellé du calendrier dédié — jamais l'agenda principal. */
+/**
+ * Libellé du calendrier dédié — jamais l'agenda principal.
+ *
+ * **Ne pas le renommer avec le produit.** Le connecteur retrouve le calendrier
+ * **par ce libellé** : le changer ferait créer un second calendrier à toute
+ * installation existante, et abandonnerait le premier avec les événements
+ * qu'il porte. Le mot désigne d'ailleurs le document, pas le produit — ce sont
+ * bien les disponibilités d'un CRA que ce calendrier expose.
+ */
 export const CALENDRIER_DEDIE = 'CRA — disponibilités'
 
 /**

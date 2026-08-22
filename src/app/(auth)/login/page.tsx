@@ -15,6 +15,13 @@ export default async function LoginPage({
 
   return (
     <main className="mx-auto mt-24 w-full max-w-sm px-4">
+      {/* Le seul écran où le produit se nomme. Le logotype porte le nom : le
+          titre reste « Connexion », qui dit ce qu'on fait ici. Deux fois le
+          même mot n'apprendrait rien.
+          `alt` vide et `aria-hidden` : le nom est écrit juste en dessous par
+          la baseline, et une image décorative annoncée deux fois encombre. */}
+      <img src="/takta.svg" alt="" aria-hidden="true" className="mb-2 h-9 w-auto" />
+      <p className="mb-6 text-sm text-muted">Le temps qui fait foi.</p>
       <h1 className="mb-6 text-xl font-semibold">Connexion</h1>
       <Card>
         <form action={login} className="flex flex-col gap-3">

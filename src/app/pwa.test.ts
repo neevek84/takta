@@ -12,8 +12,8 @@ describe('manifeste', () => {
   const manifeste = JSON.parse(lire('manifest.webmanifest')) as Record<string, unknown>
 
   it('se déclare installable sur l écran d accueil', () => {
-    expect(manifeste.name).toBe('CRA — Compte rendu d’activité')
-    expect(manifeste.short_name).toBe('CRA')
+    expect(manifeste.name).toBe('takta — le temps qui fait foi')
+    expect(manifeste.short_name).toBe('takta')
     expect(manifeste.display).toBe('standalone')
   })
 

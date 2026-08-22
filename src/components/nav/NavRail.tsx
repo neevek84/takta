@@ -160,6 +160,15 @@ export function NavRail({ onSignOut }: { onSignOut: () => Promise<void> }) {
         'md:border-t-0 md:border-r md:px-3 md:py-4',
       )}
     >
+      {/* Le logotype, sur écran large seulement. Sur téléphone, le rail
+          devient une barre d'onglets en bas de l'écran : y poser une marque
+          coûterait la hauteur d'une cible tactile pour ne rien apprendre à
+          personne. `aria-hidden` parce que le nom du produit n'aide pas à
+          naviguer — il n'est pas un point de repère, il est un décor. */}
+      <div className="hidden md:mb-2 md:block md:px-2">
+        <img src="/takta.svg" alt="" aria-hidden="true" className="h-6 w-auto" />
+      </div>
+
       {/* Quatre parts contre une : les deux `<nav>` étaient tous deux
           `flex-1`, si bien que le seul bouton « Réglages » recevait autant de
           largeur que les quatre onglets du travail réunis — 41,4 points

@@ -25,14 +25,14 @@ const manrope = localFont({
 })
 
 export const metadata: Metadata = {
-  title: 'CRA',
+  title: 'takta',
   manifest: '/manifest.webmanifest',
   // iOS ignore les icônes du manifeste : sans cette ligne, une application
   // ajoutée à l'écran d'accueil affiche une capture d'écran de la page.
   // Le PNG est produit à partir de `public/icon.svg` par
   // `scripts/generate-apple-touch-icon.mjs`.
   icons: { apple: '/apple-touch-icon.png' },
-  appleWebApp: { capable: true, title: 'CRA', statusBarStyle: 'default' },
+  appleWebApp: { capable: true, title: 'takta', statusBarStyle: 'default' },
 }
 
 /**

@@ -29,7 +29,7 @@ const protege = NextAuth(authConfig).auth as unknown as NextMiddleware
  *     Une inscription refuse une réponse redirigée, par spécification.
  *   - les icônes : lues par le navigateur et par le système, sans cookie.
  *
- * Aucune donnée utilisateur ici : ce sont trois fichiers statiques de
+ * Aucune donnée utilisateur ici : ce sont des fichiers statiques de
  * `public/`, identiques pour tout le monde.
  */
 const FICHIERS_PUBLICS = new Set([
@@ -37,6 +37,10 @@ const FICHIERS_PUBLICS = new Set([
   '/sw.js',
   '/icon.svg',
   '/apple-touch-icon.png',
+  // Le logotype est affiché par l'écran de connexion, donc **avant** toute
+  // session. Sans lui ici, la page de login demanderait une image que le
+  // middleware renverrait vers la page de login.
+  '/takta.svg',
 ])
 
 export default function middleware(request: NextRequest, event: NextFetchEvent) {
