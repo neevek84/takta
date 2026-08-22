@@ -105,6 +105,9 @@ Une seule base de code, quatre cibles :
 > `docker compose up --build` avant toute mise en production.**
 
 ```bash
+# POSTGRES_PASSWORD en **hexadécimal**, jamais en base64 : il entre tel quel
+# dans DATABASE_URL, et un `/` produit par base64 y couperait l'URL en deux.
+export POSTGRES_PASSWORD=$(openssl rand -hex 24)
 export AUTH_SECRET=$(openssl rand -base64 32)
 export CREDENTIALS_KEY=$(openssl rand -base64 32)
 docker compose up -d --build

@@ -473,3 +473,40 @@ describe("les fichiers d'environnement prêts à l'emploi", () => {
   })
 })
 
+/**
+ * Le mot de passe de la base entre **tel quel** dans `DATABASE_URL`, que la
+ * composition assemble : `postgresql://takta:MOT_DE_PASSE@db:5432/takta`.
+ *
+ * `openssl rand -base64` produit des `+`, des `/` et des `=`. Un `/` y coupe
+ * l'URL : l'analyseur perd l'hôte, puis le port, et Prisma refuse au démarrage
+ * par « P1013 … invalid port number in database URL ». Mesuré sur le NAS du
+ * porteur le 22 août 2026 — le conteneur redémarrait en boucle.
+ *
+ * La documentation ne doit donc jamais suggérer base64 **pour cette
+ * variable-là**. Les autres secrets ne vont dans aucune URL et peuvent
+ * parfaitement l'être.
+ */
+describe('le mot de passe de la base ne peut pas casser une URL', () => {
+  it.each([
+    ['.env.example', ENV_EXAMPLE],
+    ['.env.docker.example', lit('.env.docker.example')],
+    ['README.md', lit('README.md')],
+  ])('%s ne suggère pas base64 pour POSTGRES_PASSWORD', (nom, contenu) => {
+    // La forme du défaut : une commande base64 donnée **comme recette de cette
+    // variable-là**, donc immédiatement suivie de sa déclaration. Chercher plus
+    // large attraperait le `-base64` légitime d'`AUTH_SECRET` voisin, et le
+    // commentaire qui explique précisément pourquoi il ne faut pas l'employer
+    // ici.
+    const lignes = contenu.split('\n')
+    const fautives: string[] = []
+
+    lignes.forEach((ligne, i) => {
+      if (!/openssl\s+rand\s+-base64/.test(ligne)) return
+      const suite = lignes.slice(i + 1, i + 4).join('\n')
+      if (/POSTGRES_PASSWORD\s*=/.test(suite)) fautives.push(ligne.trim())
+    })
+
+    expect(fautives, `${nom} suggère base64 près de POSTGRES_PASSWORD`).toEqual([])
+  })
+})
+
