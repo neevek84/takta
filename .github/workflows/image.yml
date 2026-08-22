@@ -3,11 +3,13 @@
 # **Déclenché par une étiquette de version, jamais par une fusion.** Sur un
 # produit public, `latest` désigne ce que les gens installent : le laisser
 # suivre chaque fusion dans `main` ferait d'un correctif en cours une version
-# livrée, sans que personne l'ait décidé. Poser `v1.4.0` est cette décision.
+# livrée, sans que personne l'ait décidé.
 #
-# **Deux étiquettes, et une seule est surveillée.** Container Manager ne
-# notifie une mise à jour que pour `latest` — les étiquettes de version, elles,
-# ne servent qu'au retour arrière, mais sans elles il n'y en a aucun.
+# **Deux architectures, construites NATIVEMENT et en parallèle.** L'émulation
+# QEMU d'`arm64` sur une machine x86 coûtait vingt minutes par version ; GitHub
+# offre des machines ARM natives, gratuites pour les dépôts publics. Chaque
+# architecture se construit chez elle, puis un manifeste les réunit sous une
+# seule étiquette — c'est lui que le NAS téléchargera, en choisissant la sienne.
 name: image
 
 on:
@@ -16,15 +18,20 @@ on:
       - 'v*'
 
 jobs:
-  publier:
-    runs-on: ubuntu-latest
+  construire:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - machine: ubuntu-latest
+            plateforme: linux/amd64
+            arch: amd64
+          - machine: ubuntu-24.04-arm
+            plateforme: linux/arm64
+            arch: arm64
+    runs-on: ${{ matrix.machine }}
     steps:
-      - uses: actions/checkout@v4
-
-      # `arm64` n'est pas du zèle : les Synology x86 sont en `amd64`, les
-      # modèles à processeur ARM en `arm64`. Publier les deux évite d'avoir à
-      # savoir sur quel modèle l'image atterrira.
-      - uses: docker/setup-qemu-action@v3
+      - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -32,21 +39,59 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Étiquettes
-        id: etiquettes
-        run: |
-          # L'étiquette git porte le « v » ; l'étiquette d'image, non.
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - uses: docker/build-push-action@v6
+      # Poussée **par empreinte**, sans étiquette : une étiquette posée par
+      # chaque machine écraserait celle de l'autre au lieu de la compléter.
+      # C'est le manifeste, plus bas, qui étiquette les deux ensemble.
+      - id: construction
+        uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/takta:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/takta:${{ steps.etiquettes.outputs.version }}
-          # Le cache évite de reconstruire `npm ci` à chaque version.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: ${{ matrix.plateforme }}
+          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/takta,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      - name: Retenir l'empreinte
+        run: |
+          mkdir -p /tmp/empreintes
+          touch "/tmp/empreintes/${{ steps.construction.outputs.digest }}"
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: empreintes-${{ matrix.arch }}
+          path: /tmp/empreintes/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifeste:
+    needs: construire
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/empreintes
+          pattern: empreintes-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # `latest` est la seule étiquette que Container Manager surveille ; la
+      # version, elle, ne sert qu'au retour arrière — mais sans elle il n'y en a
+      # aucun.
+      - name: Réunir les deux architectures sous les deux étiquettes
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/takta"
+          EMPREINTES=$(printf "${IMAGE}@sha256:%s " $(ls /tmp/empreintes))
+          docker buildx imagetools create \
+            --tag "${IMAGE}:latest" \
+            --tag "${IMAGE}:${VERSION}" \
+            ${EMPREINTES}
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+        shell: bash
