@@ -180,3 +180,23 @@ describe('la seconde porte', () => {
     expect(screen.queryByRole('button', { name: /Google/ })).toBeNull()
   })
 })
+
+describe('le retour de la création du premier compte', () => {
+  it('accueille par un succès, sur le formulaire de connexion', async () => {
+    render(await LoginPage({ searchParams: Promise.resolve({ cree: '1' }) }))
+
+    const bandeau = screen.getByRole('status')
+    expect(bandeau.textContent).toMatch(/Compte créé/i)
+    // Et surtout : c'est bien l'écran de connexion, pas celui de création.
+    expect(screen.getByRole('button', { name: 'Se connecter' })).toBeTruthy()
+  })
+
+  // Une instance encore vide qui recevrait ce paramètre — un lien recopié,
+  // un retour arrière — ne doit pas annoncer un compte qui n'existe pas.
+  it('se tait si l instance est toujours vide', async () => {
+    aucunUtilisateur.mockResolvedValue(true)
+    render(await LoginPage({ searchParams: Promise.resolve({ cree: '1' }) }))
+
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+})

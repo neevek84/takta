@@ -1,6 +1,7 @@
 'use server'
 
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 import { creerPremierAdministrateur } from '@/services/auth/comptes'
 // Import ciblé sur `@auth/core/errors` plutôt que sur `next-auth` : ce
 // dernier réexporte la même classe mais son point d'entrée charge aussi la
@@ -40,7 +41,13 @@ export async function login(formData: FormData): Promise<void> {
   }
 }
 
-export type PremierAdminState = { ok: boolean; message: string } | null
+/**
+ * **Un refus, ou rien.** Le succès ne revient jamais par cet état : il quitte
+ * l'écran. Porter un `ok: true` ici a produit exactement le défaut qu'on a
+ * constaté — un bandeau vert de réussite affiché au-dessus du formulaire de
+ * création, invitant à se connecter sur un écran qui ne le permettait pas.
+ */
+export type PremierAdminState = { message: string } | null
 
 /**
  * Crée le premier administrateur d'une instance neuve.
@@ -57,8 +64,21 @@ export async function creerPremierAdmin(
     name: String(formData.get('name') ?? ''),
     motDePasse: String(formData.get('motDePasse') ?? ''),
   })
-  if (!r.ok) return { ok: false, message: r.motif }
-  return { ok: true, message: 'Compte créé. Connectez-vous avec ces identifiants.' }
+  if (!r.ok) return { message: r.motif }
+
+  // **Rendre un état ne suffisait pas, et c'est ce qui a été constaté sur
+  // l'instance déployée.** Le composant client affichait « Compte créé »,
+  // mais le composant *serveur* qui choisit entre « Premier démarrage » et
+  // « Connexion » n'était jamais réévalué : le formulaire de création restait
+  // au-dessus de son propre message de succès, lequel invitait à se connecter
+  // sur un écran qui ne le permettait pas. Il fallait revenir à la main sur
+  // l'adresse du site.
+  //
+  // `revalidatePath` purge le cache de route, qui porte encore « aucun
+  // compte » ; la redirection redemande la page. Les deux sont nécessaires :
+  // rediriger seul rendrait la version en cache.
+  revalidatePath('/login')
+  redirect('/login?cree=1')
 }
 
 

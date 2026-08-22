@@ -1,16 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CredentialsSignin } from '@auth/core/errors'
 
-const { signIn, redirect } = vi.hoisted(() => ({
+const { signIn, redirect, revalidatePath, creerPremierAdministrateur } = vi.hoisted(() => ({
   signIn: vi.fn(),
   redirect: vi.fn(),
+  revalidatePath: vi.fn(),
+  creerPremierAdministrateur: vi.fn(),
 }))
 vi.mock('@/auth', () => ({ signIn }))
 vi.mock('next/navigation', () => ({ redirect }))
+vi.mock('next/cache', () => ({ revalidatePath }))
+vi.mock('@/services/auth/comptes', () => ({ creerPremierAdministrateur }))
 
 // `vi.mock` est hissé au-dessus des imports : `@/auth` (Prisma, argon2)
 // n'est jamais chargé, seul le contrat avec `signIn` l'est.
-import { login } from './actions'
+import { creerPremierAdmin, login } from './actions'
 
 /**
  * Simule l'exception qu'Auth.js lève réellement en cas de succès : ni
@@ -34,6 +38,8 @@ function formulaire(email: string, password: string): FormData {
 beforeEach(() => {
   signIn.mockReset()
   redirect.mockReset()
+  revalidatePath.mockReset()
+  creerPremierAdministrateur.mockReset()
 })
 
 describe('login (action serveur)', () => {
@@ -73,6 +79,50 @@ describe('login (action serveur)', () => {
     signIn.mockRejectedValue(panne)
 
     await expect(login(formulaire('ada@example.com', 'x'))).rejects.toBe(panne)
+    expect(redirect).not.toHaveBeenCalled()
+  })
+})
+
+function formulairePremierAdmin(): FormData {
+  const fd = new FormData()
+  fd.set('name', 'Ada')
+  fd.set('email', 'ada@exemple.test')
+  fd.set('motDePasse', 'un-mot-de-passe-long')
+  return fd
+}
+
+/**
+ * **Le compte se créait, et l'écran ne bougeait pas.**
+ *
+ * L'action rendait un état, sans rien d'autre : le composant client affichait
+ * « Compte créé », mais le composant *serveur* qui décide entre « Premier
+ * démarrage » et « Connexion » n'était jamais réévalué. Le formulaire de
+ * création restait à l'écran au-dessus de son propre message de succès —
+ * lequel invitait à se connecter sur un écran qui ne le permettait pas.
+ * Constaté sur l'instance déployée, et il fallait revenir à la main sur
+ * l'adresse du site pour en sortir.
+ */
+describe('la création du premier administrateur', () => {
+  it("quitte l'écran de création dès que le compte existe", async () => {
+    creerPremierAdministrateur.mockResolvedValue({ ok: true })
+
+    await creerPremierAdmin(null, formulairePremierAdmin())
+
+    // Le cache de route porte encore « aucun compte » : sans cette purge, la
+    // page revenue reste celle d'avant.
+    expect(revalidatePath).toHaveBeenCalledWith('/login')
+    const [url] = redirect.mock.calls[0] as [string]
+    expect(url).toBe('/login?cree=1')
+  })
+
+  it('un refus reste sur place et dit pourquoi', async () => {
+    creerPremierAdministrateur.mockResolvedValue({ ok: false, motif: 'Un compte existe déjà.' })
+
+    const etat = await creerPremierAdmin(null, formulairePremierAdmin())
+
+    expect(etat).toEqual({ message: 'Un compte existe déjà.' })
+    // Rediriger sur un refus ferait disparaître le motif, et le formulaire
+    // reviendrait vide sans que rien n'explique l'échec.
     expect(redirect).not.toHaveBeenCalled()
   })
 })

@@ -28,7 +28,8 @@ export function PremierAdminForm() {
   return (
     <Card>
       <form action={formAction} className="flex flex-col gap-3">
-        {etat !== null && <Banner tone={etat.ok ? 'success' : 'danger'}>{etat.message}</Banner>}
+        {/* Toujours un refus : le succès ne revient pas ici, il redirige. */}
+        {etat !== null && <Banner tone="danger">{etat.message}</Banner>}
         <p className="text-sm text-muted">
           Cette instance n’a encore aucun compte. Créez celui de l’administrateur : il pourra
           ensuite connecter Dolibarr et Google.

@@ -8,7 +8,9 @@ vi.mock('./actions', () => ({ creerPremierAdmin }))
 import { PremierAdminForm } from './PremierAdminForm'
 
 beforeEach(() => {
-  creerPremierAdmin.mockReset().mockResolvedValue({ ok: true, message: 'Compte créé.' })
+  // Le succès ne revient pas par l'état : il redirige. `null` est donc ce que
+  // rend l'action quand tout va bien, du point de vue de ce composant.
+  creerPremierAdmin.mockReset().mockResolvedValue(null)
 })
 
 afterEach(cleanup)

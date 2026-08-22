@@ -14,9 +14,9 @@ const MESSAGE_ECHEC = 'Adresse e-mail ou mot de passe incorrect.'
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ erreur?: string; email?: string }>
+  searchParams: Promise<{ erreur?: string; email?: string; cree?: string }>
 }) {
-  const { erreur, email } = await searchParams
+  const { erreur, email, cree } = await searchParams
   // Une instance neuve est murée : sans cet écran, il n'existe aucun moyen de
   // créer le premier compte sans terminal.
   const premierDemarrage = await aucunUtilisateur()
@@ -43,6 +43,13 @@ export default async function LoginPage({
       ) : (
       <Card>
         <form action={login} className="flex flex-col gap-3">
+          {/* Le retour de la création du premier compte. Conditionné aussi à
+              l'existence d'un compte : un lien recopié, ou un retour arrière
+              sur une instance encore vide, annoncerait sinon un compte qui
+              n'existe pas. */}
+          {cree !== undefined && (
+            <Banner tone="success">Compte créé. Connectez-vous avec ces identifiants.</Banner>
+          )}
           {erreur !== undefined && <Banner tone="danger">{MESSAGE_ECHEC}</Banner>}
           <Field
             label="Adresse e-mail"
