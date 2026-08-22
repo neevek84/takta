@@ -256,6 +256,31 @@ par route, paramètre par paramètre — est dans
    lancer le consentement. Le scope demandé est celui du calendrier ; un
    calendrier dédié est créé au consentement et ne se mélange jamais au reste.
 
+**Le même client sert aussi à se connecter**, et cela demande une **seconde**
+URI de redirection. Déclare les deux, au caractère près — le **port en fait
+partie** :
+
+| URI | Ce qu'elle sert |
+|---|---|
+| `https://votre-domaine/api/google/callback` | brancher l'agenda, depuis *Mon profil* |
+| `https://votre-domaine/api/auth/callback/google` | **se connecter** avec son compte Google |
+
+Sans la seconde, le bouton « Se connecter avec Google » mène à un
+`redirect_uri_mismatch`. Le bouton ne paraît que si un client est enregistré :
+une porte qui ne mène nulle part ne s'affiche pas grisée, elle ne s'affiche pas.
+
+**Ce que la connexion Google crée.** Une adresse **vérifiée** qui correspond à un
+compte existant s'y rattache ; sinon un compte naît, au rôle `CONSULTANT`, sans
+mot de passe — il s'en donnera un par « Définir ou réinitialiser mon mot de
+passe ». Une adresse non vérifiée est refusée, et un compte désactivé n'entre pas
+davantage par cette porte que par l'autre.
+
+**Qui peut donc entrer ?** Tous ceux à qui Google délivre un jeton pour ce
+client. Si l'écran de consentement est de type *Interne*, c'est le domaine
+Workspace ou Cloud Identity de l'organisation — et rien d'autre. En *Externe*,
+c'est le monde entier : n'active alors la connexion Google que derrière un
+contrôle d'accès, ou pas du tout.
+
 ### Dolibarr
 
 URL de l'instance, clé d'API et identifiant utilisateur Dolibarr se saisissent

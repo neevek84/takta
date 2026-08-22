@@ -182,6 +182,30 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 
 ---
 
+## Les deux portes : livrées (22 août 2026)
+
+Onze tâches, toutes faites. Ce qui existe désormais :
+
+- **le premier démarrage** — une instance neuve n'est plus murée : sans aucun
+  compte en base, l'écran de connexion devient l'écran de création du premier
+  administrateur. Le comptage est refait **dans la transaction**, sans quoi deux
+  requêtes simultanées feraient deux premiers administrateurs ;
+- **le parcours du mot de passe** — il ne sert pas que l'oubli : c'est par lui
+  qu'un compte né **sans** mot de passe s'en donne un (reprise Dolibarr,
+  connexion Google). Jeton de 256 bits, dix minutes, empreinte seule en base,
+  consommé une fois, et les autres liens en attente tombent avec lui. Le
+  formulaire se tait sur les adresses inconnues — et aussi quand le SMTP tombe,
+  sans quoi il redevenait un annuaire dès la première panne de courrier ;
+- **la connexion Google** — adresse vérifiée exigée, rattachement à un compte
+  existant sinon création au rôle `CONSULTANT`, refus indistinct dans tous les
+  cas, et un compte désactivé n'entre pas plus par cette porte que par l'autre.
+  Une panne d'agenda ne barre pas l'entrée : se connecter et brancher un agenda
+  sont deux choses.
+
+**Deux URI de redirection sont désormais nécessaires** chez Google —
+`/api/google/callback` pour l'agenda, `/api/auth/callback/google` pour la
+connexion. Documenté au README.
+
 ## Dette de la double authentification : refermée (22 août 2026)
 
 Le lot de la double authentification créait un compte à la première connexion
