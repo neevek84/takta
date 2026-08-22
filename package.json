@@ -1,7 +1,7 @@
 {
-  "name": "cra",
+  "name": "takta",
   "version": "1.0.0",
-  "description": "",
+  "description": "Compte-rendu d'activité pour consultants indépendants. Le temps qui fait foi.",
   "main": "index.js",
   "directories": {
     "doc": "docs"

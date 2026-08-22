@@ -1,11 +1,67 @@
-# CRA
+# takta
 
-**Licence : GNU AGPL v3** — voir [LICENSE](LICENSE).
+> *Le temps qui fait foi.*
 
-Application de compte-rendu d'activité autoportante. Elle ne facture pas :
-son rôle s'arrête au CRA validé. Les champs liés à la facturation
-(`invoiceNumber`, `invoicedAt`, `paidAt`) sont un suivi informatif, pas un
-module de facturation.
+Compte-rendu d'activité pour consultants indépendants. Auto-hébergé, sous
+licence **GNU AGPL v3** — voir [LICENSE](LICENSE).
+
+---
+
+## Pourquoi
+
+Un consultant en régie vend des jours. Pas des heures pointées, pas des tâches
+cochées : **un nombre de jours, sur une période, contre un bon de commande.**
+
+Tout l'enjeu du mois tient alors dans une soustraction — ce qui a été vendu,
+moins ce qui a été servi, moins ce qui est déjà promis à un jour précis. Les
+outils de suivi du temps savent faire la deuxième colonne. Aucun ne tient les
+trois ensemble, et c'est pourtant la seule qui décide de la semaine à venir :
+un jour prévu chez un client est un jour qu'on ne vendra pas ailleurs.
+
+Alors on la refait à la main. Un tableur en parallèle du logiciel, un calcul le
+vendredi soir, un chiffre annoncé au client dont on n'est jamais tout à fait
+sûr. C'est ce tableur que **takta** remplace.
+
+Trois états, jamais confondus : **vendu**, **prévu**, **réalisé**. Le prévu ne
+devient jamais du réalisé tout seul — cette conversion est une décision, pas un
+automatisme, parce qu'elle engage. Et à la fin du mois, ce qui sort n'est pas un
+décompte : c'est un document que le client signe, qui verrouille le mois, et qui
+fait foi.
+
+**takta ne facture pas.** C'est délibéré, et c'est ce qui le garde léger : la
+facture appartient à votre logiciel de gestion, avec toute sa charge
+réglementaire. takta lui pousse les temps consommés et s'arrête là.
+
+**takta fonctionne seul.** Dolibarr, Google Agenda et la signature électronique
+sont des connecteurs *additifs* : sans aucun d'eux, la saisie, le calcul, le PDF
+et la validation marchent intégralement. Vos données restent où vous les
+installez — sur un poste, un NAS, un serveur.
+
+---
+
+## Le nom
+
+En production, le *takt* est le rythme qu'il faut tenir : le temps dont on
+dispose, divisé par ce qui a été promis. Ni plus vite, ni plus lentement — la
+cadence juste, celle qui livre sans stock et sans retard.
+
+C'est le calcul du consultant, exactement.
+
+Le nom se dit en deux temps, comme un mécanisme qui avance. Au milieu, un **k**.
+
+---
+
+## Ce que takta fait, et ne fait pas
+
+| Fait | Ne fait pas |
+|---|---|
+| Saisie au jour, au créneau ou à l'heure | Chronomètre, minuterie, pointage |
+| Prévisionnel adossé à l'engagement vendu | Facturation, devis, comptabilité |
+| CRA mensuel en PDF, signable | Portail client |
+| Verrouillage du mois validé | Modification rétroactive d'un mois signé |
+| Connecteurs Dolibarr, Google Agenda, signature | Rien d'obligatoire : tout est optionnel |
+
+---
 
 Une seule base de code, quatre cibles d'installation :
 
