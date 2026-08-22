@@ -41,6 +41,11 @@ export const VARIABLES_SECRETES = [
   'DOCUMENSO_API_KEY',
   'CRA_API_TOKEN',
   'SMTP_PASSWORD',
+  // Le mot de passe de la base, ajouté le 22 août avec la composition de
+  // production. `DATABASE_URL` figurait déjà ici et le contient en clair — mais
+  // la composition le passe aussi seul au service `db`, et un message d'erreur
+  // de démarrage peut le nommer sans nommer l'URL.
+  'POSTGRES_PASSWORD',
 ] as const
 
 // Le client OAuth Google n'y figure plus : il ne vit plus dans l'environnement
