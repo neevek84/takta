@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireUser } from '@/auth'
+import { requireUser, exigerAdministration } from '@/auth'
 import type { ConflictResolution } from '@/core/sync/policy'
 import { resolveConflict, type ResolveResult } from '@/services/sync/conflicts'
 import { drainProvidersForUser } from '@/services/sync/drain'
@@ -47,7 +47,7 @@ export async function rejouer(rowId: string): Promise<boolean> {
   // La session reste exigée — c'est le seul garde-fou tant que les rôles
   // n'existent pas. Mais la ligne n'est plus filtrée sur son propriétaire : la
   // file est de portée instance (arbitrage du 20 août 2026).
-  await requireUser()
+  await exigerAdministration()
   const r = await retrySyncRow(rowId)
   revalidatePath('/admin/sync')
   return r
@@ -61,7 +61,7 @@ export async function rejouer(rowId: string): Promise<boolean> {
  * cacherait. `SyncClient` porte l'explication à l'écran.
  */
 export async function deconnecterGoogle(): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
   await disconnectGoogle(user.id)
   revalidatePath('/admin/sync')
 }

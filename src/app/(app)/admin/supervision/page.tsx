@@ -1,5 +1,6 @@
 import Link from 'next/link'
-import { requireUser } from '@/auth'
+import { accesAdministration } from '@/auth'
+import { AccesRefuse } from '@/components/ui/AccesRefuse'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -26,7 +27,10 @@ export default async function SupervisionPage({
 }: {
   searchParams: Promise<{ action?: string; du?: string; au?: string; message?: string; tone?: string }>
 }) {
-  const user = await requireUser()
+  // Le verdict **avant** tout service : rien de ce que cette page allait
+  // lire n'est lu si l'accès est refusé.
+  const { autorise, user } = await accesAdministration()
+  if (!autorise) return <AccesRefuse role={user.role} />
   const filtres = await searchParams
 
   // La tonalité voyage avec le message. Une valeur forgée ou absente retombe

@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireUser } from '@/auth'
+import { requireUser, exigerAdministration } from '@/auth'
 import { updateThemeConfig, resetTheme, ThemeValidationError } from '@/services/theme'
 import { THEME_TOKEN_KEYS, type ThemeNature } from '@/core/theme/tokens'
 
@@ -22,7 +22,7 @@ export async function saveTheme(
   _prevState: SaveThemeState,
   formData: FormData,
 ): Promise<SaveThemeState> {
-  await requireUser()
+  await exigerAdministration()
 
   const brut = {
     mode: formData.get('mode'),
@@ -53,7 +53,7 @@ export async function saveTheme(
  */
 export async function restoreDefaultTheme(): Promise<Exclude<SaveThemeState, null>> {
   try {
-    await requireUser()
+    await exigerAdministration()
     await resetTheme()
   } catch (err) {
     if (err instanceof ThemeValidationError) return { ok: false, errors: err.errors }

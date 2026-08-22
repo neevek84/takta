@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireUser } from '@/auth'
+import { requireUser, exigerAdministration } from '@/auth'
 import { prisma } from '@/db/client'
 import {
   archiverClient,
@@ -14,7 +14,7 @@ import {
 export type DonneesState = { ok: true; message: string } | { ok: false; erreur: string } | null
 
 export async function rangerClient(clientId: string, archive: boolean): Promise<DonneesState> {
-  await requireUser()
+  await exigerAdministration()
   try {
     await archiverClient(clientId, archive)
     revalidatePath('/admin/donnees')
@@ -26,7 +26,7 @@ export async function rangerClient(clientId: string, archive: boolean): Promise<
 }
 
 export async function sortirMissionDeLArchive(missionId: string): Promise<DonneesState> {
-  await requireUser()
+  await exigerAdministration()
   try {
     await archiverMission(missionId, false)
     revalidatePath('/admin/donnees')
@@ -39,7 +39,7 @@ export async function sortirMissionDeLArchive(missionId: string): Promise<Donnee
 
 /** Ce que la suppression d'un client emporterait, ses missions comprises. */
 export async function chargerImpactClient(clientId: string): Promise<ImpactSuppression> {
-  await requireUser()
+  await exigerAdministration()
   return impactSuppressionClient(clientId)
 }
 
@@ -53,7 +53,7 @@ export async function detruireClient(
   clientId: string,
   confirmation: string,
 ): Promise<DonneesState> {
-  await requireUser()
+  await exigerAdministration()
 
   const client = await prisma.client.findUnique({
     where: { id: clientId },

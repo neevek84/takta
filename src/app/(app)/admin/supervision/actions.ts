@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireUser } from '@/auth'
+import { requireUser, exigerAdministration } from '@/auth'
 import { runJobNow, setJobEnabled } from '@/services/jobs/scheduler'
 import { resendDelivery } from '@/services/webhooks/delivery'
 
@@ -42,7 +42,7 @@ function tonaliteDuTravail(state: string): Tone {
 }
 
 export async function executerTravail(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
   const name = String(formData.get('name') ?? '')
 
   let message: string
@@ -61,7 +61,7 @@ export async function executerTravail(formData: FormData): Promise<void> {
 }
 
 export async function basculerTravail(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
   const name = String(formData.get('name') ?? '')
   // Une valeur autre que « 1 » vaut « non » : l'absence comme la valeur forgée.
   const enabled = formData.get('enabled') === '1'
@@ -83,7 +83,7 @@ export async function basculerTravail(formData: FormData): Promise<void> {
 
 /** Partagée par les deux écrans : un renvoi est un renvoi, deux copies divergeraient. */
 export async function renvoyerLivraison(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
   const id = String(formData.get('id') ?? '')
   const retour = retourAdmis(formData.get('retour'))
 

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireUser } from '@/auth'
+import { requireUser, exigerAdministration } from '@/auth'
 import { isAuditAction, type AuditAction } from '@/core/audit/events'
 import {
   createWebhook,
@@ -41,7 +41,7 @@ function etatDe(brut: unknown): WebhookState | null {
 }
 
 export async function creerAbonnement(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
 
   let message: string
   let tone: Tone
@@ -63,7 +63,7 @@ export async function creerAbonnement(formData: FormData): Promise<void> {
 }
 
 export async function modifierAbonnement(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
   const id = String(formData.get('id') ?? '')
   const etat = formData.has('state') ? etatDe(formData.get('state')) : undefined
 
@@ -104,7 +104,7 @@ export async function modifierAbonnement(formData: FormData): Promise<void> {
 }
 
 export async function supprimerAbonnement(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
   const id = String(formData.get('id') ?? '')
 
   let message: string
@@ -127,7 +127,7 @@ export async function supprimerAbonnement(formData: FormData): Promise<void> {
  * message : il doit donc dire la vérité, y compris quand elle déplaît.
  */
 export async function essayerAbonnement(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
   const id = String(formData.get('id') ?? '')
 
   let message: string

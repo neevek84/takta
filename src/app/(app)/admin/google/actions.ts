@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireUser } from '@/auth'
+import { requireUser, exigerAdministration } from '@/auth'
 import { validerClientOAuth } from '@/core/google/oauth-client'
 import { forgetGoogleOAuthClient, saveGoogleOAuthClient } from '@/services/google/oauth-client'
 
@@ -42,7 +42,7 @@ export async function enregistrerClientGoogle(
 ): Promise<ClientGoogleState> {
   // Avant toute lecture du formulaire : un refus détaillé rendu à un visiteur
   // non authentifié lui apprendrait déjà quelque chose.
-  await requireUser()
+  await exigerAdministration()
 
   const validation = validerClientOAuth({
     clientId: String(formData.get('clientId') ?? ''),
@@ -77,7 +77,7 @@ export async function enregistrerClientGoogle(
  * tant qu'aucun client n'est enregistré — et l'écran de synchronisation le dira.
  */
 export async function oublierClientGoogle(): Promise<void> {
-  await requireUser()
+  await exigerAdministration()
   await forgetGoogleOAuthClient()
   revalidatePath(CHEMIN)
 }

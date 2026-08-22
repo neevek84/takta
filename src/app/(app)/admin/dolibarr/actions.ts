@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireUser } from '@/auth'
+import { requireUser, exigerAdministration } from '@/auth'
 import { saveInstanceCredential, revokeInstanceCredential } from '@/services/credentials'
 import { baseApiDepuisInstance } from '@/core/dolibarr/url'
 import { DOLIBARR } from '@/services/dolibarr/api'
@@ -49,7 +49,7 @@ export async function connecterDolibarr(
   _prev: ConnexionState,
   formData: FormData,
 ): Promise<ConnexionState> {
-  await requireUser()
+  await exigerAdministration()
 
   const instanceUrl = String(formData.get('instanceUrl') ?? '').trim()
   const apiKey = String(formData.get('apiKey') ?? '').trim()
@@ -115,13 +115,13 @@ export async function connecterDolibarr(
  * `ExternalLink` survivent, et reconnecter la même instance les retrouve.
  */
 export async function deconnecterDolibarr(): Promise<void> {
-  await requireUser()
+  await exigerAdministration()
   await revokeInstanceCredential(DOLIBARR)
   revalidatePath(CHEMIN)
 }
 
 export async function rattacherTiers(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
   const dolibarrThirdpartyId = Number(formData.get('dolibarrId'))
   const clientId = String(formData.get('clientId') ?? '')
 
@@ -180,7 +180,7 @@ function resumeRattachement(r: {
 }
 
 export async function rattacherProjet(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
   const dolibarrProjectId = Number(formData.get('dolibarrId'))
   const projectRef = String(formData.get('ref') ?? '')
   const socidBrut = String(formData.get('socid') ?? '')
@@ -224,7 +224,7 @@ export async function rattacherProjet(formData: FormData): Promise<void> {
 }
 
 export async function detacher(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
 
   // Le type vient du formulaire, donc de l'extérieur : une valeur forgée
   // effacerait des correspondances d'une tout autre nature.
@@ -249,7 +249,7 @@ export async function detacher(formData: FormData): Promise<void> {
  * de Dolibarr passerait pour un succès.
  */
 export async function pousserClient(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
   const clientId = String(formData.get('clientId') ?? '')
 
   const api = await getDolibarrApi()
@@ -313,7 +313,7 @@ function resumeReprise(r: {
  * deux pour un succès.
  */
 export async function reprendreReglages(formData: FormData): Promise<void> {
-  const user = await requireUser()
+  const user = await exigerAdministration()
 
   const api = await getDolibarrApi()
   if (api === null) {

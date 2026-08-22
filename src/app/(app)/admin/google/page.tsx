@@ -1,5 +1,6 @@
 import { headers } from 'next/headers'
-import { requireUser } from '@/auth'
+import { accesAdministration } from '@/auth'
+import { AccesRefuse } from '@/components/ui/AccesRefuse'
 import { GOOGLE_CALLBACK_PATH, redirectUriPour } from '@/core/google/oauth-client'
 import { getGoogleOAuthClientView } from '@/services/google/oauth-client'
 import { Banner } from '@/components/ui/Banner'
@@ -21,7 +22,10 @@ export default async function AdminGooglePage({
 }: {
   searchParams: Promise<{ message?: string; tone?: string }>
 }) {
-  await requireUser()
+  // Le verdict **avant** tout service : rien de ce que cette page allait
+  // lire n'est lu si l'accès est refusé.
+  const { autorise, user } = await accesAdministration()
+  if (!autorise) return <AccesRefuse role={user.role} />
   const { message, tone } = await searchParams
   // Rien ne se fait passer pour une réussite : une tonalité absente ou forgée
   // retombe sur l'avertissement, jamais sur le succès.

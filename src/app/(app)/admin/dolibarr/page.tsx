@@ -1,4 +1,5 @@
-import { requireUser } from '@/auth'
+import { accesAdministration } from '@/auth'
+import { AccesRefuse } from '@/components/ui/AccesRefuse'
 import { getInstanceCredential } from '@/services/credentials'
 import { listClients } from '@/services/clients'
 import { listMissionsForUser } from '@/services/missions'
@@ -32,7 +33,10 @@ export default async function AdminDolibarrPage({
 }: {
   searchParams: Promise<{ message?: string; tone?: string }>
 }) {
-  const user = await requireUser()
+  // Le verdict **avant** tout service : rien de ce que cette page allait
+  // lire n'est lu si l'accès est refusé.
+  const { autorise, user } = await accesAdministration()
+  if (!autorise) return <AccesRefuse role={user.role} />
   const { message, tone } = await searchParams
   // Une tonalité forgée ou absente retombe sur « success » : c'est déjà le
   // comportement historique de ce canal, pour les messages qui ne portent pas

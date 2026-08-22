@@ -1,4 +1,5 @@
-import { requireUser } from '@/auth'
+import { accesAdministration } from '@/auth'
+import { AccesRefuse } from '@/components/ui/AccesRefuse'
 import { inventaire } from '@/services/archivage'
 import { PageShell } from '@/components/ui/PageShell'
 import { GestionDonnees } from './GestionDonnees'
@@ -11,7 +12,10 @@ import { GestionDonnees } from './GestionDonnees'
  * plus nulle part, par construction.
  */
 export default async function AdminDonneesPage() {
-  await requireUser()
+  // Le verdict **avant** tout service : rien de ce que cette page allait
+  // lire n'est lu si l'accès est refusé.
+  const { autorise, user } = await accesAdministration()
+  if (!autorise) return <AccesRefuse role={user.role} />
   const etat = await inventaire()
 
   return (

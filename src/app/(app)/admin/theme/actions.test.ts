@@ -13,7 +13,24 @@ const { requireUser, revalidatePath, updateThemeConfig, resetTheme } = vi.hoiste
   resetTheme: vi.fn(),
 }))
 
-vi.mock('@/auth', () => ({ requireUser }))
+vi.mock('@/auth', () => ({
+  requireUser,
+  // Les gardes de rôle s'appuient sur la même session, et **appliquent la vraie
+  // règle** : `peutAdministrer` est importée, pas recopiée. Un double qui
+  // laisserait passer un consultant ferait passer au vert une action sans
+  // garde — c'est arrivé, et c'est ce test-ci qui l'a dit.
+  exigerAdministration: async () => {
+    const u = await requireUser()
+    const { peutAdministrer, MOTIF_REFUS_ADMIN } = await import('@/core/auth/roles')
+    if (!peutAdministrer(u.role)) throw new Error(MOTIF_REFUS_ADMIN)
+    return u
+  },
+  accesAdministration: async () => {
+    const u = await requireUser()
+    const { peutAdministrer } = await import('@/core/auth/roles')
+    return { autorise: peutAdministrer(u.role), user: u }
+  },
+}))
 vi.mock('next/cache', () => ({ revalidatePath }))
 // `ThemeValidationError` reste la vraie classe : c'est elle que l'action
 // reconnaît par `instanceof`, la doubler ne prouverait rien.
@@ -155,3 +172,16 @@ describe('restoreDefaultTheme', () => {
     expect(revalidatePath).not.toHaveBeenCalled()
   })
 })
+
+describe('les actions exigent le rôle, pas seulement la session', () => {
+  // Une action serveur est un point d'entrée HTTP à part entière : elle est
+  // atteignable sans jamais avoir affiché l'écran qui la déclare. Garder la
+  // page ne garde donc rien.
+  it('refuse un consultant, sans rien écrire', async () => {
+    requireUser.mockResolvedValue({ id: 'u2', role: 'CONSULTANT' })
+
+    await expect(saveTheme(null, new FormData())).rejects.toThrow(/administrateurs/)
+    expect(updateThemeConfig).not.toHaveBeenCalled()
+  })
+})
+

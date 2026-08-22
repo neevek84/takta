@@ -1,5 +1,6 @@
 import Link from 'next/link'
-import { requireUser } from '@/auth'
+import { accesAdministration } from '@/auth'
+import { AccesRefuse } from '@/components/ui/AccesRefuse'
 import { Badge, type Tone } from '@/components/ui/Badge'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
@@ -35,7 +36,10 @@ export default async function WebhooksPage({
 }: {
   searchParams: Promise<{ message?: string; tone?: string }>
 }) {
-  const user = await requireUser()
+  // Le verdict **avant** tout service : rien de ce que cette page allait
+  // lire n'est lu si l'accès est refusé.
+  const { autorise, user } = await accesAdministration()
+  if (!autorise) return <AccesRefuse role={user.role} />
   const filtres = await searchParams
 
   // Une tonalité absente ou forgée retombe sur l'avertissement, jamais sur le

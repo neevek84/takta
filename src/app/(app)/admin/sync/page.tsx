@@ -1,6 +1,7 @@
 import { Banner } from '@/components/ui/Banner'
 import { PageShell } from '@/components/ui/PageShell'
 import { requireUser } from '@/auth'
+import { peutAdministrer } from '@/core/auth/roles'
 import { getConnectionState } from '@/services/google/connect'
 import { listOpenConflicts } from '@/services/sync/conflicts'
 import { listFailedSyncRows, listPendingSyncRows } from '@/services/sync/queue'
@@ -25,11 +26,21 @@ export default async function AdminSyncPage({
   // ne doit pouvoir se faire passer pour une réussite.
   const toneMessage = tone === 'success' ? 'success' : tone === 'danger' ? 'danger' : 'warning'
 
+  // **L'écran reste ouvert à tous, la file d'instance non.**
+  //
+  // Cet écran porte deux choses de portées différentes : les divergences et
+  // les échecs d'une personne — qui lui appartiennent —, et la file de
+  // l'instance, qui porte le travail de tout le monde. L'arbitrage du porteur
+  // du 20 août 2026 tient : « un CRA s'envoie par mission, pas par
+  // consultant », donc la file **n'est jamais refiltrée par utilisateur**.
+  // Elle est simplement montrée, ou pas.
+  const administre = peutAdministrer(user.role)
+
   const [connection, conflicts, failures, pending] = await Promise.all([
     getConnectionState(user.id),
     listOpenConflicts(user.id),
     listFailedSyncRows(user.id),
-    listPendingSyncRows(),
+    administre ? listPendingSyncRows() : Promise.resolve([]),
   ])
 
   return (

@@ -10,7 +10,24 @@ const { requireUser, revalidatePath, redirect, runJobNow, setJobEnabled, resendD
     resendDelivery: vi.fn(),
   }))
 
-vi.mock('@/auth', () => ({ requireUser }))
+vi.mock('@/auth', () => ({
+  requireUser,
+  // Les gardes de rôle s'appuient sur la même session, et **appliquent la vraie
+  // règle** : `peutAdministrer` est importée, pas recopiée. Un double qui
+  // laisserait passer un consultant ferait passer au vert une action sans
+  // garde — c'est arrivé, et c'est ce test-ci qui l'a dit.
+  exigerAdministration: async () => {
+    const u = await requireUser()
+    const { peutAdministrer, MOTIF_REFUS_ADMIN } = await import('@/core/auth/roles')
+    if (!peutAdministrer(u.role)) throw new Error(MOTIF_REFUS_ADMIN)
+    return u
+  },
+  accesAdministration: async () => {
+    const u = await requireUser()
+    const { peutAdministrer } = await import('@/core/auth/roles')
+    return { autorise: peutAdministrer(u.role), user: u }
+  },
+}))
 vi.mock('next/cache', () => ({ revalidatePath }))
 vi.mock('next/navigation', () => ({ redirect }))
 vi.mock('@/services/jobs/scheduler', () => ({ runJobNow, setJobEnabled }))

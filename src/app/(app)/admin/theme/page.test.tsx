@@ -14,7 +14,24 @@ const { requireUser, getThemeConfig } = vi.hoisted(() => ({
   getThemeConfig: vi.fn(),
 }))
 
-vi.mock('@/auth', () => ({ requireUser }))
+vi.mock('@/auth', () => ({
+  requireUser,
+  // Les gardes de rôle s'appuient sur la même session, et **appliquent la vraie
+  // règle** : `peutAdministrer` est importée, pas recopiée. Un double qui
+  // laisserait passer un consultant ferait passer au vert une action sans
+  // garde — c'est arrivé, et c'est ce test-ci qui l'a dit.
+  exigerAdministration: async () => {
+    const u = await requireUser()
+    const { peutAdministrer, MOTIF_REFUS_ADMIN } = await import('@/core/auth/roles')
+    if (!peutAdministrer(u.role)) throw new Error(MOTIF_REFUS_ADMIN)
+    return u
+  },
+  accesAdministration: async () => {
+    const u = await requireUser()
+    const { peutAdministrer } = await import('@/core/auth/roles')
+    return { autorise: peutAdministrer(u.role), user: u }
+  },
+}))
 // `validateThemeConfig` reste le vrai : c'est le service qui décide ce qui est
 // illisible, la page ne fait que rapporter son verdict.
 vi.mock('@/services/theme', async (importOriginal) => {
@@ -95,3 +112,29 @@ describe('page Administration · Thème', () => {
     expect(screen.getByRole('heading', { level: 1 }).className).toContain('text-2xl')
   })
 })
+
+describe('le rôle, et non la seule session', () => {
+  // Le contrôle structurel prouve que la garde est **appelée** ; celui-ci
+  // prouve qu'elle **refuse**. Sans lui, une garde qui rendrait toujours
+  // « autorisé » passerait les deux.
+  it('refuse un consultant, et ne lit rien de ce que la page allait lire', async () => {
+    requireUser.mockResolvedValue({ id: 'u2', role: 'CONSULTANT' })
+
+    render(await AdminThemePage())
+
+    expect(screen.getByText(/ne vous est pas ouvert/)).toBeTruthy()
+    expect(screen.getByText('CONSULTANT')).toBeTruthy()
+    // Rien de ce que la page allait lire n'a été lu : le refus vient avant.
+    expect(getThemeConfig).not.toHaveBeenCalled()
+  })
+
+  it('laisse passer un administrateur', async () => {
+    requireUser.mockResolvedValue({ id: 'u1', role: 'ADMIN' })
+
+    render(await AdminThemePage())
+
+    expect(screen.queryByText(/ne vous est pas ouvert/)).toBeNull()
+    expect(getThemeConfig).toHaveBeenCalled()
+  })
+})
+

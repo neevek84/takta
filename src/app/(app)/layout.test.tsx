@@ -5,7 +5,25 @@ import { existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 
 const { requireUser, signOut } = vi.hoisted(() => ({ requireUser: vi.fn(), signOut: vi.fn() }))
-vi.mock('@/auth', () => ({ requireUser, signOut }))
+vi.mock('@/auth', () => ({
+  requireUser,
+  signOut,
+  // Les gardes de rôle s'appuient sur la même session, et **appliquent la vraie
+  // règle** : `peutAdministrer` est importée, pas recopiée. Un double qui
+  // laisserait passer un consultant ferait passer au vert une action sans
+  // garde — c'est arrivé, et c'est ce test-ci qui l'a dit.
+  exigerAdministration: async () => {
+    const u = await requireUser()
+    const { peutAdministrer, MOTIF_REFUS_ADMIN } = await import('@/core/auth/roles')
+    if (!peutAdministrer(u.role)) throw new Error(MOTIF_REFUS_ADMIN)
+    return u
+  },
+  accesAdministration: async () => {
+    const u = await requireUser()
+    const { peutAdministrer } = await import('@/core/auth/roles')
+    return { autorise: peutAdministrer(u.role), user: u }
+  },
+}))
 
 // Depuis le lot 1g, le layout pose un rail client qui lit la route courante
 // pour marquer la page active. Hors de Next, le contexte de routeur n'existe

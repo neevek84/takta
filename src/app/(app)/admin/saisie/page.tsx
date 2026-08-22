@@ -1,4 +1,5 @@
-import { requireUser } from '@/auth'
+import { accesAdministration } from '@/auth'
+import { AccesRefuse } from '@/components/ui/AccesRefuse'
 import { getSettings } from '@/services/settings'
 import { previewRecalibration } from '@/services/rates'
 import { reloadHolidays } from './actions'
@@ -8,7 +9,10 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 
 export default async function AdminSaisiePage() {
-  const user = await requireUser()
+  // Le verdict **avant** tout service : rien de ce que cette page allait
+  // lire n'est lu si l'accès est refusé.
+  const { autorise, user } = await accesAdministration()
+  if (!autorise) return <AccesRefuse role={user.role} />
   const s = await getSettings()
   const preview = await previewRecalibration(user.id)
 

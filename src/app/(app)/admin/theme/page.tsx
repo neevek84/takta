@@ -1,10 +1,14 @@
-import { requireUser } from '@/auth'
+import { accesAdministration } from '@/auth'
+import { AccesRefuse } from '@/components/ui/AccesRefuse'
 import { getThemeConfig, validateThemeConfig } from '@/services/theme'
 import { PageShell } from '@/components/ui/PageShell'
 import { ThemeForm } from './ThemeForm'
 
 export default async function AdminThemePage() {
-  await requireUser()
+  // Le verdict **avant** tout service : rien de ce que cette page allait
+  // lire n'est lu si l'accès est refusé.
+  const { autorise, user } = await accesAdministration()
+  if (!autorise) return <AccesRefuse role={user.role} />
   const config = await getThemeConfig()
 
   // `getThemeConfig` répare la forme, jamais le contraste : une palette écrite

@@ -22,6 +22,22 @@ model User {
   conflicts   SyncConflict[]
   links       ExternalLink[]
   webhooks    Webhook[]
+  passwordResets PasswordReset[]
+}
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  /// empreinte SHA-256 du jeton — jamais le jeton lui-même
+  tokenHash String    @unique
+  expiresAt DateTime
+  /// date de consommation ; null tant que le lien n'a pas servi
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Client {
