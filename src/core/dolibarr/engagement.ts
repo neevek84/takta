@@ -26,6 +26,31 @@ export function libelleEngagement(source: EngagementSource): string {
 }
 
 /**
+ * Les mêmes sources, telles qu'un menu déroulant les propose.
+ *
+ * **Pourquoi une seconde table, et pourquoi ici.** Les deux registres diffèrent
+ * pour de bon : `libelleEngagement` s'insère dans une phrase — « Engagement :
+ * saisi ici » — quand un choix de menu se lit seul et prend la majuscule. Ce
+ * qui ne doit pas différer, c'est l'endroit où on les tient. Une table de
+ * libellés recopiée dans un écran a déjà produit le défaut que ce module
+ * existe pour empêcher : posée dans le formulaire des réglages en
+ * `Record<string, string>`, elle a survécu à l'arrivée de la commande sans que
+ * le typage bronche, et le menu affichait **une ligne vide** — sélectionnable,
+ * et sans rien dire de ce qu'elle engageait.
+ */
+const LIBELLES_CHOIX: Record<EngagementSource, string> = {
+  MANUEL: 'Manuel',
+  DOLIBARR_PROPALE: 'Propale Dolibarr',
+  DOLIBARR_COMMANDE: 'Commande Dolibarr',
+  DOLIBARR_PROJET: 'Projet Dolibarr',
+}
+
+/** La source telle qu'un menu déroulant la propose. */
+export function libelleChoixEngagement(source: EngagementSource): string {
+  return LIBELLES_CHOIX[source]
+}
+
+/**
  * Les sources dont Dolibarr reste maître : jours vendus et TJM ne se modifient
  * pas ici.
  *

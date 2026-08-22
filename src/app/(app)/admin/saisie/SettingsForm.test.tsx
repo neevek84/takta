@@ -82,3 +82,25 @@ describe('SettingsForm — plage journée', () => {
     }).toEqual({ debut: '09:00', fin: '18:00' })
   })
 })
+
+describe('le menu des sources d’engagement', () => {
+  // Le menu proposait **quatre** lignes dont une vide : la table de libellés
+  // vivait dans cet écran en `Record<string, string>`, et l'arrivée de la
+  // commande n'y avait rien ajouté. Le typage ne bronchait pas, l'écran
+  // affichait un trou — sélectionnable, et muet sur ce qu'il engageait.
+  it('nomme les quatre sources, sans ligne vide', () => {
+    rendre()
+
+    const menu = screen.getByLabelText('Source') as HTMLSelectElement
+    const libelles = [...menu.options].map((o) => o.textContent?.trim() ?? '')
+
+    expect(libelles).toEqual([
+      'Manuel',
+      'Propale Dolibarr',
+      'Commande Dolibarr',
+      'Projet Dolibarr',
+    ])
+    expect(libelles.every((l) => l !== '')).toBe(true)
+  })
+})
+

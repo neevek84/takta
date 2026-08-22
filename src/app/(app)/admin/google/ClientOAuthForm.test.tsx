@@ -143,3 +143,24 @@ describe("l'état de la configuration se lit en toutes lettres", () => {
     expect(document.body.textContent).toContain('2026-04-02')
   })
 })
+
+describe('le renvoi vers la connexion', () => {
+  // Le porteur a cherché sur cet écran un bouton qui n'y est pas : celui-ci
+  // enregistre le client OAuth de l'instance, la connexion d'un compte se fait
+  // dans Synchro. La séparation a sa raison ; l'absence de panneau, non.
+  it('dit où connecter un compte, une fois le client enregistré', () => {
+    rendre({ clientId: '123.apps.googleusercontent.com', configure: true })
+
+    const lien = screen.getByRole('link', { name: /Synchro/ })
+    expect(lien.getAttribute('href')).toBe('/admin/sync')
+  })
+
+  // Sans client, il n'y a rien à connecter : renvoyer vers Synchro ferait
+  // tourner en rond.
+  it('ne renvoie nulle part tant qu aucun client n est enregistré', () => {
+    rendre({ configure: false })
+
+    expect(screen.queryByRole('link', { name: /Synchro/ })).toBeNull()
+  })
+})
+
