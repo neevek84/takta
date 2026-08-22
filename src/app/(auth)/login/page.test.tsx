@@ -71,6 +71,43 @@ describe('le premier démarrage', () => {
 
 
 /**
+ * **La seconde porte du mot de passe.**
+ *
+ * Ce parcours ne sert pas que l'oubli : c'est par lui qu'un compte né *sans*
+ * mot de passe — reprise Dolibarr, connexion Google — s'en donne un. Sans ce
+ * lien, l'écran de connexion serait le seul endroit d'où l'on peut partir, et
+ * il n'y mènerait pas.
+ */
+describe('le lien vers la définition du mot de passe', () => {
+  it('mène à /mot-de-passe, et dit « définir » autant que « réinitialiser »', async () => {
+    render(await LoginPage({ searchParams: Promise.resolve({}) }))
+
+    const lien = screen.getByRole('link', { name: /Définir ou réinitialiser mon mot de passe/ })
+    expect(lien.getAttribute('href')).toBe('/mot-de-passe')
+  })
+
+  // Le pied de page ne porte que la version, et disparaît quand elle manque
+  // (voir plus bas). Y loger le lien le ferait disparaître avec elle.
+  it('ne se loge pas dans le pied de page, qui n’est pas toujours là', async () => {
+    const { container } = render(await LoginPage({ searchParams: Promise.resolve({}) }))
+
+    const lien = screen.getByRole('link', { name: /Définir ou réinitialiser/ })
+    expect(lien.closest('footer')).toBeNull()
+    expect(container.querySelector('footer')?.textContent ?? '').not.toContain('Définir')
+  })
+
+  // Sur une instance vide, il n'y a aucun compte à qui envoyer quoi que ce
+  // soit : proposer le lien serait proposer une impasse.
+  it('ne paraît pas au premier démarrage, où aucun compte n’existe', async () => {
+    aucunUtilisateur.mockResolvedValue(true)
+
+    render(await LoginPage({ searchParams: Promise.resolve({}) }))
+
+    expect(screen.queryByRole('link', { name: /Définir ou réinitialiser/ })).toBeNull()
+  })
+})
+
+/**
  * **Le seul écran qui puisse dire la version à qui n'est pas encore entré.**
  *
  * Container Manager n'affiche que l'identifiant *local* de l'image, qui ne

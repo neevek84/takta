@@ -10,8 +10,16 @@ export const authConfig = {
   providers: [],
   callbacks: {
     authorized({ auth: session, request }) {
-      const isLogin = request.nextUrl.pathname.startsWith('/login')
-      if (isLogin) return true
+      // Les deux seuls chemins ouverts sans session, et le second n'est pas
+      // une commodité : le parcours du mot de passe s'adresse par
+      // construction à qui ne peut PAS se connecter — celui qui a oublié le
+      // sien, et celui qui n'en a jamais eu (reprise Dolibarr, Google).
+      // Exiger une session y renverrait le porteur d'un lien valide vers la
+      // porte qu'il ne sait justement pas ouvrir. Le jeton est le
+      // laissez-passer : dix minutes, empreinte seule en base, consommé une
+      // fois.
+      const chemin = request.nextUrl.pathname
+      if (chemin.startsWith('/login') || chemin.startsWith('/mot-de-passe')) return true
       return Boolean(session?.user)
     },
     jwt({ token, user }) {

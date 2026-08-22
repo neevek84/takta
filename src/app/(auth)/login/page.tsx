@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -50,6 +51,19 @@ export default async function LoginPage({
           </Button>
         </form>
       </Card>
+      )}
+      {/* Hors du pied de page, qui ne porte que la version et disparaît avec
+          elle. Absent au premier démarrage : sans aucun compte en base, ce
+          lien ne mène qu'à un envoi qui n'aura pas lieu.
+          C'est la seconde porte du mot de passe — celle par laquelle un compte
+          né sans empreinte (reprise Dolibarr, connexion Google) s'en donne
+          une, et pas seulement celle de l'oubli. */}
+      {!premierDemarrage && (
+        <p className="mt-4 text-sm">
+          <Link href="/mot-de-passe" className="text-link underline">
+            Définir ou réinitialiser mon mot de passe
+          </Link>
+        </p>
       )}
       {/* La navigation porte déjà ce numéro, mais elle est derrière la porte.
           Ici, il est lisible sans entrer : c'est ce qui permet de vérifier
