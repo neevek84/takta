@@ -33,11 +33,14 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
-/** Ouvre le volet et attend que les tâches soient là. */
+/**
+ * Ouvre le volet et attend que la transition soit **retombée** — pas seulement
+ * que le texte apparaisse. Voir le commentaire jumeau dans `RepriseTemps.test`.
+ */
 async function ouvrir() {
   render(<RepriseTaches missionId="m1" />)
   fireEvent.click(screen.getByRole('button', { name: /Reprendre les tâches/ }))
-  await screen.findByText('Cadrage')
+  await screen.findByRole('button', { name: 'Appliquer' })
 }
 
 describe('RepriseTaches', () => {

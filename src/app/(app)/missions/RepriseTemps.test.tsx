@@ -33,10 +33,19 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
+/**
+ * Ouvre le volet et attend que la transition soit **retombée**.
+ *
+ * Attendre un texte ne suffit pas : `useTransition` pose l'état dans un commit
+ * et éteint `isPending` dans le suivant. Entre les deux, le paragraphe est là
+ * mais le bouton porte encore « Reprise en cours… » — et un test qui le
+ * cherche par son libellé de repos échoue une fois sur dix. C'est ce qui a
+ * rendu la suite intermittente les 21 et 22 août.
+ */
 async function ouvrir() {
   render(<RepriseTemps missionId="m1" />)
   fireEvent.click(screen.getByRole('button', { name: /Reprendre les temps déjà saisis/ }))
-  await screen.findByText(/Reprise jusqu’au/)
+  await screen.findByRole('button', { name: /^Reprendre \d+ temps$/ })
 }
 
 describe('RepriseTemps', () => {

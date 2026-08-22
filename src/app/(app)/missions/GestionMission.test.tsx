@@ -29,10 +29,14 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
+/**
+ * Ouvre le volet et attend que la transition soit **retombée**. Voir le
+ * commentaire jumeau dans `RepriseTemps.test`.
+ */
 async function ouvrir(dansDolibarr = true) {
   render(<GestionMission missionId="m1" label="VALID connecteur" dansDolibarr={dansDolibarr} />)
   fireEvent.click(screen.getByRole('button', { name: /Détacher, archiver ou supprimer/ }))
-  await screen.findByText(/Suppression définitive/)
+  await screen.findByRole('button', { name: /Supprimer définitivement/ })
 }
 
 describe('GestionMission', () => {
