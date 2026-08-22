@@ -57,5 +57,10 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neevek84/takta.git"
+  },
+  "homepage": "https://github.com/neevek84/takta"
 }

@@ -14,6 +14,7 @@ import {
   type Icone,
 } from '@/components/ui/icons'
 import { cn } from '@/lib/cn'
+import { LICENCE, SOURCE_URL } from '@/core/identite'
 
 /**
  * Les quatre écrans du travail quotidien. Ce sont eux, et eux seuls, qui
@@ -241,6 +242,28 @@ export function NavRail({ onSignOut }: { onSignOut: () => Promise<void> }) {
               Se déconnecter
             </Button>
           </form>
+
+          {/*
+            **Article 13 de l'AGPL**, et non un lien de courtoisie. La licence
+            oblige quiconque met une version modifiée à disposition *par un
+            réseau* à offrir sa source aux utilisateurs qui l'atteignent. Il est
+            donc dans la navigation, présent sur chaque écran de l'application,
+            et non dans une page « à propos » qu'il faudrait trouver.
+
+            `rel="noreferrer"` : une cible externe ne recevra pas l'adresse de
+            l'installation d'où l'on vient — celle-ci est souvent privée.
+          */}
+          <p className="mt-2 border-t border-rule pt-2 text-xs text-muted">
+            <a
+              href={SOURCE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="text-link underline"
+            >
+              Code source
+            </a>{' '}
+            · {LICENCE}
+          </p>
         </div>
       </nav>
     </div>

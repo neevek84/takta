@@ -15,6 +15,7 @@ const routeur = vi.hoisted(() => ({ route: '/saisie/2026-08' }))
 vi.mock('next/navigation', () => ({ usePathname: () => routeur.route }))
 
 import { NavRail, RAIL_MEDIA, estActif } from './NavRail'
+import { LICENCE, SOURCE_URL } from '@/core/identite'
 
 afterEach(() => {
   cleanup()
@@ -382,3 +383,32 @@ describe('barre basse — le budget de 375 points', () => {
     expect(largeurReglages).toBeGreaterThanOrEqual(CIBLE)
   })
 })
+
+describe("l'offre de code source, exigée par l'AGPL", () => {
+  // L'article 13 vise les utilisateurs qui atteignent le logiciel **par un
+  // réseau** : l'offre doit donc leur être visible depuis l'application, et non
+  // rangée dans une page qu'il faudrait chercher. La navigation est présente
+  // sur chaque écran — c'est le seul endroit qui le garantisse.
+  it('est présente dans la navigation, et pointe vers une adresse absolue', () => {
+    render(<NavRail onSignOut={rien} />)
+
+    const lien = screen.getByRole('link', { name: /Code source/ })
+    expect(lien.getAttribute('href')).toBe(SOURCE_URL)
+    expect(SOURCE_URL.startsWith('https://')).toBe(true)
+  })
+
+  // L'adresse de l'installation d'où l'on vient est souvent privée : elle n'a
+  // pas à voyager vers une cible externe.
+  it("ne divulgue pas l'adresse de l'installation à la cible", () => {
+    render(<NavRail onSignOut={rien} />)
+
+    const lien = screen.getByRole('link', { name: /Code source/ })
+    expect(lien.getAttribute('rel')).toContain('noreferrer')
+  })
+
+  it('annonce la licence à côté', () => {
+    render(<NavRail onSignOut={rien} />)
+    expect(screen.getByText(new RegExp(LICENCE))).toBeTruthy()
+  })
+})
+
