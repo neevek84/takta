@@ -1,6 +1,9 @@
 # État du projet CRA
 
-**Dernière mise à jour :** 2026-08-16
+**Dernière mise à jour :** 2026-08-16 — **périmée**.
+**Point d'avancement à jour : [AVANCEMENT-2026-08-22.md](AVANCEMENT-2026-08-22.md)**, confronté au code.
+Les sections 1 à 3 et 6 à 7 ci-dessous restent valables ; les sections 4 et 5
+(état du code, ce qui reste) ne le sont plus.
 **À lire en premier** par quiconque reprend ce projet — humain ou agent.
 
 ---
