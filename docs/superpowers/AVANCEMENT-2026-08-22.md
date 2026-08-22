@@ -112,7 +112,9 @@ Ce qui reste à décider pour une cible Synology :
 
 - **`tick` sert le compte le plus ancien.** Provision multi-consultants
   incomplète.
-- **Un échec de test intermittent**, vu une fois le 21 août, jamais reproduit en
-  cinq exécutions. Non expliqué, donc non clos.
+- ~~Un échec de test intermittent~~ — **clos le 22 août.** Trois assistants de
+  test attendaient un texte puis interrogeaient un bouton par son libellé de
+  repos, alors que `useTransition` n'avait pas encore éteint `isPending`.
+  Mesuré : 2 échecs sur 25 avec l'ancienne attente, 0 sur 25 avec la nouvelle.
 - **Aucune rotation de clé de chiffrement.**
 - **Le glissement au doigt** n'a jamais été essayé sur un téléphone réel.
