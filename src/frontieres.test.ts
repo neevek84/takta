@@ -123,3 +123,67 @@ describe('frontière client / serveur', () => {
     expect(clients.length).toBeGreaterThan(5)
   })
 })
+
+/**
+ * Une directive placée ailleurs qu'en tête ne dit rien, et **ne casse que la
+ * construction**.
+ *
+ * `next build` refuse par « The "use server" directive must be at the top of the
+ * file ». Ni `tsc` ni la suite ne le voient : le module compile parfaitement, et
+ * les tests qui l'emploient le simulent. Le défaut ne se manifeste donc qu'au
+ * bout de la chaîne — pour nous, dans une construction d'image qui a échoué
+ * après avoir été étiquetée.
+ *
+ * Mesuré le 22 août 2026 sur `src/app/(auth)/login/actions.ts`, où un import
+ * avait été ajouté **au-dessus** du `'use server'`.
+ */
+describe('les directives de frontière sont en tête de fichier', () => {
+  /**
+   * La directive de **portée module** est-elle ailleurs qu'en tête ?
+   *
+   * Seule celle-là est concernée : `'use server'` **indenté**, à l'intérieur
+   * d'une fonction, déclare une action en ligne et se place où il veut —
+   * `src/app/(app)/layout.tsx` en porte une, légitimement.
+   */
+  function directiveMalPlacee(contenu: string, directive: string): boolean {
+    const lignes = contenu.split('\n')
+    const auModule = lignes.findIndex((l) => new RegExp(`^['"]${directive}['"]`).test(l))
+    if (auModule === -1) return false
+
+    // La première instruction du fichier, commentaires et lignes vides exclus.
+    let premiere = 0
+    let dansBloc = false
+    for (; premiere < lignes.length; premiere++) {
+      const l = (lignes[premiere] ?? '').trim()
+      if (dansBloc) {
+        if (l.includes('*/')) dansBloc = false
+        continue
+      }
+      if (l === '' || l.startsWith('//')) continue
+      if (l.startsWith('/*')) {
+        if (!l.includes('*/')) dansBloc = true
+        continue
+      }
+      break
+    }
+
+    return auModule !== premiere
+  }
+
+  it.each(['use server', 'use client'])('« %s » n est jamais précédé de code', (directive) => {
+    const coupables: string[] = []
+
+    for (const chemin of FICHIERS) {
+      const contenu = readFileSync(chemin, 'utf8')
+      if (directiveMalPlacee(contenu, directive)) {
+        coupables.push(relative(RACINE, chemin))
+      }
+    }
+
+    expect(
+      coupables,
+      `${coupables.join(', ')} : la directive « ${directive} » doit être la première instruction`,
+    ).toEqual([])
+  })
+})
+

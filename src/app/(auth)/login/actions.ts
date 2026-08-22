@@ -1,7 +1,7 @@
-import { creerPremierAdministrateur } from '@/services/auth/comptes'
 'use server'
 
 import { redirect } from 'next/navigation'
+import { creerPremierAdministrateur } from '@/services/auth/comptes'
 // Import ciblé sur `@auth/core/errors` plutôt que sur `next-auth` : ce
 // dernier réexporte la même classe mais son point d'entrée charge aussi la
 // configuration `NextAuth()` complète (dont `next/server`), que Vitest ne
