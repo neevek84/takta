@@ -12,6 +12,7 @@ import {
   type DolibarrTimeSpent,
   type DolibarrUser,
 } from './api'
+import { texteDepuisHtml } from '@/core/texte/depuis-html'
 
 const DELAI_PAR_DEFAUT_MS = 15_000
 
@@ -213,6 +214,18 @@ function jourDepuisDolibarr(valeur: unknown): string | null {
 }
 
 /**
+ * Tout texte libre venu de Dolibarr, rendu lisible **ici**, à la frontière.
+ *
+ * Ses descriptions passent par un éditeur riche : ce que l'API rend n'est pas
+ * du texte, c'est du HTML. Nettoyer plus loin obligerait à le refaire à chaque
+ * écran, et l'oubli d'un seul suffirait — le libellé repart aussi dans le nom
+ * de la tâche créée chez Dolibarr, et dans le PDF envoyé au client.
+ */
+function texte(valeur: unknown): string {
+  return texteDepuisHtml(String(valeur ?? ''))
+}
+
+/**
  * Les lignes d'un document vendeur, propale ou commande : Dolibarr les rend
  * sous la même forme, et les deux se reprennent avec la même règle.
  */
@@ -220,7 +233,7 @@ function lignesVendues(brut: Record<string, unknown>): DolibarrPropalLine[] {
   const lignes = (brut.lines ?? []) as Array<Record<string, unknown>>
   return lignes.map((l) => ({
     id: Number(l.id),
-    label: String(l.desc ?? l.libelle ?? l.product_label ?? ''),
+    label: texte(l.desc ?? l.libelle ?? l.product_label),
     qty: Number(l.qty),
     subpriceCents: Math.round(Number(l.subprice) * 100),
     service: Number(l.product_type) === 1,
@@ -320,7 +333,7 @@ function versCommande(brut: Record<string, unknown>): DolibarrOrder {
     // certaines versions, et les deux arrivent parfois côte à côte.
     refClient: String(brut.ref_client ?? brut.ref_customer ?? ''),
     socid: Number(brut.socid),
-    label: String(brut.label ?? brut.libelle ?? ''),
+    label: texte(brut.label ?? brut.libelle),
     projectId: nombreOuNull(brut.fk_project ?? brut.fk_projet),
     lines: lignesVendues(brut),
   }
@@ -365,7 +378,7 @@ export function createHttpDolibarrApi(args: {
       // qui n'a aucun sens.
       return brut
         .filter((t) => estClient(t.client))
-        .map((t) => ({ id: Number(t.id), name: String(t.name ?? '') }))
+        .map((t) => ({ id: Number(t.id), name: texte(t.name) }))
     },
 
     async createThirdparty(name: string): Promise<DolibarrThirdparty> {
@@ -386,7 +399,7 @@ export function createHttpDolibarrApi(args: {
         .map((p) => ({
           id: Number(p.id),
           ref: String(p.ref ?? ''),
-          title: String(p.title ?? ''),
+          title: texte(p.title),
           socid: nombreOuNull(p.socid),
         }))
     },
@@ -396,7 +409,7 @@ export function createHttpDolibarrApi(args: {
       return brut.map((t) => ({
         id: Number(t.id),
         ref: String(t.ref ?? ''),
-        label: String(t.label ?? ''),
+        label: texte(t.label),
         projectId,
         plannedWorkloadSeconds: chargeOuNull(t.planned_workload),
       }))
@@ -413,7 +426,7 @@ export function createHttpDolibarrApi(args: {
       return {
         id: Number(brut.id),
         ref: String(brut.ref ?? ''),
-        label: String(brut.label ?? ''),
+        label: texte(brut.label),
         projectId: Number(brut.fk_project ?? brut.fk_projet ?? 0),
         plannedWorkloadSeconds: chargeOuNull(brut.planned_workload),
       }
@@ -496,7 +509,7 @@ export function createHttpDolibarrApi(args: {
       return {
         id: projectId,
         ref: String(cree.ref ?? ''),
-        title: String(cree.title ?? a.title),
+        title: texte(cree.title ?? a.title),
         socid: nombreOuNull(cree.socid),
       }
     },

@@ -965,3 +965,52 @@ describe("la date d'un temps passé", () => {
     }
   })
 })
+
+/**
+ * **Ce que Dolibarr rend n'est pas du texte.** Ses descriptions passent par un
+ * éditeur riche : l'API rend du HTML. Repris tel quel, un libellé de prestation
+ * arrive `Déploiement FreshService.&nbsp;` — à l'écran, dans le nom de la tâche
+ * créée là-bas, et jusque dans le PDF envoyé au client. Constaté par le porteur
+ * le 22 août 2026 en reprenant une commande réelle.
+ *
+ * Le nettoyage se fait **ici**, à la frontière : plus loin, il faudrait le
+ * refaire à chaque écran, et l'oubli d'un seul suffirait.
+ */
+describe('le texte venu de Dolibarr entre déjà lisible', () => {
+  it('nettoie le libellé des lignes vendues', async () => {
+    const { fetchImpl } = espion(() =>
+      reponse({
+        id: 9,
+        ref: 'CO2605-0030',
+        socid: '3',
+        lines: [
+          {
+            id: 1,
+            desc: 'Déploiement FreshService.&nbsp;',
+            qty: '10',
+            subprice: '800',
+            product_type: '1',
+          },
+          { id: 2, desc: '<p>Audit</p><p>Reprise</p>', qty: '1', subprice: '50', product_type: '1' },
+        ],
+      }),
+    )
+    const api = createHttpDolibarrApi({ baseUrl: BASE, apiKey: 'k', fetchImpl })
+
+    const commande = await api.getOrder(9)
+
+    expect(commande.lines.map((l) => l.label)).toEqual(['Déploiement FreshService.', 'Audit Reprise'])
+  })
+
+  it('nettoie le libellé de la commande et celui des tâches', async () => {
+    const { fetchImpl } = espion((vue) =>
+      vue.url.includes('/tasks')
+        ? reponse([{ id: 4, ref: 'T1', label: 'Recette&nbsp;client' }])
+        : reponse({ id: 9, ref: 'CO1', socid: '3', label: 'Lot&nbsp;1', lines: [] }),
+    )
+    const api = createHttpDolibarrApi({ baseUrl: BASE, apiKey: 'k', fetchImpl })
+
+    expect((await api.getOrder(9)).label).toBe('Lot 1')
+    expect((await api.listTasks(3)).map((t) => t.label)).toEqual(['Recette client'])
+  })
+})
