@@ -50,6 +50,7 @@ Poser le bon rôle maintenant évite d'avoir à rattraper des comptes plus tard.
 | Durée d'un lien de réinitialisation | **10 minutes**, usage unique. |
 | Création automatique alors que les rôles ne mordent pas | **Assumée**, et le lot des rôles — spécifié le 19 août — est **enchaîné immédiatement après** celui-ci. La fenêtre d'exposition dure le temps des deux lots, pendant lesquels le porteur est seul sur l'instance. |
 | Désactiver un compte sans le détruire | **Avec le lot des rôles**, pas ici : c'est une question de droits. |
+| Le premier compte d'une instance neuve | **Un écran de premier démarrage**, visible uniquement tant qu'aucun utilisateur n'existe. |
 
 ## L'architecture, et les deux voies écartées
 
@@ -103,7 +104,50 @@ dans `src/` qui ne dise pas explicitement son rôle — à la manière de
 `src/frontieres.test.ts` et de `src/db/gitignore.test.ts`. Corriger les deux
 chemins connus laisserait le troisième répéter le défaut.
 
+## Le premier compte, et le cercle qu'il ferme
+
+**Le trou trouvé en écrivant cette spec.** `hashPassword` n'a **aucun appelant**
+dans le dépôt : ni script, ni commande, ni écran. Il n'existe donc aucun moyen
+supporté de créer le premier compte d'une instance neuve. L'application est faite
+pour être auto-hébergée ; telle quelle, une installation fraîche est murée.
+
+**Et ce lot rendrait le problème circulaire s'il ne le traitait pas** : pour
+entrer par Google il faut un client OAuth enregistré ; pour l'enregistrer il faut
+être connecté ; pour se connecter il faut un compte ; pour créer un compte, rien.
+La réinitialisation par courriel ne débloque pas non plus — elle **définit** un
+mot de passe sur un compte existant, elle n'en crée pas.
+
+**L'écran de premier démarrage.** Quand la table des utilisateurs est **vide**,
+`/login` propose de créer le premier administrateur : adresse, nom, mot de passe.
+Dès qu'un compte existe, l'écran redevient le formulaire de connexion, et le
+chemin de création disparaît.
+
+**Pourquoi ça n'ajoute pas de surface d'attaque.** La condition « zéro
+utilisateur » ne se reproduit jamais d'elle-même : elle est vraie une fois, à
+l'installation, et fausse pour toujours ensuite. Rouvrir la fenêtre exigerait de
+supprimer tous les comptes — ce qu'aucun écran ne permet.
+
+**Le compte ainsi créé est `ADMIN`, explicitement.** C'est le seul endroit où un
+humain décide du rôle du premier compte, et c'est bien un administrateur qu'il
+faut : lui seul pourra ensuite configurer Dolibarr et Google. Le contrôle qui
+refuse les `prisma.user.create` muets sur leur rôle est donc satisfait ici comme
+ailleurs.
+
+**Une garde contre la course.** La vérification « aucun utilisateur » est refaite
+**dans la transaction** de création. Deux requêtes simultanées sur une base neuve
+ne peuvent pas produire deux administrateurs.
+
+**Un effet de bord bienvenu** : `hashPassword` cesse d'être du code mort. Cet
+écran et la réinitialisation par courriel sont ses deux premiers appelants.
+
 ## Les deux portes
+
+**Aucune des deux portes ne s'inscrit.** L'écran de connexion ne propose pas de
+créer un compte : il ne fait que `signIn('credentials')`. La création automatique
+est donc le fait de **Google seul**, et Google ne laisse passer que le domaine
+Workspace de l'hébergeur. C'est cette asymétrie qui borne l'exposition décrite
+plus bas : personne, depuis Internet, ne peut déclencher la naissance d'un
+compte.
 
 L'écran de connexion porte le formulaire actuel **et** un bouton Google. Le
 fournisseur Google s'ajoute dans `src/auth.ts`, au côté de `Credentials` — jamais
