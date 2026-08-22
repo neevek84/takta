@@ -65,7 +65,7 @@ beforeEach(async () => {
       emetteurNom: 'KREATIV PROJECT MANAGEMENT',
       emetteurAdresse: '1 rue des Tests, 75000 Paris',
       emetteurSiret: '000 000 000 00000',
-      emetteurEmail: 'contact@kreativpm.fr',
+      emetteurEmail: 'contact@exemple.test',
     },
   })
   craId = (await getOrCreateCra(userId, missionId, '2026-06')).id

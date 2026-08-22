@@ -12,7 +12,7 @@ const EMETTEUR = {
   nom: 'KREATIV PROJECT MANAGEMENT',
   adresse: '1 rue des Tests, 75000 Paris',
   siret: '000 000 000 00000',
-  email: 'contact@kreativpm.fr',
+  email: 'contact@exemple.test',
 }
 
 function saisie(

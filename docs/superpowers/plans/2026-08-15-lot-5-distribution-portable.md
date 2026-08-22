@@ -2380,8 +2380,8 @@ Cette tâche n'écrit presque pas de code : elle **exerce** ce qui a été const
 Trois variables et une fonction tiennent toute la recette ; les reposer au début de chaque terminal :
 
 ```bash
-DEPOT=$(git rev-parse --show-toplevel)
-BAC=$(mktemp -d)/recette
+DEPOT="$(git rev-parse --show-toplevel)"
+BAC="$(mktemp -d)/recette"
 ARCHIVE="$DEPOT/distribution/cra-1.0.0-macos-apple-silicon.zip"
 
 # Interroge une base avec le client Prisma EMBARQUE dans l'archive, jamais celui
@@ -2569,7 +2569,7 @@ Expected: l'attribut est posé, puis absent après `./demarrer.sh`, et le démar
 - [ ] **Step 11: Nettoyer le bac de recette**
 
 ```bash
-rm -rf $(mktemp -d)/recette
+rm -rf "$BAC"
 ```
 
 - [ ] **Step 12: Écrire la section « Poste local, archive portable » du README**

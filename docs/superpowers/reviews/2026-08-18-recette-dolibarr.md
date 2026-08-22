@@ -8,7 +8,7 @@ Application : `npm run dev`, http://localhost:3000, base `prisma/dev.db`.
 | Point | Valeur |
 | --- | --- |
 | Identifiant utilisateur Dolibarr | `1` — l'administrateur de l'instance |
-| Projets facturables au temps (`usage_bill_time = 1`) | 7, 25, 46, 47, 48, 49 |
+| Projets facturables au temps (`usage_bill_time = 1`) | six |
 | Clés d'API enregistrées dans l'application | aucune |
 | Correspondances `ExternalLink` | aucune |
 | File de synchronisation | 68 travaux en attente, **tous GOOGLE**, aucun DOLIBARR |

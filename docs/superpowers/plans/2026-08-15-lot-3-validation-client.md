@@ -662,7 +662,7 @@ const EMETTEUR = {
   nom: 'KREATIV PROJECT MANAGEMENT',
   adresse: '1 rue des Tests, 75000 Paris',
   siret: '000 000 000 00000',
-  email: 'contact@kreativpm.fr',
+  email: 'contact@exemple.test',
 }
 
 function saisie(
@@ -1127,7 +1127,7 @@ function document(nbLignes: number, joursParLigne = 2): CraDocument {
       nom: 'KREATIV PROJECT MANAGEMENT',
       adresse: '1 rue des Tests, 75000 Paris',
       siret: '000 000 000 00000',
-      email: 'contact@kreativpm.fr',
+      email: 'contact@exemple.test',
     },
     clientNom: 'ACME',
     missionLabel: 'Consultant ITSM',
@@ -1829,7 +1829,7 @@ beforeEach(async () => {
       emetteurNom: 'KREATIV PROJECT MANAGEMENT',
       emetteurAdresse: '1 rue des Tests, 75000 Paris',
       emetteurSiret: '000 000 000 00000',
-      emetteurEmail: 'contact@kreativpm.fr',
+      emetteurEmail: 'contact@exemple.test',
     },
   })
   craId = (await getOrCreateCra(userId, missionId, '2026-06')).id
