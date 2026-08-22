@@ -9,6 +9,7 @@ import {
   CALENDRIER_DEDIE,
   connectGoogle,
   disconnectGoogle,
+  enregistrerEtPreparerAgenda,
   getConnectionState,
   GoogleClientAbsentError,
 } from './connect'
@@ -289,5 +290,42 @@ describe('état et révocation', () => {
 
     await disconnectGoogle(autreId)
     expect((await getConnectionState(userId)).connected).toBe(true)
+  })
+})
+
+const JETONS = {
+  accessToken: 'jeton-acces',
+  refreshToken: 'jeton-rafraichissement',
+  expiresAt: new Date('2026-08-22T11:00:00.000Z'),
+  scope: 'https://www.googleapis.com/auth/calendar',
+}
+
+describe('enregistrerEtPreparerAgenda', () => {
+  it('enregistre le jeton et pose le calendrier dédié', async () => {
+    const r = await enregistrerEtPreparerAgenda({
+      userId,
+      jetons: JETONS,
+      fetchFn: api.fetchFn,
+    })
+
+    expect(r.calendarId).not.toBe('')
+    const etat = await getConnectionState(userId)
+    expect(etat.connected).toBe(true)
+    expect(etat.calendarId).toBe(r.calendarId)
+  })
+
+  // Un compte enregistré sans calendrier afficherait « connecté » tout en étant
+  // inutilisable, et l'utilisateur n'aurait aucune raison de recommencer.
+  it("n'enregistre rien quand le calendrier échoue", async () => {
+    const fetchFn: typeof api.fetchFn = async (url, init) => {
+      if (String(url).includes('/calendars')) throw new Error('calendrier indisponible')
+      return api.fetchFn(url, init)
+    }
+
+    await expect(
+      enregistrerEtPreparerAgenda({ userId, jetons: JETONS, fetchFn }),
+    ).rejects.toThrow()
+
+    expect((await getConnectionState(userId)).connected).toBe(false)
   })
 })

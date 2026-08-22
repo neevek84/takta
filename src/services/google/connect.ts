@@ -59,10 +59,31 @@ export async function connectGoogle(args: {
   if (client === null) throw new GoogleClientAbsentError()
 
   const jetons = await exchangeCode(fetchFn, client, args.code)
-  await saveCredential(args.userId, PROVIDER_GOOGLE, { ...jetons, calendarId: '' })
+  return enregistrerEtPreparerAgenda({ userId: args.userId, jetons, fetchFn })
+}
+
+/**
+ * Enregistre les jetons et pose le calendrier dédié — **ou n'enregistre rien**.
+ *
+ * Les deux entrées de la connexion Google passent par ici : le connecteur, qui
+ * part d'un code d'autorisation, et la connexion à l'application, où Auth.js a
+ * déjà fait l'échange. Une seule implémentation du comportement, deux portes
+ * vers elle : c'est ce qui garantit qu'elles ne divergeront pas.
+ */
+export async function enregistrerEtPreparerAgenda(args: {
+  userId: string
+  jetons: { accessToken: string; refreshToken: string; expiresAt: Date; scope: string }
+  fetchFn?: FetchLike
+}): Promise<{ calendarId: string }> {
+  const fetchFn = args.fetchFn ?? (globalThis.fetch as unknown as FetchLike)
+  await saveCredential(args.userId, PROVIDER_GOOGLE, { ...args.jetons, calendarId: '' })
 
   try {
-    const calendarId = await ensureDedicatedCalendar(fetchFn, jetons.accessToken, CALENDRIER_DEDIE)
+    const calendarId = await ensureDedicatedCalendar(
+      fetchFn,
+      args.jetons.accessToken,
+      CALENDRIER_DEDIE,
+    )
     await setCalendarId(args.userId, PROVIDER_GOOGLE, calendarId)
     return { calendarId }
   } catch (err) {
