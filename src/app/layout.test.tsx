@@ -138,3 +138,30 @@ describe('generateViewport', () => {
     ])
   })
 })
+
+/**
+ * **L'onglet du navigateur n'affichait rien.** Les icônes existaient — le
+ * manifeste en déclare deux, iOS a la sienne — mais rien ne désignait celle de
+ * l'onglet : les navigateurs de bureau ne lisent pas le manifeste pour ça.
+ * Une application autohébergée vit dans un onglet parmi vingt ; ne pas s'y
+ * reconnaître est un défaut d'usage, pas de coquetterie.
+ */
+describe("l'icône de l'onglet", () => {
+  it('est déclarée, en SVG et en repli matriciel', async () => {
+    const { metadata } = await import('./layout')
+    const icones = metadata.icons as { icon?: unknown; apple?: unknown }
+    const liste = icones.icon as Array<{ url: string; type?: string }>
+
+    expect(liste.map((i) => i.url)).toEqual(['/icon.svg', '/apple-touch-icon.png'])
+    // Le type est **nommé** : sans lui, un navigateur qui ne sait pas lire un
+    // SVG d'icône ne saurait pas qu'il doit passer au suivant.
+    expect(liste[0]?.type).toBe('image/svg+xml')
+  })
+
+  it("garde celle de l'écran d'accueil iOS, qui ne se déduit pas des autres", async () => {
+    // iOS ignore les icônes du manifeste : sans cette ligne, une application
+    // ajoutée à l'écran d'accueil affiche une capture d'écran de la page.
+    const { metadata } = await import('./layout')
+    expect((metadata.icons as { apple?: unknown }).apple).toBe('/apple-touch-icon.png')
+  })
+})

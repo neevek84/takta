@@ -27,11 +27,24 @@ const manrope = localFont({
 export const metadata: Metadata = {
   title: 'takta',
   manifest: '/manifest.webmanifest',
-  // iOS ignore les icônes du manifeste : sans cette ligne, une application
-  // ajoutée à l'écran d'accueil affiche une capture d'écran de la page.
-  // Le PNG est produit à partir de `public/icon.svg` par
-  // `scripts/generate-apple-touch-icon.mjs`.
-  icons: { apple: '/apple-touch-icon.png' },
+  icons: {
+    // **L'onglet du navigateur n'affichait rien.** Les icônes existaient — le
+    // manifeste en déclare deux — mais les navigateurs de bureau ne lisent pas
+    // le manifeste pour l'onglet. Une application autohébergée vit dans un
+    // onglet parmi vingt ; ne pas s'y reconnaître est un défaut d'usage.
+    //
+    // Le type est **nommé** : sans lui, un navigateur qui ne sait pas rendre
+    // un SVG d'icône ne saurait pas qu'il doit passer au repli matriciel.
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/apple-touch-icon.png', type: 'image/png' },
+    ],
+    // iOS ignore les icônes du manifeste : sans cette ligne, une application
+    // ajoutée à l'écran d'accueil affiche une capture d'écran de la page.
+    // Le PNG est produit à partir de `public/icon.svg` par
+    // `scripts/generate-apple-touch-icon.mjs`.
+    apple: '/apple-touch-icon.png',
+  },
   appleWebApp: { capable: true, title: 'takta', statusBarStyle: 'default' },
 }
 
