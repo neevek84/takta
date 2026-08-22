@@ -445,8 +445,24 @@ propose pas `POSTGRES_PASSWORD`, puisqu'il n'y a pas de serveur.
 **Recevoir.** Sur le NAS, la composition à utiliser est
 [`docker-compose.prod.yml`](docker-compose.prod.yml) — elle **tire** l'image
 publiée au lieu de la construire, ce qui est la condition pour recevoir une mise
-à jour. Container Manager signale alors les nouvelles versions de `latest` et les
-applique d'un clic.
+à jour.
+
+**N'attends pas que Container Manager te la propose.** Sa pastille « mise à jour
+disponible » vit sur l'onglet *Image*, ne concerne que les images qu'il a
+lui-même téléchargées, et il ne réinterroge le registre que de loin en loin — on
+a publié une version et attendu en vain. Pire : un projet qui redémarre avec un
+`:latest` déjà présent en local **ne redemande rien**. L'étiquette pointe vers
+une nouvelle empreinte, mais personne ne va la chercher.
+
+C'est pourquoi la composition porte `pull_policy: always`. Pour recevoir une
+version, il suffit alors de **redémarrer le projet** : Container Manager →
+*Projet* → `takta` → *Action* → **Arrêter**, puis **Démarrer**. Le démarrage
+retire l'image depuis Docker Hub.
+
+**Vérifier ce qui tourne.** Le numéro de version s'affiche en bas de l'écran de
+connexion — sans avoir à entrer — et en bas de la navigation une fois connecté.
+C'est la seule réponse fiable : Container Manager n'affiche que l'identifiant
+*local* de l'image, qui ne correspond à aucune empreinte du registre.
 
 ---
 

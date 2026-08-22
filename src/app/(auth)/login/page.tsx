@@ -5,6 +5,7 @@ import { Field } from '@/components/ui/Field'
 import { login } from './actions'
 import { aucunUtilisateur } from '@/services/auth/comptes'
 import { PremierAdminForm } from './PremierAdminForm'
+import { version } from '@/core/identite'
 
 const MESSAGE_ECHEC = 'Adresse e-mail ou mot de passe incorrect.'
 
@@ -49,6 +50,14 @@ export default async function LoginPage({
           </Button>
         </form>
       </Card>
+      )}
+      {/* La navigation porte déjà ce numéro, mais elle est derrière la porte.
+          Ici, il est lisible sans entrer : c'est ce qui permet de vérifier
+          qu'une mise à jour est bien arrivée — Container Manager, lui,
+          n'affiche que l'identifiant local de l'image, qui ne correspond à
+          aucune empreinte du registre. */}
+      {version() !== '' && (
+        <footer className="mt-8 text-center text-xs text-muted">v{version()}</footer>
       )}
     </main>
   )

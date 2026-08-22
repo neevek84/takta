@@ -69,3 +69,38 @@ describe('le premier démarrage', () => {
   })
 })
 
+
+/**
+ * **Le seul écran qui puisse dire la version à qui n'est pas encore entré.**
+ *
+ * Container Manager n'affiche que l'identifiant *local* de l'image, qui ne
+ * correspond à aucune empreinte du registre : le porteur a déployé une mise à
+ * jour sans pouvoir vérifier laquelle tournait. La navigation la porte déjà,
+ * mais elle est derrière la porte — et c'est justement quand on n'arrive pas à
+ * entrer qu'on a besoin de savoir ce qui tourne.
+ */
+describe('la version affichée avant la connexion', () => {
+  it('paraît quand la construction l’a figée', async () => {
+    const avant = process.env.TAKTA_VERSION
+    process.env.TAKTA_VERSION = '9.9.9'
+    render(await LoginPage({ searchParams: Promise.resolve({}) }))
+
+    expect(screen.getByText('v9.9.9')).not.toBeNull()
+
+    if (avant === undefined) delete process.env.TAKTA_VERSION
+    else process.env.TAKTA_VERSION = avant
+  })
+
+  // Rien plutôt qu'« inconnue » : un mot qui ressemble à une réponse en tient
+  // lieu, et on cesse de chercher.
+  it('ne laisse aucune trace quand rien n’a été figé', async () => {
+    const avant = process.env.TAKTA_VERSION
+    delete process.env.TAKTA_VERSION
+    const { container } = render(await LoginPage({ searchParams: Promise.resolve({}) }))
+
+    // Le pied de page entier disparaît : il ne portait que ça.
+    expect(container.querySelector('footer')).toBeNull()
+
+    if (avant !== undefined) process.env.TAKTA_VERSION = avant
+  })
+})

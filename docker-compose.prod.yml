@@ -41,6 +41,18 @@ services:
 
   app:
     image: kreativpm/takta:latest
+    # **Tirer a chaque demarrage, sans attendre que DSM le propose.**
+    #
+    # Container Manager n'affiche la pastille « mise a jour disponible » que
+    # sur l'onglet Image, pour une image qu'il a lui-meme telechargee, et il
+    # ne reinterroge le registre que de loin en loin. Un projet qui redemarre
+    # avec `:latest` deja present en local ne redemande rien : le tag pointe
+    # vers une nouvelle empreinte, mais personne ne va la chercher.
+    #
+    # `always` remet la question a chaque « up » : le projet redemarre, la
+    # version qui tourne est la derniere publiee. C'est aussi ce qui rend
+    # honnete le numero affiche en bas de l'ecran de connexion.
+    pull_policy: always
     depends_on:
       db:
         condition: service_healthy

@@ -358,6 +358,14 @@ describe('docker-compose.prod.yml — la composition qui sera déployée', () =>
     expect(lignesActives(COMPOSE_PROD).some((l) => l.startsWith('build:'))).toBe(false)
   })
 
+  // Tirer l'image publiée ne suffit pas : `:latest` déjà présent en local ne
+  // se réinterroge pas tout seul. Le porteur a redémarré son projet et a
+  // retrouvé la version d'avant — Container Manager n'avait rien proposé, et
+  // le « up » n'avait rien redemandé au registre.
+  it('redemande l image au registre à chaque démarrage', () => {
+    expect(COMPOSE_PROD).toMatch(/^\s{4}pull_policy:\s*always\s*$/m)
+  })
+
   // Un montage anonyme serait recréé vide à chaque recréation du conteneur —
   // c'est-à-dire à chaque mise à jour. Les données doivent survivre au clic.
   //
