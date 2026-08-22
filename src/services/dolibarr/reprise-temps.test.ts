@@ -322,6 +322,23 @@ describe('reprendreLesTemps', () => {
     expect(r.ecartes[0]).toMatch(/9999/)
   })
 
+  // Le défaut de la colonne vaut `ADMIN` : un auteur importé deviendrait
+  // administrateur sans que personne l'ait décidé.
+  it("crée l'auteur au rôle le moins doté", async () => {
+    const d = await decor()
+    seedTemps({
+      taskId: d.tache.id,
+      dolibarrUserId: d.auteur.id,
+      date: '2026-07-15',
+      durationSeconds: 25_200,
+    })
+
+    await reprendreLesTemps({ missionId: d.mission.id, userId, api, aujourdhui: AUJOURDHUI })
+
+    const cree = await prisma.user.findUniqueOrThrow({ where: { email: 'camille@exemple.test' } })
+    expect(cree.role).toBe('CONSULTANT')
+  })
+
   it("refuse quand aucune prestation ne vise une tâche", async () => {
     const client = await createClient('RTP VIDE')
     const mission = await createMission({ clientId: client.id, label: 'RTP Vide' })

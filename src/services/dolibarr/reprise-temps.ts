@@ -211,6 +211,10 @@ async function utilisateurLocal(args: {
         email,
         name: distant.nom === '' ? distant.login : distant.nom,
         passwordHash: '',
+        // **Jamais le défaut de la colonne**, qui vaut `ADMIN`. Un auteur
+        // importé n'a été choisi par personne : il entre au rôle le moins doté,
+        // et c'est un geste humain qui l'élève.
+        role: 'CONSULTANT',
       },
       select: { id: true },
     }))
