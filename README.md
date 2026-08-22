@@ -363,7 +363,7 @@ C'est ici que se joue la différence entre une installation et un service.
 | Cible | La base est… | Sauvegarder |
 |---|---|---|
 | Docker (`docker-compose.yml`) | le volume `db-data` (Postgres, base `cra`) | `docker compose exec -T db pg_dump -U cra -d cra \| gzip > sauvegarde.sql.gz` |
-| NAS (`docker-compose.prod.yml`) | le volume `db-data` (Postgres, base `takta`) | automatique, service `sauvegarde` — voir ci-dessous |
+| NAS (`docker-compose.prod.yml`) | le dossier `./donnees/postgres` (Postgres, base `takta`) | automatique, service `sauvegarde` — voir ci-dessous |
 | Poste local, dépôt | le fichier `prisma/cra.db` | copier le fichier, application arrêtée |
 | Archive portable | `donnees/cra.db` | `./sauvegarder.sh`, **application allumée ou éteinte** |
 
