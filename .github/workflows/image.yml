@@ -53,10 +53,17 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
+      # **Le préfixe `sha256:` tombe ici, et il doit tomber ici.** Deux raisons
+      # qui se rejoignent : `upload-artifact` refuse un nom de fichier portant
+      # un deux-points, et le manifeste, plus bas, recompose l'adresse en
+      # `image@sha256:<nom du fichier>`. Le garder produirait
+      # `image@sha256:sha256:…`, que le registre ne connaît pas.
       - name: Retenir l'empreinte
         run: |
+          set -eu
+          EMPREINTE="${{ steps.construction.outputs.digest }}"
           mkdir -p /tmp/empreintes
-          touch "/tmp/empreintes/${{ steps.construction.outputs.digest }}"
+          touch "/tmp/empreintes/${EMPREINTE#sha256:}"
         shell: bash
 
       - uses: actions/upload-artifact@v4

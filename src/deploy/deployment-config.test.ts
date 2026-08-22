@@ -50,6 +50,7 @@ const COMPOSE = lit('docker-compose.yml')
 const COMPOSE_PROD = lit('docker-compose.prod.yml')
 const DOCKERIGNORE = lit('.dockerignore')
 const ENV_EXAMPLE = lit('.env.example')
+const WORKFLOW_IMAGE = lit('.github/workflows/image.yml')
 
 /**
  * Variables que **la composition** consomme, et que l'application ne lit
@@ -536,3 +537,32 @@ describe('le mot de passe de la base ne peut pas casser une URL', () => {
   })
 })
 
+
+/**
+ * **La chaîne d'empreintes entre les deux moitiés de la publication.**
+ *
+ * Chaque architecture pousse son image *par empreinte*, écrit cette empreinte
+ * dans un nom de fichier, et un dernier travail recompose les adresses pour
+ * en faire un manifeste. Les deux bouts doivent s'accorder sur la forme du
+ * nom — et rien, dans un workflow, ne le vérifie : il ne s'exécute qu'après
+ * la pose d'une étiquette de version, donc l'erreur ne se découvre qu'une
+ * fois la version publiée. C'est exactement ce qui est arrivé à la v1.1.0.
+ */
+describe("la publication de l'image se recolle", () => {
+  // `upload-artifact` refuse un nom de fichier portant un deux-points, et le
+  // manifeste recompose `image@sha256:<nom>`. Le préfixe doit donc tomber.
+  it("écrit l'empreinte sans son préfixe sha256:", () => {
+    expect(WORKFLOW_IMAGE).toMatch(/touch "\/tmp\/empreintes\/\$\{EMPREINTE#sha256:\}"/)
+  })
+
+  it("recompose l'adresse avec le préfixe", () => {
+    expect(WORKFLOW_IMAGE).toContain('@sha256:%s')
+  })
+
+  // Deux étiquettes, et la seconde n'est pas décorative : `latest` est ce que
+  // Container Manager surveille, la version est le seul retour arrière.
+  it('pose les deux étiquettes', () => {
+    expect(WORKFLOW_IMAGE).toContain('--tag "${IMAGE}:latest"')
+    expect(WORKFLOW_IMAGE).toContain('--tag "${IMAGE}:${VERSION}"')
+  })
+})
