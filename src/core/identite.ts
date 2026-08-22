@@ -28,3 +28,20 @@ export const SOURCE_URL = 'https://github.com/neevek84/takta'
 
 /** La licence, telle qu'elle s'annonce à l'écran. */
 export const LICENCE = 'AGPL v3'
+
+/**
+ * La version qui tourne, ou `''` si elle n'a pas été figée à la construction.
+ *
+ * **Ce qu'elle répare.** Une image déployée ne dit pas ce qu'elle est :
+ * l'interface de Container Manager affiche l'identifiant *local* de l'image,
+ * qui ne correspond à aucune empreinte du registre. Personne ne pouvait donc
+ * dire quelle version tournait — ni pour vérifier une mise à jour reçue, ni
+ * pour décrire un défaut.
+ *
+ * Chaîne vide plutôt que `'inconnue'` : l'écran n'affiche alors rien du tout.
+ * Une version fausse est pire qu'une version absente.
+ */
+export function version(): string {
+  return process.env.TAKTA_VERSION ?? ''
+}
+

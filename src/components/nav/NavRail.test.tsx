@@ -412,3 +412,30 @@ describe("l'offre de code source, exigée par l'AGPL", () => {
   })
 })
 
+describe('la version affichée', () => {
+  // Une image déployée ne dit pas ce qu'elle est : l'interface du NAS n'affiche
+  // que l'identifiant local de l'image, incomparable au registre. Sans ce
+  // libellé, personne ne peut vérifier qu'une mise à jour a bien été reçue.
+  it('paraît quand la construction l a figée', () => {
+    const avant = process.env.TAKTA_VERSION
+    process.env.TAKTA_VERSION = '1.2.3'
+
+    render(<NavRail onSignOut={rien} />)
+    expect(screen.getByText(/v1\.2\.3/)).toBeTruthy()
+
+    if (avant === undefined) delete process.env.TAKTA_VERSION
+    else process.env.TAKTA_VERSION = avant
+  })
+
+  // Une version fausse est pire qu'une version absente.
+  it("ne montre rien plutôt qu'une version inventée", () => {
+    const avant = process.env.TAKTA_VERSION
+    delete process.env.TAKTA_VERSION
+
+    render(<NavRail onSignOut={rien} />)
+    expect(screen.queryByText(/·\s*v/)).toBeNull()
+
+    if (avant !== undefined) process.env.TAKTA_VERSION = avant
+  })
+})
+

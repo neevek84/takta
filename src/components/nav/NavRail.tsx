@@ -14,7 +14,7 @@ import {
   type Icone,
 } from '@/components/ui/icons'
 import { cn } from '@/lib/cn'
-import { LICENCE, SOURCE_URL } from '@/core/identite'
+import { LICENCE, SOURCE_URL, version } from '@/core/identite'
 
 /**
  * Les quatre écrans du travail quotidien. Ce sont eux, et eux seuls, qui
@@ -263,6 +263,11 @@ export function NavRail({ onSignOut }: { onSignOut: () => Promise<void> }) {
               Code source
             </a>{' '}
             · {LICENCE}
+            {/* La version dit ce qui tourne. Une image deployee ne le dit pas :
+                l'interface du NAS n'affiche que son identifiant local, qui ne
+                correspond a aucune empreinte du registre. Rien du tout quand
+                elle n'a pas ete figee — une version fausse serait pire. */}
+            {version() !== '' && <> · v{version()}</>}
           </p>
         </div>
       </nav>

@@ -16,6 +16,15 @@ RUN npm run db:pg && npm run build
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+# Etiquettes OCI : `docker inspect` dit alors ce que l'image est. L'interface
+# de Container Manager, elle, n'affiche que l'identifiant local — c'est
+# pourquoi l'application affiche aussi sa version elle-meme.
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="takta" \
+      org.opencontainers.image.description="Compte-rendu d'activite pour consultants independants" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/neevek84/takta" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 # `output: 'standalone'` ne trace que les modules importés par le code : les
