@@ -299,6 +299,32 @@ ce `pg_dump` **quotidiennement** vers `./sauvegardes`, avec 90 jours de
 rétention — pointez ce dossier vers un partage du NAS, hors du conteneur : une
 sauvegarde qui vit dans ce qu'elle protège ne protège rien.
 
+### Changer `POSTGRES_PASSWORD` après le premier démarrage
+
+Ça ne suffit **jamais** à soi seul. Postgres ne fixe le mot de passe de son
+utilisateur qu'à l'**initialisation du volume** : modifier la variable ensuite
+laisse la base avec l'ancien, et l'application est rejetée par
+`P1000: Authentication failed`. Relancer la pile n'y change rien.
+
+Deux issues, selon qu'il y a des données ou non :
+
+```bash
+# Aucune donnée à garder — le -v détruit le volume, et c'est lui l'essentiel
+docker compose -f docker-compose.prod.yml down -v
+docker compose -f docker-compose.prod.yml up -d
+
+# Des données à garder — changer le mot de passe DANS la base
+docker exec -it takta-db-1 psql -U takta -d takta \
+  -c "ALTER USER takta WITH PASSWORD 'le-nouveau';"
+```
+
+Depuis l'intérieur du conteneur, Postgres fait confiance à la connexion locale :
+cette commande ne demande aucun mot de passe.
+
+**Les guillemets.** Dans un fichier `.env`, Docker les retire — c'est pourquoi
+les fichiers d'exemple en portent. Dans un **champ de formulaire** — l'interface
+de Container Manager, par exemple — ils feraient partie de la valeur.
+
 **Une copie de la base ne donne accès à aucun agenda.** Les jetons Google et la
 clé d'API Dolibarr y sont chiffrés (AES-256-GCM), et la clé vit dans
 l'environnement, hors de la base.
