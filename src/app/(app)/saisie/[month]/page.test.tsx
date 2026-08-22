@@ -57,7 +57,7 @@ vi.mock('@/components/MonthNav', () => ({ MonthNav: () => null }))
 import SaisiePage from './page'
 
 async function rendre(): Promise<void> {
-  render(await SaisiePage({ params: Promise.resolve({ month: '2026-03' }) }))
+  render(await SaisiePage({ params: Promise.resolve({ month: '2026-03' }), searchParams: Promise.resolve({}) }))
 }
 
 describe('page de saisie — occupation de l agenda', () => {
@@ -131,7 +131,7 @@ describe('page de saisie — le gabarit commun', () => {
 
   it('lui donne la largeur et la marge de tous les autres écrans', async () => {
     const { container } = render(
-      await SaisiePage({ params: Promise.resolve({ month: '2026-03' }) }),
+      await SaisiePage({ params: Promise.resolve({ month: '2026-03' }), searchParams: Promise.resolve({}) }),
     )
 
     // C'est `<main>` qui porte la marge : le test de budget des sept colonnes

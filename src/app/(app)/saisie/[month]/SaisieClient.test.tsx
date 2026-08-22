@@ -843,3 +843,44 @@ describe('SaisieClient — la réglette du mois', () => {
     expect(screen.getByTestId('piste-engagement-l1').className).not.toContain('w-full')
   })
 })
+
+/**
+ * **Ce qu'on regarde doit survivre au changement de mois.**
+ *
+ * Chaque mois se sert par une route à part : l'état d'un composant ne survit
+ * pas à la navigation. Le porteur travaillait en tableau multi-CRA et
+ * retombait en calendrier au mois suivant, sans un mot. La vue vit donc dans
+ * l'adresse — que `MonthNav` reporte, et que la page relit au rendu.
+ */
+describe('la vue choisie vit dans l adresse', () => {
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/saisie/2026-03')
+  })
+
+  // Le nettoyage vit dans les `describe` voisins, pas au niveau du fichier :
+  // sans lui, deux rendus se superposent et chaque bouton existe en double.
+  afterEach(cleanup)
+
+  it("s'ouvre sur le tableau quand l'adresse le demande", () => {
+    renderClient({ vueInitiale: 'TABLEAU' })
+
+    // La grille du tableau porte les cases par prestation et par jour.
+    expect(screen.getByLabelText('Consultant ITSM 2026-03-12')).toBeTruthy()
+  })
+
+  it("inscrit le choix dans l'adresse sans recharger la page", () => {
+    renderClient()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tableau multi-CRA' }))
+    expect(window.location.search).toBe('?vue=tableau')
+  })
+
+  // Le calendrier est le défaut : le laisser dans l'adresse ferait porter à
+  // tous les liens un paramètre qui ne dit rien de plus que leur absence.
+  it("retire le paramètre en revenant au calendrier", () => {
+    renderClient({ vueInitiale: 'TABLEAU' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
+    expect(window.location.search).toBe('')
+  })
+})

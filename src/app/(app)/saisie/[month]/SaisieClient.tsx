@@ -114,9 +114,45 @@ export function SaisieClient(props: {
    * doivent tomber d'accord.
    */
   aujourdhui?: string
+  /**
+   * La vue résolue par la page depuis l'adresse.
+   *
+   * Elle arrive d'en haut et non d'un `useState` nu : chaque mois est une
+   * route à part, et l'état d'un composant ne survit pas à la navigation.
+   * Travailler en tableau multi-CRA et retomber en calendrier au mois suivant,
+   * c'est ce qui arrivait.
+   */
+  vueInitiale?: Vue
 }) {
   const [message, setMessage] = useState<Message | null>(null)
-  const [vue, setVue] = useState<Vue>('CALENDRIER')
+  const [vue, setVue] = useState<Vue>(props.vueInitiale ?? 'CALENDRIER')
+
+  /**
+   * Choisir une vue, et l'inscrire dans l'adresse.
+   *
+   * **Par l'API d'historique du navigateur, pas par le routeur.** Un
+   * `router.replace` refait le rendu serveur de la page : il rejouerait toutes
+   * ses lectures — dont l'occupation de l'agenda Google — à chaque bascule,
+   * pour un changement qui est entièrement local. Next tient `useSearchParams`
+   * à jour après un `replaceState` natif, et c'est ce dont `MonthNav` a besoin
+   * pour reporter le choix sur les mois voisins.
+   *
+   * Le calendrier ne laisse rien derrière lui : c'est le défaut, et un
+   * paramètre qui ne dit rien de plus que son absence encombrerait tous les
+   * liens.
+   */
+  function choisirVue(prochaine: Vue): void {
+    setVue(prochaine)
+    const parametres = new URLSearchParams(window.location.search)
+    if (prochaine === 'TABLEAU') parametres.set('vue', 'tableau')
+    else parametres.delete('vue')
+    const requete = parametres.toString()
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${requete === '' ? '' : `?${requete}`}`,
+    )
+  }
   const [toutLeMois, setToutLeMois] = useState(false)
   const [confirmationVidage, setConfirmationVidage] = useState(false)
   const [formulaire, setFormulaire] = useState<{ date: string; etat: CellState } | null>(null)
@@ -222,7 +258,7 @@ export function SaisieClient(props: {
           type="button"
           aria-pressed={vue === 'CALENDRIER'}
           variant={vue === 'CALENDRIER' ? 'primary' : 'secondary'}
-          onClick={() => setVue('CALENDRIER')}
+          onClick={() => choisirVue('CALENDRIER')}
         >
           Calendrier
         </Button>
@@ -235,7 +271,7 @@ export function SaisieClient(props: {
           type="button"
           aria-pressed={vue === 'TABLEAU'}
           variant={vue === 'TABLEAU' ? 'primary' : 'secondary'}
-          onClick={() => setVue('TABLEAU')}
+          onClick={() => choisirVue('TABLEAU')}
           className="hidden md:inline-flex"
         >
           Tableau multi-CRA

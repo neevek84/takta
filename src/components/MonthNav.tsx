@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { shiftMonth } from '@/core/month/build'
 
 const MOIS = [
@@ -16,16 +16,31 @@ export function monthLabel(month: string): string {
 
 export function MonthNav({ month }: { month: string }) {
   const router = useRouter()
+  const parametres = useSearchParams()
   const today = new Date().toISOString().slice(0, 7)
 
+  /**
+   * **Changer de mois ne doit rien effacer de ce qu'on regarde.**
+   *
+   * Chaque mois est une route à part : l'état des composants ne survit pas à
+   * la navigation. Travailler en tableau multi-CRA et retomber en calendrier
+   * au mois suivant, c'est ce qui arrivait. Ce qu'on regarde vit donc dans
+   * l'adresse, et l'adresse se reporte ici — sur les flèches, sur le retour au
+   * mois courant, et sur le choix direct.
+   *
+   * La chaîne vide plutôt qu'un `?` seul : un point d'interrogation orphelin
+   * dans la barre d'adresse donne l'air d'un lien fabriqué à la main.
+   */
+  const suffixe = parametres.toString() === '' ? '' : `?${parametres.toString()}`
+
   function allerAuMois(value: string): void {
-    if (value) router.push(`/saisie/${value}`)
+    if (value) router.push(`/saisie/${value}${suffixe}`)
   }
 
   return (
     <nav className="mb-4 flex items-center gap-2 text-sm">
       <Link
-        href={`/saisie/${shiftMonth(month, -1)}`}
+        href={`/saisie/${shiftMonth(month, -1)}${suffixe}`}
         aria-label="Mois précédent"
         className="rounded border px-2 py-1"
       >
@@ -35,7 +50,7 @@ export function MonthNav({ month }: { month: string }) {
       <span className="min-w-44 text-center font-medium">{monthLabel(month)}</span>
 
       <Link
-        href={`/saisie/${shiftMonth(month, 1)}`}
+        href={`/saisie/${shiftMonth(month, 1)}${suffixe}`}
         aria-label="Mois suivant"
         className="rounded border px-2 py-1"
       >
@@ -51,7 +66,7 @@ export function MonthNav({ month }: { month: string }) {
       />
 
       {month !== today && (
-        <Link href={`/saisie/${today}`} className="ml-2 rounded border px-2 py-1">
+        <Link href={`/saisie/${today}${suffixe}`} className="ml-2 rounded border px-2 py-1">
           Mois courant
         </Link>
       )}

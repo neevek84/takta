@@ -13,8 +13,18 @@ import { PageShell } from '@/components/ui/PageShell'
 import { PastForecastNotice } from './PastForecastNotice'
 import { SaisieClient } from './SaisieClient'
 
-export default async function SaisiePage({ params }: { params: Promise<{ month: string }> }) {
+export default async function SaisiePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ month: string }>
+  searchParams: Promise<{ vue?: string }>
+}) {
   const { month } = await params
+  // **Ce qu'on regarde vit dans l'adresse**, et il est résolu ici plutôt que
+  // dans le composant : lu après le montage, la page s'afficherait d'abord en
+  // calendrier avant de basculer, et ce clignotement porte sur toute la page.
+  const { vue } = await searchParams
   const user = await requireUser()
 
   const settings = await getSettings()
@@ -47,6 +57,7 @@ export default async function SaisiePage({ params }: { params: Promise<{ month: 
         lockedCount={pastForecast.lockedCount}
       />
       <SaisieClient
+        vueInitiale={vue === 'tableau' ? 'TABLEAU' : 'CALENDRIER'}
         month={month}
         days={days}
         lines={lines}
