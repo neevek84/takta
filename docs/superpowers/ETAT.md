@@ -182,12 +182,34 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 
 ---
 
-- **`dolibarrUserId` est de portée instance alors qu'il désigne une personne.**
-  Tous les temps poussés partent sous le même utilisateur Dolibarr, quel que
-  soit le propriétaire du CRA. Invisible à un seul consultant, faux à deux.
-  Le rôle `User.role` existe et n'est lu par aucun écran. Cadré dans
-  `docs/superpowers/specs/2026-08-19-roles-et-portees-design.md` ; le porteur a
-  demandé de valider d'abord le fonctionnement, puis de faire l'évolution.
+## Dette de la double authentification : refermée (22 août 2026)
+
+Le lot de la double authentification créait un compte à la première connexion
+Google, au rôle `CONSULTANT`, sans qu'aucun écran n'applique les rôles : toute
+personne du domaine Workspace de l'hébergeur pouvait entrer et tout faire. La
+fenêtre était bornée, et le lot des rôles l'a refermée.
+
+Ce qui est posé :
+
+- `peutAdministrer` décide, et rien d'autre. Les neuf écrans de `/admin/` et
+  leurs actions l'exigent, `src/admin-garde.test.ts` interdit d'en ajouter un
+  dixième sans garde, et le refus est **nommé** — il dit le rôle et à qui
+  demander, au lieu de rediriger en silence ;
+- `/admin/sync` reste ouvert à tous parce qu'il porte les divergences et les
+  échecs de la session, mais la file d'instance ne s'y montre qu'à un `ADMIN`.
+  L'arbitrage du 20 août 2026 tient : la file n'est pas refiltrée par `userId` ;
+- `dolibarrUserId` a quitté les réglages d'instance. Il est la correspondance du
+  propriétaire du CRA, et un CRA dont le propriétaire n'en a pas est **refusé**
+  plutôt que poussé sous celle d'un autre ;
+- `User.disabled` ferme une porte sans détruire les saisies, les CRA ni
+  l'attribution de ce qui a été poussé chez Dolibarr. `requireUser()` le relit à
+  chaque requête : couper un accès coupe la session en cours.
+
+Ce qui reste ouvert, et qui est nommé pour ne pas être découvert en chemin :
+`MANAGER` n'a toujours aucun écran qui lui soit propre, et un `CONSULTANT` voit
+encore toutes les missions et tous les clients de l'instance dans `/missions` —
+c'est le cloisonnement des données, pas celui des écrans, et il attend sa propre
+spec.
 
 ## 9. Environnement du porteur
 
