@@ -586,6 +586,35 @@ n'expose pas son journal. Le réveil de l'ordonnanceur utilise le même jeton :
     curl -X POST -H "Authorization: Bearer $CRA_API_TOKEN" \
          http://localhost:3000/api/jobs/tick
 
+### L'ordonnanceur n'a pas d'horloge
+
+**C'est le point qu'on oublie, et rien ne tourne tant qu'il est oublié.**
+`/api/jobs/tick` attend qu'un déclencheur extérieur l'appelle : il n'a aucune
+minuterie interne. Sans lui, aucun rappel de saisie ne part, aucune relance de
+signature, et la file de sortie ne se vide jamais d'elle-même. L'écran
+*Supervision · Travaux* affiche alors sept lignes « Jamais exécuté » — et le dit
+désormais explicitement.
+
+Toutes les cinq minutes suffisent : chaque travail porte sa propre récurrence, et
+un réveil trop fréquent ne fait que constater qu'il n'y a rien à faire.
+
+**Sur un NAS Synology** — DSM → *Panneau de configuration* → *Planificateur de
+tâches* → *Créer* → *Tâche planifiée* → *Script défini par l'utilisateur*.
+Récurrence : toutes les 5 minutes. Script :
+
+```bash
+curl -fsS -X POST -H "Authorization: Bearer LE_JETON" http://localhost:3000/api/jobs/tick
+```
+
+Remplace le port par celui que publie la composition, et `LE_JETON` par la valeur
+de `CRA_API_TOKEN` de ton `.env`. **Passe par `localhost`, pas par le domaine
+public** : le réveil n'a rien à faire sur Internet, et le faire sortir puis
+rentrer par le proxy ajoute une panne possible à un traitement qui doit être le
+plus fiable de l'installation.
+
+**Ailleurs** : une ligne de `crontab`, un timer `systemd`, un nœud *Schedule* de
+n8n — n'importe quoi qui sache faire un `POST` à l'heure dite.
+
 ---
 
 ## Développement
