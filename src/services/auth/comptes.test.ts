@@ -9,6 +9,7 @@ import {
   creerPremierAdministrateur,
   definirActivation,
   definirRole,
+  lierOuCreerCompteGoogle,
   listerComptes,
 } from './comptes'
 
@@ -250,5 +251,87 @@ describe('administration des comptes', () => {
 
       expect(r.ok).toBe(false)
     })
+  })
+})
+
+describe('lierOuCreerCompteGoogle', () => {
+  // La fusion repose entièrement sur l'adresse : une adresse non vérifiée
+  // permettrait de prendre le compte de quelqu'un d'autre en la déclarant.
+  it('refuse une adresse que Google ne déclare pas vérifiée', async () => {
+    expect(
+      await lierOuCreerCompteGoogle({
+        email: 'comptes-avec@test.local',
+        emailVerifie: false,
+        nom: 'A',
+      }),
+    ).toBeNull()
+  })
+
+  it('retrouve le compte existant, sans le dupliquer', async () => {
+    const r = await lierOuCreerCompteGoogle({
+      email: 'comptes-avec@test.local',
+      emailVerifie: true,
+      nom: 'Autre nom',
+    })
+
+    expect(r?.id).toBe(avec)
+    expect(await prisma.user.count({ where: { email: 'comptes-avec@test.local' } })).toBe(1)
+  })
+
+  it('crée le compte absent, au rôle le moins doté', async () => {
+    const r = await lierOuCreerCompteGoogle({
+      email: 'comptes-nouveau@test.local',
+      emailVerifie: true,
+      nom: 'Nouvelle Personne',
+    })
+
+    expect(r).not.toBeNull()
+    const cree = await prisma.user.findUniqueOrThrow({
+      where: { email: 'comptes-nouveau@test.local' },
+    })
+    expect(cree.role).toBe('CONSULTANT')
+    expect(cree.name).toBe('Nouvelle Personne')
+    // Pas de mot de passe : la seconde porte reste fermée jusqu'à ce qu'il en
+    // définisse un par courriel.
+    expect(cree.passwordHash).toBe('')
+  })
+
+  // Google rend l'adresse telle que l'utilisateur l'a écrite ; la nôtre est
+  // unique et stockée en minuscules. Sans normalisation, « Keveen@… » créerait
+  // un second compte à côté de « keveen@… ».
+  it('normalise la casse de l adresse', async () => {
+    const r = await lierOuCreerCompteGoogle({
+      email: 'Comptes-Avec@Test.Local',
+      emailVerifie: true,
+      nom: 'A',
+    })
+    expect(r?.id).toBe(avec)
+  })
+
+  // Écart au plan, assumé : le brief ne dit rien du compte désactivé, et sans
+  // cette règle la porte Google rouvrirait ce que `definirActivation` a fermé —
+  // `requireUser()` coupe la session en cours, mais rien n'empêcherait de
+  // repasser par Google pour en ouvrir une neuve.
+  it('refuse un compte désactivé, que Google ne rouvre pas', async () => {
+    const coupe = await prisma.user.create({
+      data: {
+        email: 'comptes-coupe@test.local',
+        name: 'Coupé',
+        passwordHash: '',
+        role: 'CONSULTANT',
+        disabled: true,
+      },
+    })
+
+    expect(
+      await lierOuCreerCompteGoogle({
+        email: 'comptes-coupe@test.local',
+        emailVerifie: true,
+        nom: 'Coupé',
+      }),
+    ).toBeNull()
+    // Et surtout : rien n'a été créé à côté pour contourner le refus.
+    expect(await prisma.user.count({ where: { email: 'comptes-coupe@test.local' } })).toBe(1)
+    expect(coupe.id).not.toBe('')
   })
 })

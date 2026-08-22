@@ -213,3 +213,60 @@ export async function definirActivation(args: {
   await prisma.user.update({ where: { id: args.userId }, data: { disabled: !args.actif } })
   return { ok: true, motif: '' }
 }
+
+/**
+ * La règle de fusion : un compte Google et un compte local qui portent la même
+ * adresse sont **le même compte**.
+ *
+ * Auth.js sait parler à Google ; il ne sait pas, seul, fusionner deux comptes.
+ * L'application n'ayant pas d'adaptateur de base, il n'existe pas de table
+ * `Account` dont le comportement par défaut refuserait une adresse déjà prise :
+ * la règle est ici, en clair, et elle s'éprouve.
+ *
+ * **L'adresse vérifiée n'est pas une formalité.** Toute la fusion repose sur
+ * elle : accepter une adresse non vérifiée reviendrait à laisser quiconque
+ * prendre le compte d'un autre en la déclarant.
+ *
+ * `null` est le seul refus : l'appelant en fait un « non » d'Auth.js, sans
+ * distinguer les motifs. Dire lequel apprendrait à qui essaie si l'adresse est
+ * connue, et si le compte qui la porte a été coupé.
+ */
+export async function lierOuCreerCompteGoogle(args: {
+  email: string
+  emailVerifie: boolean
+  nom: string
+}): Promise<{ id: string; role: string } | null> {
+  if (!args.emailVerifie) return null
+
+  // Google rend l'adresse telle que l'utilisateur l'a écrite ; la nôtre est
+  // unique. Sans normalisation, une majuscule créerait un second compte.
+  const email = args.email.trim().toLowerCase()
+  if (email === '') return null
+
+  const existant = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, role: true, disabled: true },
+  })
+  if (existant !== null) {
+    // Un compte coupé reste coupé, quelle que soit la porte. Sans ce refus,
+    // `definirActivation` ne fermerait qu'une moitié de l'application :
+    // `requireUser()` couperait la session en cours, et Google en ouvrirait
+    // aussitôt une neuve.
+    if (existant.disabled) return null
+    return { id: existant.id, role: existant.role }
+  }
+
+  const cree = await prisma.user.create({
+    data: {
+      email,
+      name: args.nom.trim() === '' ? email : args.nom.trim(),
+      // Pas de mot de passe : la porte locale reste fermée jusqu'à ce qu'il en
+      // définisse un par courriel.
+      passwordHash: '',
+      // Jamais le défaut de la colonne, qui vaut `ADMIN`.
+      role: 'CONSULTANT',
+    },
+    select: { id: true, role: true },
+  })
+  return cree
+}
