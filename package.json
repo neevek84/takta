@@ -1,6 +1,6 @@
 {
   "name": "takta",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Compte-rendu d'activité pour consultants indépendants. Le temps qui fait foi.",
   "main": "index.js",
   "directories": {
