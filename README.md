@@ -96,13 +96,7 @@ Une seule base de code, quatre cibles :
 
 ### Serveur (Docker Compose, Postgres)
 
-> **Ce chemin n'a pas été vérifié empiriquement dans cet environnement**
-> (Docker n'y est pas installé). Le `Dockerfile` et le `docker-compose.yml` ont
-> été relus ligne à ligne contre l'arborescence réelle produite par
-> `npx next build`, et `src/deploy/deployment-config.test.ts` les compare à
-> `.env.example` à chaque exécution de la suite — mais `docker compose up
-> --build` n'a **pas** pu être exécuté ici. **À valider par un vrai
-> `docker compose up --build` avant toute mise en production.**
+Ce chemin **a été déployé et exercé** — voir « Ce qui a été éprouvé ».
 
 ```bash
 # POSTGRES_PASSWORD en **hexadécimal**, jamais en base64 : il entre tel quel
@@ -111,10 +105,56 @@ export POSTGRES_PASSWORD=$(openssl rand -hex 24)
 export AUTH_SECRET=$(openssl rand -base64 32)
 export CREDENTIALS_KEY=$(openssl rand -base64 32)
 docker compose up -d --build
-docker compose exec app node scripts/create-user.mjs moi@exemple.fr "Mon Nom" motdepasse
 ```
 
 L'application écoute sur http://localhost:3000
+
+**Le premier compte se crée à l'écran.** Tant que la base ne porte aucun
+utilisateur, `/login` devient « Premier démarrage » et crée un
+**administrateur**. Aucune commande, aucun terminal.
+
+> **Corollaire, et il n'est pas décoratif** : tant que l'installation est vide,
+> **quiconque connaît son adresse peut prendre cette place**. Renseigne-la tout
+> de suite après le premier démarrage. La condition ne se reproduit jamais
+> ensuite — vraie une fois, fausse pour toujours.
+
+### NAS Synology (image tirée de Docker Hub)
+
+Éprouvé sur un **DS723+** (arm64), Container Manager, Postgres 16, derrière un
+tunnel Cloudflare.
+
+1. Créer un dossier partagé pour le projet, y déposer
+   [`docker-compose.prod.yml`](docker-compose.prod.yml) et un `.env` copié de
+   [`.env.docker.example`](.env.docker.example).
+2. Remplir le `.env`. Les trois obligatoires — `POSTGRES_PASSWORD` (hexadécimal),
+   `AUTH_SECRET`, `CREDENTIALS_KEY` — et, **derrière un proxy, `AUTH_URL`** :
+
+   ```
+   AUTH_URL="https://takta.mondomaine.fr"
+   ```
+
+   Sans elle, l'application déduit son adresse des en-têtes, et tous les proxys
+   ne posent pas `x-forwarded-host` : certains réécrivent `Host` avec l'adresse
+   interne. Les retours de connexion Google et les liens de mot de passe
+   envoyés par courriel pointent alors vers `https://<identifiant du
+   conteneur>:3000`, une adresse qui n'existe nulle part.
+
+3. Container Manager → *Projet* → *Créer*, pointer sur le dossier, choisir
+   `docker-compose.prod.yml`.
+4. Ouvrir l'application, créer le premier administrateur à l'écran.
+
+**Recevoir les versions suivantes.** La composition porte `pull_policy: always` :
+il suffit d'**arrêter puis démarrer le projet**. N'attends pas la pastille
+« mise à jour disponible » de Container Manager — elle ne concerne que l'onglet
+*Image*, et un projet qui redémarre avec un `:latest` déjà présent en local ne
+redemande rien au registre.
+
+**Vérifier ce qui tourne** : le numéro de version s'affiche sous l'écran de
+connexion. Container Manager, lui, n'affiche que l'identifiant *local* de
+l'image, qui ne correspond à aucune empreinte du registre.
+
+**Les données sont dans des dossiers visibles**, pas dans des volumes nommés :
+`./donnees/postgres` et `./sauvegardes`, lisibles depuis File Station.
 
 Le conteneur applique `npx prisma migrate deploy` **au démarrage**, avant de
 lancer le serveur : le schéma est créé ou mis à jour sans étape manuelle. Si le
@@ -134,11 +174,12 @@ echo "AUTH_SECRET=$(openssl rand -base64 32)" >> .env
 echo "CREDENTIALS_KEY=$(openssl rand -base64 32)" >> .env
 npm run setup:local
 npm run build
-node scripts/create-user.mjs moi@exemple.fr "Mon Nom" motdepasse
 npm start
 ```
 
-La base est le fichier `prisma/cra.db`.
+La base est le fichier `prisma/cra.db`. Le premier compte se crée **à l'écran**,
+au premier chargement de `/login` : `scripts/create-user.mjs` existe encore pour
+qui préfère le terminal, il n'est plus nécessaire.
 
 ### Archive portable
 
@@ -632,17 +673,6 @@ décompte de tests n'y figure : un chiffre ment dès le commit suivant.
 
 ### Jamais exécuté ici
 
-- **Docker et Postgres.** Aucun `docker compose up --build`, aucun serveur
-  Postgres joignable. La migration initiale a été générée hors ligne par diff de
-  schéma et committée ; son application contre un Postgres vivant n'a jamais été
-  exercée. Ce que couvre `src/deploy/deployment-config.test.ts` est **statique** :
-  il lit `Dockerfile`, `docker-compose.yml` et `.dockerignore` en texte et échoue
-  si une variable de `.env.example` n'atteint pas le conteneur, si un secret y est
-  écrit en dur, si `public/` n'est pas copié dans l'image, ou si `.dockerignore`
-  cesse d'exclure `.env`. Il prouve la cohérence des fichiers entre eux, jamais
-  qu'un conteneur démarre. Il existe parce que deux défauts de cette famille sont
-  déjà passés — une interface entière livrée sans style, et `public/` absent de
-  l'image.
 - **Les archives macOS Intel, Windows x64 et Linux x64.** Ni ces machines ni ces
   moteurs Prisma ici. `scripts/empaqueter.mjs` refuse toute archive dont le
   moteur ne correspond pas à la machine qui construit.
@@ -660,6 +690,20 @@ décompte de tests n'y figure : un chiffre ment dès le commit suivant.
 
 ### Exercé réellement
 
+- **Docker, Postgres et la publication d'image, en production.** Déployé le
+  22 août 2026 sur un Synology DS723+ (arm64), Container Manager, Postgres 16,
+  derrière un tunnel Cloudflare. Ce que le chemin réel a révélé, et qu'aucun
+  contrôle statique n'aurait trouvé : un `POSTGRES_PASSWORD` en base64 coupant
+  `DATABASE_URL` en deux ; l'initialisation de Postgres refusant un point de
+  montage à cause des ACL Synology (d'où `PGDATA` dans un sous-dossier) ; un
+  `:latest` déjà présent en local que le redémarrage ne réinterroge pas (d'où
+  `pull_policy: always`) ; un proxy qui réécrit `Host` avec l'adresse interne du
+  conteneur, envoyant les retours de connexion vers une adresse morte (d'où
+  `AUTH_URL`) ; et le workflow de publication lui-même, cassé entre ses deux
+  moitiés — un workflow ne se découvre cassé qu'une fois la version publiée.
+  `src/deploy/deployment-config.test.ts` garde désormais chacun de ces points.
+
+
 Sur l'archive `cra-1.0.0-macos-apple-silicon.zip`, dézippée hors du dépôt :
 `donnees/` absent au dézippage et créé au premier démarrage ; migrations
 appliquées ; `/login` en 200 (ce qui prouve du même coup `AUTH_TRUST_HOST` et le
@@ -675,22 +719,21 @@ d'appels ; attribut `com.apple.quarantine` posé à la main puis levé par
 
 ### Liste de vérification d'une installation neuve
 
-**Ces cases n'ont pas été cochées sur une machine vierge dans cet
-environnement**, et Docker n'y est pas installé. À exécuter là où il l'est, et à
-dater.
+Cochées sur un Synology DS723+ le **22 août 2026**, sauf mention contraire.
 
-- [ ] `docker compose up -d --build` aboutit, le service `app` reste vivant.
-- [ ] `docker compose logs app` montre `prisma migrate deploy` appliqué sans
-      erreur.
-- [ ] `scripts/create-user.mjs` crée un compte, et ce compte se connecte.
-- [ ] Une saisie enregistrée survit à `docker compose restart app`.
+- [x] Le projet démarre, le service `app` reste vivant.
+- [x] Les journaux montrent `prisma migrate deploy` appliqué sans erreur.
+- [x] L'écran de premier démarrage crée l'administrateur, et ce compte se
+      connecte.
+- [x] Une montée de version applique ses migrations et conserve les données —
+      quatre montées successives le même jour.
+- [ ] Une saisie enregistrée survit à un redémarrage du conteneur.
 - [ ] `pg_dump` produit une archive non vide, et sa restauration sur une base
       neuve redonne le compte et la saisie.
-- [ ] `docker compose down` puis `up -d` ne perd rien (le volume `db-data`
-      persiste).
-- [ ] Une montée de version applique ses migrations et conserve les données.
+- [ ] Un arrêt-relance complet du projet ne perd rien.
 
-*Dernière exécution : jamais.*
+Les trois dernières restent à faire : la sauvegarde n'a jamais été **restaurée**,
+et une sauvegarde qu'on n'a jamais restaurée n'est pas une sauvegarde.
 
 ---
 
