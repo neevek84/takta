@@ -378,6 +378,18 @@ Docker Hub sous deux étiquettes : `latest`, et le numéro de version. Deux secr
 sont attendus dans le dépôt (`Settings → Secrets → Actions`) :
 `DOCKERHUB_USERNAME` et `DOCKERHUB_TOKEN`.
 
+**Le fichier d'environnement.** Ne copie pas `.env.example` — il liste **tout**,
+y compris ce qui ne vaut que pour une autre cible. Copie celui de ta cible :
+
+| Cible | Fichier à copier en `.env` |
+|---|---|
+| Conteneur, Postgres (NAS, VPS) | `.env.docker.example` |
+| Poste local, SQLite | `.env.local.example` |
+
+Chacun ne contient que ce qui a un sens pour lui : celui du conteneur ne propose
+pas `DATABASE_URL`, que la composition fabrique ; celui du poste local ne
+propose pas `POSTGRES_PASSWORD`, puisqu'il n'y a pas de serveur.
+
 **Recevoir.** Sur le NAS, la composition à utiliser est
 [`docker-compose.prod.yml`](docker-compose.prod.yml) — elle **tire** l'image
 publiée au lieu de la construire, ce qui est la condition pour recevoir une mise

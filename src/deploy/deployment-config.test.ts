@@ -410,3 +410,66 @@ describe('les compositions ne réclament rien que .env.example ne documente', ()
   })
 })
 
+/**
+ * Les deux fichiers **prêts à l'emploi**, un par cible d'installation.
+ *
+ * `.env.example` liste tout, y compris ce qui ne vaut que pour une cible : le
+ * porteur l'a lu et l'a trouvé incompréhensible, à juste titre — il y voisinait
+ * « la composition fabrique DATABASE_URL » et une ligne `DATABASE_URL=`. Soit on
+ * la met, soit on ne la met pas. Ces deux fichiers-ci tranchent, chacun pour sa
+ * cible, et ces contrôles refusent qu'ils se remettent à mentir.
+ */
+describe("les fichiers d'environnement prêts à l'emploi", () => {
+  const DOCKER = lit('.env.docker.example')
+  const LOCAL = lit('.env.local.example')
+
+  function declarees(contenu: string): string[] {
+    return lignesActives(contenu)
+      .map((l) => /^([A-Z_][A-Z0-9_]*)=/.exec(l)?.[1] ?? '')
+      .filter((n) => n !== '')
+  }
+
+  // Une variable réclamée par la composition et absente du fichier qu'on dit
+  // « prêt à l'emploi » est une installation qui refuse de démarrer.
+  it('celui du conteneur couvre tout ce que la composition de production réclame', () => {
+    const reclamees = [...COMPOSE_PROD.matchAll(/\$\{([A-Z_][A-Z0-9_]*)/g)]
+      .map((m) => m[1])
+      .filter((n): n is string => n !== undefined)
+    const presentes = new Set(declarees(DOCKER))
+
+    expect([...new Set(reclamees)].filter((v) => !presentes.has(v))).toEqual([])
+  })
+
+  // C'est toute la raison d'être du découpage : la composition fabrique
+  // `DATABASE_URL`, donc la proposer ici ferait renseigner une valeur ignorée.
+  it("celui du conteneur ne propose pas DATABASE_URL, que la composition fabrique", () => {
+    expect(declarees(DOCKER)).not.toContain('DATABASE_URL')
+  })
+
+  // Symétriquement : hors conteneur, il n'y a pas de serveur Postgres à qui
+  // donner un mot de passe.
+  it('celui du poste local ne propose pas POSTGRES_PASSWORD', () => {
+    expect(declarees(LOCAL)).not.toContain('POSTGRES_PASSWORD')
+    expect(declarees(LOCAL)).toContain('DATABASE_URL')
+  })
+
+  // Les deux exigent les mêmes secrets d'installation : les oublier dans l'un
+  // ferait une cible qui ne démarre pas.
+  it.each(['AUTH_SECRET', 'CREDENTIALS_KEY'])('%s figure dans les deux', (nom) => {
+    expect(declarees(DOCKER)).toContain(nom)
+    expect(declarees(LOCAL)).toContain(nom)
+  })
+
+  // Aucune valeur ne doit être livrée remplie : un secret d'exemple finit en
+  // production, et il est le même chez tout le monde.
+  it.each([
+    ['.env.docker.example', DOCKER],
+    ['.env.local.example', LOCAL],
+  ])('%s ne livre aucun secret pré-rempli', (nom, contenu) => {
+    const remplis = lignesActives(contenu).filter((l) =>
+      /^(AUTH_SECRET|CREDENTIALS_KEY|POSTGRES_PASSWORD)="?.+"?$/.test(l.replace(/=""$/, '=')),
+    )
+    expect(remplis, `${nom} livre une valeur toute faite`).toEqual([])
+  })
+})
+

@@ -8,6 +8,10 @@ dist/
 .env
 .env.*
 !.env.example
+# Les deux fichiers prets a l'emploi, un par cible d'installation. Sans ces
+# exceptions, `.env.*` les avalerait et personne ne les recevrait.
+!.env.docker.example
+!.env.local.example
 
 *.db
 # Les fichiers d'accompagnement de SQLite. `*.db-journal` seul ne suffisait
