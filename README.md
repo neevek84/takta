@@ -626,3 +626,38 @@ publique.
 
 Aucune obligation, en revanche, pour un usage strictement personnel et non
 modifié : installer et se servir du produit tel quel n'impose rien.
+
+---
+
+## Publier une version, et la recevoir sur un NAS
+
+**Publier.** Une version se pose par une étiquette git, jamais par une fusion :
+
+```bash
+npm version minor        # met à jour package.json et pose l'étiquette
+git push --follow-tags
+```
+
+GitHub Actions construit alors l'image en `amd64` et `arm64`, et la publie sur
+Docker Hub sous deux étiquettes : `latest`, et le numéro de version.
+
+Deux secrets sont attendus dans le dépôt (`Settings → Secrets → Actions`) :
+`DOCKERHUB_USERNAME` et `DOCKERHUB_TOKEN`.
+
+**Recevoir.** Sur le NAS, la composition à utiliser est
+[`docker-compose.prod.yml`](docker-compose.prod.yml) — elle **tire** l'image
+publiée au lieu de la construire, ce qui est la condition pour recevoir une
+mise à jour. Container Manager signale alors les nouvelles versions de `latest`
+et les applique d'un clic.
+
+**Avant chaque mise à jour, une sauvegarde.** Le conteneur applique les
+migrations de base au démarrage : si l'une échoue, il ne démarre pas. La
+composition embarque un service qui fait un `pg_dump` quotidien vers
+`./sauvegardes`, avec 90 jours de rétention — pointez ce dossier vers un partage
+du NAS, hors du conteneur.
+
+**Ce qui ne doit jamais changer entre deux versions** : `AUTH_SECRET` et
+`CREDENTIALS_KEY`. Régénérer la première déconnecte tout le monde ; régénérer la
+seconde rend **illisibles** les jetons Google et Dolibarr, définitivement — il
+n'existe aucune rotation de clé.
+

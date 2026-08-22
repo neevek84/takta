@@ -47,6 +47,7 @@ function lignesActives(contenu: string): string[] {
 
 const DOCKERFILE = lit('Dockerfile')
 const COMPOSE = lit('docker-compose.yml')
+const COMPOSE_PROD = lit('docker-compose.prod.yml')
 const DOCKERIGNORE = lit('.dockerignore')
 const ENV_EXAMPLE = lit('.env.example')
 
@@ -62,9 +63,9 @@ function variablesDocumentees(): string[] {
   return [...new Set(noms)]
 }
 
-/** Bloc `environment:` du service `app` du docker-compose, en lignes. */
-function environnementApp(): string[] {
-  const lignes = COMPOSE.split('\n')
+/** Bloc `environment:` du service `app`, en lignes, dans la composition donnée. */
+function environnementApp(compose: string = COMPOSE): string[] {
+  const lignes = compose.split('\n')
   const debutApp = lignes.findIndex((l) => /^\s{2}app:\s*$/.test(l))
   expect(debutApp, 'le service `app` doit exister dans docker-compose.yml').toBeGreaterThan(-1)
 
@@ -84,8 +85,8 @@ function environnementApp(): string[] {
 }
 
 /** Valeur brute déclarée pour `nom` dans le bloc `environment:` du service app. */
-function valeurCompose(nom: string): string | null {
-  for (const ligne of environnementApp()) {
+function valeurCompose(nom: string, compose: string = COMPOSE): string | null {
+  for (const ligne of environnementApp(compose)) {
     const m = new RegExp(`^${nom}\\s*:\\s*(.*)$`).exec(ligne)
     if (m !== null) return (m[1] ?? '').trim()
   }
@@ -309,3 +310,48 @@ describe("l'image Docker n'emporte pas la base de développement", () => {
     }
   })
 })
+
+/**
+ * La composition de **production** est celle qui sera réellement déployée, et
+ * c'est elle qui recevra les mises à jour. Une variable qui lui manque ne se
+ * découvrirait qu'au démarrage du conteneur, chez le porteur, après un clic sur
+ * « Mettre à jour » — c'est-à-dire au pire moment.
+ */
+describe('docker-compose.prod.yml — la composition qui sera déployée', () => {
+  it.each(variablesDocumentees())('%s est transmise au service app', (nom) => {
+    expect(
+      valeurCompose(nom, COMPOSE_PROD),
+      `${nom} manque au bloc environment: du service app de production`,
+    ).not.toBeNull()
+  })
+
+  it.each(['AUTH_SECRET', 'CREDENTIALS_KEY'])(
+    '%s vient de l environnement, jamais écrite en dur',
+    (nom) => {
+      expect(valeurCompose(nom, COMPOSE_PROD) ?? '').toMatch(/\$\{/)
+    },
+  )
+
+  // `build:` construirait sur place, et une composition qui construit ne reçoit
+  // jamais de mise à jour : Container Manager surveille un registre, pas un
+  // Dockerfile local. C'est toute la raison d'être de ce second fichier.
+  it('tire une image publiée, elle ne la construit pas', () => {
+    expect(COMPOSE_PROD).toMatch(/^\s{4}image:\s*\S+\/takta:latest\s*$/m)
+    expect(lignesActives(COMPOSE_PROD).some((l) => l.startsWith('build:'))).toBe(false)
+  })
+
+  // Un volume anonyme serait recréé vide à chaque recréation du conteneur —
+  // c'est-à-dire à chaque mise à jour. Les données doivent survivre au clic.
+  it('range les données dans un volume nommé, qui survit à la mise à jour', () => {
+    expect(COMPOSE_PROD).toMatch(/db-data:\/var\/lib\/postgresql\/data/)
+    expect(COMPOSE_PROD).toMatch(/^volumes:\s*$/m)
+  })
+
+  // Une migration s'applique au démarrage : une mise à jour qui la rate laisse
+  // le service arrêté. Sans sauvegarde, il n'y a pas de retour en arrière.
+  it('emporte une sauvegarde, et elle est logique et non un copie de fichiers', () => {
+    expect(COMPOSE_PROD).toMatch(/pg_dump/)
+    expect(COMPOSE_PROD).not.toMatch(/cp -r .*postgresql\/data/)
+  })
+})
+

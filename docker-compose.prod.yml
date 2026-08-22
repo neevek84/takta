@@ -1,0 +1,87 @@
+# Composition de production : elle **tire** l'image publiée, elle ne la
+# construit pas.
+#
+# C'est toute la différence avec `docker-compose.yml`, qui porte `build: .` et
+# convient au développement. Une composition qui construit sur place ne reçoit
+# jamais de mise à jour : Container Manager surveille un registre, pas un
+# Dockerfile local.
+#
+# Remplacez `VOTRE_COMPTE` par le compte Docker Hub qui publie l'image.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: takta
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD}
+      POSTGRES_DB: takta
+    volumes:
+      # Volume nommé : il survit à la recréation du conteneur, qui est
+      # exactement ce que fait une mise à jour.
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U takta']
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    image: VOTRE_COMPTE/takta:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://takta:${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD}@db:5432/takta
+      # Ces deux clés ne se régénèrent JAMAIS à une mise à jour. Changer
+      # AUTH_SECRET déconnecte tout le monde ; changer CREDENTIALS_KEY rend
+      # illisibles les jetons Google et Dolibarr, sans aucune récupération
+      # possible — il n'existe pas de rotation.
+      AUTH_SECRET: ${AUTH_SECRET:?definir AUTH_SECRET (openssl rand -base64 32)}
+      CREDENTIALS_KEY: ${CREDENTIALS_KEY:?definir CREDENTIALS_KEY (openssl rand -base64 32)}
+      AUTH_TRUST_HOST: 'true'
+      SYNC_FLUSH_TOKEN: ${SYNC_FLUSH_TOKEN:-}
+      CRA_API_TOKEN: ${CRA_API_TOKEN:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      DOCUMENSO_URL: ${DOCUMENSO_URL:-}
+      DOCUMENSO_API_KEY: ${DOCUMENSO_API_KEY:-}
+      SIGNATURE_WEBHOOK_SECRET: ${SIGNATURE_WEBHOOK_SECRET:-}
+    ports:
+      - '3000:3000'
+    restart: unless-stopped
+
+  # Sauvegarde : un `pg_dump` quotidien, pas une copie du volume.
+  #
+  # Copier les fichiers d'une base **en cours d'écriture** capture un état
+  # incohérent — la restauration partirait d'un instant que la base n'a jamais
+  # eu. `pg_dump` s'exécute dans une transaction : ce qu'il rend se restaure.
+  # C'est la même raison qui fait que la sauvegarde SQLite du produit utilise
+  # `VACUUM INTO` plutôt qu'un `cp`.
+  #
+  # Le dossier `/sauvegardes` doit pointer vers un partage du NAS, hors du
+  # conteneur : une sauvegarde qui vit dans ce qu'elle protège ne protège rien.
+  sauvegarde:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD}
+    volumes:
+      - ./sauvegardes:/sauvegardes
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          H=$$(date +%Y%m%d-%H%M%S)
+          pg_dump -h db -U takta -d takta | gzip > "/sauvegardes/takta-$$H.sql.gz" \
+            && echo "sauvegarde ecrite : takta-$$H.sql.gz" \
+            || echo "ECHEC de la sauvegarde a $$H"
+          # Rétention : 90 jours. Une sauvegarde qu'on ne purge jamais finit
+          # par remplir le volume, et c'est la base qui s'arrête.
+          find /sauvegardes -name 'takta-*.sql.gz' -mtime +90 -delete
+          sleep 86400
+        done
+    restart: unless-stopped
+
+volumes:
+  db-data:
