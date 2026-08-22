@@ -11,6 +11,9 @@
  */
 import { prisma } from '@/db/client'
 import { hashPassword } from '@/auth-password'
+import { estRole } from '@/core/auth/roles'
+import type { Role } from '@/core/types'
+import { identifiantDolibarrDe } from '@/services/dolibarr/utilisateur'
 
 /** Ce compte peut-il entrer par la porte mot de passe ? */
 export async function aUnMotDePasse(userId: string): Promise<boolean> {
@@ -82,3 +85,131 @@ export async function creerPremierAdministrateur(args: {
   return { ok: true, motif: '' }
 }
 
+
+/**
+ * Donner un rôle, couper un accès.
+ *
+ * **Pourquoi cet écran existe.** La porte Google crée des comptes au rôle le
+ * moins doté, la reprise des temps Dolibarr aussi. Sans un endroit où élever
+ * l'un d'eux, un `CONSULTANT` le reste pour toujours, et la première personne
+ * qui rejoint l'installation ne peut jamais administrer quoi que ce soit.
+ *
+ * **Deux règles gardent l'instance de se murer** : on ne se retire pas son
+ * propre rôle, et on ne retire pas le dernier administrateur. Sans elles, un
+ * seul clic ferme définitivement l'administration — il n'existe aucun écran pour
+ * la rouvrir, et l'écran de premier démarrage ne se rouvre que sur une base sans
+ * aucun compte.
+ *
+ * **Désactiver n'est pas supprimer.** Un compte porte des saisies, des CRA et
+ * l'attribution de tout ce qui a été poussé chez Dolibarr : le supprimer pour
+ * fermer une porte détruirait cet historique. Le drapeau ferme la porte et ne
+ * touche à rien.
+ */
+
+/** Ce que l'écran des comptes montre — et rien de plus. */
+export interface CompteVue {
+  id: string
+  name: string
+  email: string
+  role: Role
+  disabled: boolean
+  createdAt: Date
+  /** son utilisateur Dolibarr, pour voir d'un coup d'œil qui n'en a pas */
+  identifiantDolibarr: number | null
+}
+
+export async function listerComptes(): Promise<CompteVue[]> {
+  const users = await prisma.user.findMany({
+    orderBy: [{ disabled: 'asc' }, { createdAt: 'asc' }],
+    // Jamais `passwordHash` : une vue qui le porte finit par le peindre.
+    select: { id: true, name: true, email: true, role: true, disabled: true, createdAt: true },
+  })
+
+  const vues: CompteVue[] = []
+  for (const u of users) {
+    vues.push({
+      ...u,
+      // `role` est une colonne `String` : une valeur écrite à la main en SQL y
+      // entre sans que rien ne la refuse. Ce qui n'est pas un rôle connu se lit
+      // donc comme le moins doté — jamais comme un droit qu'on n'a pas donné.
+      role: estRole(u.role) ? u.role : 'CONSULTANT',
+      identifiantDolibarr: await identifiantDolibarrDe(u.id),
+    })
+  }
+  return vues
+}
+
+/** Combien d'administrateurs **actifs** l'instance compte, en dehors d'un compte donné. */
+async function autresAdministrateurs(sauf: string): Promise<number> {
+  return prisma.user.count({ where: { role: 'ADMIN', disabled: false, id: { not: sauf } } })
+}
+
+export async function definirRole(args: {
+  userId: string
+  role: Role
+  parId: string
+}): Promise<{ ok: boolean; motif: string }> {
+  if (!estRole(args.role)) {
+    return { ok: false, motif: 'Ce rôle n’existe pas.' }
+  }
+
+  const cible = await prisma.user.findUnique({
+    where: { id: args.userId },
+    select: { role: true },
+  })
+  if (cible === null) return { ok: false, motif: 'Ce compte n’existe plus.' }
+
+  const perdLAdministration = cible.role === 'ADMIN' && args.role !== 'ADMIN'
+
+  if (perdLAdministration && args.userId === args.parId) {
+    return {
+      ok: false,
+      motif:
+        'Vous ne pouvez pas vous retirer votre propre rôle d’administrateur. Demandez à un autre ' +
+        'administrateur de le faire.',
+    }
+  }
+
+  if (perdLAdministration && (await autresAdministrateurs(args.userId)) === 0) {
+    return {
+      ok: false,
+      motif:
+        'Ce compte est le dernier administrateur actif : le rétrograder fermerait l’administration ' +
+        'de cette installation, et aucun écran ne permettrait de la rouvrir.',
+    }
+  }
+
+  await prisma.user.update({ where: { id: args.userId }, data: { role: args.role } })
+  return { ok: true, motif: '' }
+}
+
+export async function definirActivation(args: {
+  userId: string
+  actif: boolean
+  parId: string
+}): Promise<{ ok: boolean; motif: string }> {
+  const cible = await prisma.user.findUnique({
+    where: { id: args.userId },
+    select: { role: true },
+  })
+  if (cible === null) return { ok: false, motif: 'Ce compte n’existe plus.' }
+
+  if (!args.actif && args.userId === args.parId) {
+    return {
+      ok: false,
+      motif: 'Vous ne pouvez pas désactiver votre propre compte : vous seriez aussitôt déconnecté.',
+    }
+  }
+
+  if (!args.actif && cible.role === 'ADMIN' && (await autresAdministrateurs(args.userId)) === 0) {
+    return {
+      ok: false,
+      motif:
+        'Ce compte est le dernier administrateur actif : le désactiver fermerait l’administration ' +
+        'de cette installation.',
+    }
+  }
+
+  await prisma.user.update({ where: { id: args.userId }, data: { disabled: !args.actif } })
+  return { ok: true, motif: '' }
+}
