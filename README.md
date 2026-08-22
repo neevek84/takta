@@ -1,5 +1,7 @@
 # CRA
 
+**Licence : GNU AGPL v3** — voir [LICENSE](LICENSE).
+
 Application de compte-rendu d'activité autoportante. Elle ne facture pas :
 son rôle s'arrête au CRA validé. Les champs liés à la facturation
 (`invoiceNumber`, `invoicedAt`, `paidAt`) sont un suivi informatif, pas un
@@ -524,3 +526,27 @@ empreinte SHA-256 de `donnees/cra.db` inchangée, aucun serveur résiduel.
 port en écoutant sur `127.0.0.1` (IPv4) : un programme tiers écoutant sur le
 même port en **IPv6** seulement (`*:3000`) reste invisible, et CRA peut démarrer
 sur un port déjà pris. L'arrêt, lui, ne dépend plus du port.
+
+---
+
+## Licence, et ce qu'elle impose
+
+Ce logiciel est distribué sous **GNU Affero General Public License, version 3**.
+Le texte intégral est dans [LICENSE](LICENSE).
+
+En clair : vous pouvez l'utiliser, l'installer où vous voulez, le modifier et le
+redistribuer — y compris commercialement. En échange, **toute version modifiée
+que vous exposez à des utilisateurs via un réseau doit rendre son code source
+disponible à ces utilisateurs** (article 13). C'est ce qui distingue l'AGPL de
+la GPL, et c'est délibéré : le produit est fait pour être auto-hébergé, et cette
+clause empêche qu'une version fermée en soit tirée comme service en ligne.
+
+**Obligation à honorer dans le produit lui-même.** L'article 13 vise les
+utilisateurs qui interagissent avec le logiciel *à distance*. Une installation
+qui sert plusieurs consultants doit donc leur offrir un moyen d'obtenir la
+source — en pratique, un lien vers le dépôt, visible depuis l'application. **Ce
+lien n'existe pas encore** : il sera posé quand le dépôt aura une adresse
+publique.
+
+Aucune obligation, en revanche, pour un usage strictement personnel et non
+modifié : installer et se servir du produit tel quel n'impose rien.

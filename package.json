@@ -23,8 +23,8 @@
     "empaqueter": "node scripts/empaqueter.mjs"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "KREATIV PROJECT MANAGEMENT SASU",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "dependencies": {
     "@node-rs/argon2": "^2.1.0",
