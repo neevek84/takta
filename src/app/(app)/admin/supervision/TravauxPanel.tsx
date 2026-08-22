@@ -13,6 +13,7 @@ import {
 import type { JobView } from '@/services/jobs/scheduler'
 import type { Ordonnanceur } from '@/services/supervision'
 import { executerTravail, basculerTravail } from './actions'
+import { Banner } from '@/components/ui/Banner'
 
 /** Chaque état porte une icône : la teinte seule ne se perçoit pas de tous. */
 const ETATS: Record<string, { libelle: string; tone: Tone; icone: Icone }> = {
@@ -27,6 +28,19 @@ function horodatage(date: Date | null): string {
   return date === null ? 'jamais' : date.toISOString().slice(0, 16).replace('T', ' ')
 }
 
+/**
+ * L'échéance d'un travail, ou ce qu'elle veut dire quand il n'y en a pas.
+ *
+ * **`new Date(0)` est un marqueur, pas une date.** `syncJobDefinitions` le
+ * pose à la création d'un travail — « dû au premier réveil » — et c'est ce qui
+ * rend le réveil observable et reproductible. Affiché tel quel, l'écran donne
+ * à lire une échéance de 1970 : le porteur l'a pris pour un défaut, et il
+ * avait raison. Un écran qui affiche 1970 ne dit rien de vrai.
+ */
+function echeance(date: Date): string {
+  return date.getTime() === 0 ? 'dès le prochain réveil' : horodatage(date)
+}
+
 export function TravauxPanel({
   travaux,
   ordonnanceur,
@@ -34,6 +48,12 @@ export function TravauxPanel({
   travaux: JobView[]
   ordonnanceur: Ordonnanceur
 }) {
+  // Un travail activé qui n'a jamais tourné, et pas un seul qui ait tourné :
+  // c'est la signature d'un réveil qui n'existe pas, et non d'un travail qui
+  // attend son échéance.
+  const jamaisReveille =
+    travaux.some((t) => t.enabled) && travaux.every((t) => t.lastRunAt === null)
+
   return (
     <Card title="Travaux">
       {/* Pour qui ces travaux tournent. Les deux rappels s'adressent à
@@ -46,6 +66,28 @@ export function TravauxPanel({
         seule fois, sous le compte{' '}
         <span className="font-medium">{ordonnanceur.proprietaireLabel}</span>, le plus ancien.
       </p>
+
+      {/* **Un ordonnanceur sans horloge.** `POST /api/jobs/tick` n'a pas de
+          minuterie : il attend qu'un déclencheur extérieur l'appelle. Tant que
+          personne ne l'appelle, rien ne tourne jamais — et l'écran affichait
+          sept lignes « Jamais exécuté » sans dire pourquoi.
+
+          Le silence s'impose dès qu'un travail a tourné (le réveil existe,
+          le redire serait crier au loup) et quand aucun n'est activé
+          (personne n'attend rien). */}
+      {jamaisReveille && (
+        <div className="mb-3">
+          <Banner tone="warning" title="Aucun réveil n’a jamais eu lieu">
+            <p className="text-sm">
+              L’ordonnanceur n’a pas d’horloge : il attend qu’un déclencheur extérieur appelle{' '}
+              <code>POST /api/jobs/tick</code>, toutes les cinq minutes, avec l’en-tête{' '}
+              <code>Authorization: Bearer $CRA_API_TOKEN</code>. Sur un NAS, une tâche planifiée
+              suffit. Tant que personne ne l’appelle, aucun rappel ne partira et la file de sortie
+              ne se videra jamais d’elle-même.
+            </p>
+          </Banner>
+        </div>
+      )}
 
       <DataTable caption="État des traitements récurrents">
         <thead>
@@ -72,7 +114,7 @@ export function TravauxPanel({
                 <td className="p-2">{travail.intervalMinutes} min</td>
                 <td className="p-2">{horodatage(travail.lastRunAt)}</td>
                 <td className="p-2">
-                  {travail.disponible && travail.enabled ? horodatage(travail.nextRunAt) : '—'}
+                  {travail.disponible && travail.enabled ? echeance(travail.nextRunAt) : '—'}
                 </td>
                 <td className="p-2">
                   <Badge tone={etat.tone} icone={etat.icone}>{etat.libelle}</Badge>
