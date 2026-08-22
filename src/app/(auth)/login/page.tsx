@@ -11,12 +11,32 @@ import { getGoogleOAuthClientView } from '@/services/google/oauth-client'
 
 const MESSAGE_ECHEC = 'Adresse e-mail ou mot de passe incorrect.'
 
+/**
+ * Ce que dit un échec renvoyé par Auth.js lui-même, sur `pages.error`.
+ *
+ * **`AccessDenied` n'est pas une panne** : c'est notre règle de liaison qui a
+ * refusé — adresse Google non vérifiée, compte désactivé, fusion refusée. Elle
+ * ne dit jamais laquelle, sans quoi elle apprendrait à qui essaie que l'adresse
+ * est connue. Renvoyer vers les journaux pour un refus délibéré ferait chercher
+ * une panne qui n'existe pas.
+ *
+ * Le code est **affiché** pour les autres : « la connexion a échoué » seul
+ * envoie deviner, alors que `Configuration` désigne un client OAuth illisible
+ * ou absent, et que le journal du serveur porte désormais la cause.
+ */
+function messageAuth(code: string): string {
+  if (code === 'AccessDenied') {
+    return 'Connexion refusée. Ce compte ne peut pas entrer par cette porte.'
+  }
+  return `La connexion a échoué (${code}). La cause est dans les journaux du serveur.`
+}
+
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ erreur?: string; email?: string; cree?: string }>
+  searchParams: Promise<{ erreur?: string; email?: string; cree?: string; error?: string }>
 }) {
-  const { erreur, email, cree } = await searchParams
+  const { erreur, email, cree, error } = await searchParams
   // Une instance neuve est murée : sans cet écran, il n'existe aucun moyen de
   // créer le premier compte sans terminal.
   const premierDemarrage = await aucunUtilisateur()
@@ -51,6 +71,9 @@ export default async function LoginPage({
             <Banner tone="success">Compte créé. Connectez-vous avec ces identifiants.</Banner>
           )}
           {erreur !== undefined && <Banner tone="danger">{MESSAGE_ECHEC}</Banner>}
+          {/* `error` (sans accent) est le paramètre d'Auth.js, pas le nôtre :
+              les deux coexistent parce qu'ils ne disent pas la même chose. */}
+          {error !== undefined && <Banner tone="danger">{messageAuth(error)}</Banner>}
           <Field
             label="Adresse e-mail"
             name="email"

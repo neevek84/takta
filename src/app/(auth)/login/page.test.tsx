@@ -200,3 +200,29 @@ describe('le retour de la création du premier compte', () => {
     expect(screen.queryByRole('status')).toBeNull()
   })
 })
+
+/**
+ * Auth.js renvoie ses propres échecs sur `pages.error` avec un paramètre
+ * `error=<code>`. Sans traitement ici, l'écran revient **muet** : on clique
+ * sur « Se connecter avec Google », on traverse le consentement, et on
+ * retombe sur le formulaire comme si rien ne s'était passé.
+ */
+describe('un échec renvoyé par Auth.js', () => {
+  it('se voit, et nomme son code', async () => {
+    render(await LoginPage({ searchParams: Promise.resolve({ error: 'Configuration' }) }))
+
+    const bandeau = screen.getByRole('alert')
+    expect(bandeau.textContent).toMatch(/Configuration/)
+  })
+
+  // `AccessDenied` est le refus de notre propre règle de liaison — adresse non
+  // vérifiée, compte coupé, fusion refusée. Il a sa phrase à lui : « voir les
+  // journaux » n'aurait rien à s'y montrer, la décision est délibérée.
+  it('distingue le refus de la panne', async () => {
+    render(await LoginPage({ searchParams: Promise.resolve({ error: 'AccessDenied' }) }))
+
+    const bandeau = screen.getByRole('alert')
+    expect(bandeau.textContent).toMatch(/refus/i)
+    expect(bandeau.textContent).not.toMatch(/journaux/i)
+  })
+})

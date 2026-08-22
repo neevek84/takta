@@ -10,6 +10,7 @@ import { readGoogleOAuthClient } from '@/services/google/oauth-client'
 import { enregistrerEtPreparerAgenda } from '@/services/google/connect'
 import { lierOuCreerCompteGoogle } from '@/services/auth/comptes'
 import { authConfig } from './auth.config'
+import { journalErreur } from '@/services/log'
 import type { Role } from '@/core/types'
 
 const credentialsSchema = z.object({
@@ -96,6 +97,20 @@ async function fournisseurGoogle() {
 
 export const { handlers, auth, signIn, signOut } = NextAuth(async () => ({
   ...authConfig,
+  // **Un échec d'authentification doit rester lisible.** Auth.js sert sinon sa
+  // propre page d'erreur, sur une URL qu'il fabrique lui-même : derrière un
+  // proxy, `…/api/auth/error?error=Configuration` sur l'hôte interne du
+  // conteneur — une adresse morte, portant un mot qui n'apprend rien. C'est
+  // exactement ce qui a été vu, et la cause réelle n'était nulle part.
+  pages: { ...authConfig.pages, error: '/login' },
+  // Et la cause, elle, part au journal du serveur — expurgée comme le reste.
+  // Sans cela, une erreur de configuration OAuth ne laisse aucune trace :
+  // ni à l'écran, ni dans les journaux.
+  logger: {
+    error(err: unknown) {
+      journalErreur('auth', err)
+    },
+  },
   providers: [fournisseurMotDePasse(), ...(await fournisseurGoogle())],
   callbacks: {
     ...authConfig.callbacks,

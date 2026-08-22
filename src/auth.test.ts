@@ -10,20 +10,23 @@ import { prisma } from '@/db/client'
 // L'appel à NextAuth est capturé, et non simplement neutralisé : ce que la
 // configuration *est* — une fonction, et non un objet — est devenu une règle,
 // et une règle qui n'est vue par personne se perd au premier remaniement.
-const { authMock, nextAuthMock, lireClientMock, lierMock, enregistrerMock } = vi.hoisted(() => ({
-  authMock: vi.fn(),
-  nextAuthMock: vi.fn((_config: unknown) => ({
-    handlers: {},
-    auth: authMock,
-    signIn: vi.fn(),
-    signOut: vi.fn(),
-  })),
-  lireClientMock: vi.fn(),
-  lierMock: vi.fn(),
-  enregistrerMock: vi.fn(),
-}))
+const { authMock, nextAuthMock, lireClientMock, lierMock, enregistrerMock, journalErreurMock } =
+  vi.hoisted(() => ({
+    authMock: vi.fn(),
+    nextAuthMock: vi.fn((_config: unknown) => ({
+      handlers: {},
+      auth: authMock,
+      signIn: vi.fn(),
+      signOut: vi.fn(),
+    })),
+    lireClientMock: vi.fn(),
+    lierMock: vi.fn(),
+    enregistrerMock: vi.fn(),
+    journalErreurMock: vi.fn(),
+  }))
 
 vi.mock('next-auth', () => ({ default: nextAuthMock }))
+vi.mock('@/services/log', () => ({ journalErreur: journalErreurMock }))
 
 // Le client OAuth, la fusion et l'enregistrement d'agenda sont pilotés d'ici :
 // ce qui s'éprouve à ce niveau, c'est **le branchement** — quelle porte existe,
@@ -159,14 +162,15 @@ describe('la configuration Auth.js', () => {
 })
 
 /** Rejoue la fabrique de configuration passée à NextAuth, telle qu'une requête la déclenche. */
-async function construireConfig(): Promise<{
+type ConfigConstruite = {
   providers: { id?: string; options?: Record<string, unknown> }[]
   callbacks: { signIn: (p: unknown) => Promise<boolean> }
-}> {
-  const construire = nextAuthMock.mock.calls[0]?.[0] as () => Promise<{
-    providers: { id?: string; options?: Record<string, unknown> }[]
-    callbacks: { signIn: (p: unknown) => Promise<boolean> }
-  }>
+  pages?: Record<string, string>
+  logger?: { error?: (err: unknown) => void }
+}
+
+async function construireConfig(): Promise<ConfigConstruite> {
+  const construire = nextAuthMock.mock.calls[0]?.[0] as () => Promise<ConfigConstruite>
   return construire()
 }
 
@@ -318,5 +322,34 @@ describe('l entrée par Google', () => {
       true,
     )
     expect(enregistrerMock).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * **Ce qu'un échec d'authentification donne à voir.**
+ *
+ * Auth.js sert sa propre page d'erreur, sur une URL qu'il fabrique lui-même :
+ * derrière un proxy, `…/api/auth/error?error=Configuration` sur l'hôte interne
+ * du conteneur — une adresse morte, portant un mot qui n'apprend rien. Le
+ * porteur a vu exactement cela, et la cause réelle n'était nulle part.
+ */
+describe('un échec de connexion doit rester lisible', () => {
+  it("ramène sur l'écran de connexion plutôt que sur la page d'Auth.js", async () => {
+    lireClientMock.mockResolvedValue(null)
+    const config = await construireConfig()
+
+    expect(config.pages?.error).toBe('/login')
+  })
+
+  it('consigne la cause au lieu de la laisser disparaître', async () => {
+    lireClientMock.mockResolvedValue(null)
+    const config = await construireConfig()
+
+    config.logger?.error?.(new Error('client OAuth illisible'))
+
+    expect(journalErreurMock).toHaveBeenCalled()
+    const [portee, cause] = journalErreurMock.mock.calls[0] as [string, unknown]
+    expect(portee).toBe('auth')
+    expect((cause as Error).message).toBe('client OAuth illisible')
   })
 })
