@@ -60,3 +60,28 @@ export function gabaritRuptureJournal(args: { seq: number; raison: string }): Ga
     ].join('\n'),
   }
 }
+
+/**
+ * Le courriel qui porte un lien de réinitialisation.
+ *
+ * Il dit **définir** autant que **réinitialiser** : ce parcours est aussi celui
+ * par lequel un compte né sans mot de passe — connexion Google, reprise
+ * Dolibarr — s'en donne un pour la première fois.
+ */
+export function gabaritReinitialisation(args: { lien: string; minutes: number }): Gabarit {
+  return {
+    sujet: 'takta — définir ou réinitialiser votre mot de passe',
+    corps: [
+      'Vous avez demandé à définir ou réinitialiser le mot de passe de votre compte takta.',
+      '',
+      args.lien,
+      '',
+      `Ce lien est valable ${args.minutes} minutes et ne sert qu'une fois.`,
+      "Passé ce délai, redemandez-en un depuis l'écran de connexion.",
+      '',
+      "Si vous n'êtes pas à l'origine de cette demande, ce message ne demande aucune action :",
+      'sans le lien ci-dessus, personne ne peut changer votre mot de passe.',
+    ].join('\n'),
+  }
+}
+

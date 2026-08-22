@@ -13,6 +13,12 @@ model User {
   name         String
   passwordHash String
   role         String   @default("ADMIN")
+
+  /// Accès coupé, sans rien détruire. La seule autre façon de fermer une porte
+  /// était de supprimer le compte — ce qui emporte ses saisies, ses CRA et
+  /// l'attribution de tout ce qui a été poussé chez Dolibarr.
+  disabled     Boolean  @default(false)
+
   createdAt    DateTime @default(now())
 
   timeEntries TimeEntry[]
