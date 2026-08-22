@@ -54,6 +54,43 @@ const ACTIONS_PERSONNELLES: Readonly<Record<string, readonly string[]>> = {
   'admin/sync/actions.ts': ['synchroniserMaintenant', 'arbitrer'],
 }
 
+/**
+ * Où s'arrête la fonction ouverte à `debut`.
+ *
+ * Une accolade seule en début de ligne referme la fonction ; un `export` en
+ * début de ligne ouvre la suivante. Le premier des deux borne le corps. Le
+ * `(?=\n|$)` écarte le `}` d'un argument déstructuré sur plusieurs lignes, qui
+ * n'est pas une fin de fonction.
+ */
+function finDuCorps(contenu: string, debut: number): number {
+  const reste = contenu.slice(debut)
+  const bornes = [/\n\}(?=\n|$)/, /\nexport /]
+    .map((borne) => reste.search(borne))
+    .filter((index) => index >= 0)
+  return bornes.length === 0 ? contenu.length : debut + Math.min(...bornes)
+}
+
+/**
+ * Les actions d'un fichier qui n'appellent pas la garde, hors exceptions nommées.
+ *
+ * La tranche lue s'arrête au corps de la fonction courante. Une fenêtre de
+ * taille fixe — 600 caractères — débordait sur la fonction suivante dès qu'une
+ * action était courte : la garde de la voisine couvrait l'action nue, et une
+ * action d'administration sans aucune garde passait le contrôle.
+ */
+function actionsSansGarde(contenu: string, exemptes: readonly string[]): string[] {
+  const fautifs: string[] = []
+
+  for (const trouve of contenu.matchAll(/export async function (\w+)/g)) {
+    const nom = trouve[1]!
+    if (exemptes.includes(nom)) continue
+    const corps = contenu.slice(trouve.index!, finDuCorps(contenu, trouve.index!))
+    if (!corps.includes('exigerAdministration(')) fautifs.push(nom)
+  }
+
+  return fautifs
+}
+
 function chemin(fichier: string): string {
   return relative(join(process.cwd(), 'src', 'app', '(app)'), fichier).split('\\').join('/')
 }
@@ -91,6 +128,27 @@ describe('les écrans d administration exigent le rôle', () => {
     ).toBe(true)
   })
 
+  it('ne se laisse pas couvrir par la garde de l action suivante', () => {
+    // Deux actions courtes qui se suivent : la garde de `seconde` tombait dans
+    // la fenêtre ouverte après la signature de `premiere`, et une action nue
+    // passait le contrôle. C'est exactement la forme de `admin/comptes`.
+    const source = `'use server'
+
+export async function premiere(userId: string): Promise<void> {
+  await definirRole({ userId, role: 'ADMIN' })
+}
+
+export async function seconde(userId: string): Promise<void> {
+  await exigerAdministration()
+  await definirActivation({ userId, actif: false })
+}
+`
+    expect(
+      actionsSansGarde(source, []),
+      "la garde d'une action ne doit jamais compter pour sa voisine",
+    ).toEqual(['premiere'])
+  })
+
   it('ne laisse aucune action d administration sans garde', () => {
     const fautifs: string[] = []
 
@@ -99,15 +157,7 @@ describe('les écrans d administration exigent le rôle', () => {
       const exemptes = ACTIONS_PERSONNELLES[relatif] ?? []
       const contenu = readFileSync(fichier, 'utf8')
 
-      for (const trouve of contenu.matchAll(/export async function (\w+)/g)) {
-        const nom = trouve[1]!
-        if (exemptes.includes(nom)) continue
-        // Les 600 caractères qui suivent la signature : assez pour couvrir la
-        // liste d'arguments et les premières lignes du corps, trop peu pour
-        // attraper la garde de la fonction suivante.
-        const corps = contenu.slice(trouve.index!, trouve.index! + 600)
-        if (!corps.includes('exigerAdministration(')) fautifs.push(`${relatif}#${nom}`)
-      }
+      for (const nom of actionsSansGarde(contenu, exemptes)) fautifs.push(`${relatif}#${nom}`)
     }
 
     expect(
