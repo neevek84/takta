@@ -52,6 +52,19 @@ const DOCKERIGNORE = lit('.dockerignore')
 const ENV_EXAMPLE = lit('.env.example')
 
 /**
+ * Variables que **la composition** consomme, et que l'application ne lit
+ * jamais. Elles se documentent dans `.env.example` — il faut bien que le
+ * porteur sache les renseigner — mais elles n'ont rien à faire dans le bloc
+ * `environment:` du service applicatif.
+ *
+ * `POSTGRES_PASSWORD` en est le seul cas : le service `db` s'en sert pour
+ * créer son compte, et la composition la compose dans `DATABASE_URL`. Le code
+ * de l'application, lui, ne connaît que `DATABASE_URL`. La passer au service
+ * applicatif y ferait entrer un secret dont il n'a aucun usage.
+ */
+const HORS_APPLICATION = new Set(['POSTGRES_PASSWORD'])
+
+/**
  * Noms de variables déclarés (non commentés) par `.env.example`. C'est le
  * contrat documenté de l'installation : tout ce qui est là doit pouvoir être
  * fourni au conteneur.
@@ -61,6 +74,11 @@ function variablesDocumentees(): string[] {
     .map((l) => /^([A-Z_][A-Z0-9_]*)=/.exec(l)?.[1] ?? '')
     .filter((n) => n !== '')
   return [...new Set(noms)]
+}
+
+/** Les mêmes, moins celles que l'application ne lit jamais. */
+function variablesDeLApplication(): string[] {
+  return variablesDocumentees().filter((n) => !HORS_APPLICATION.has(n))
 }
 
 /** Bloc `environment:` du service `app`, en lignes, dans la composition donnée. */
@@ -94,7 +112,7 @@ function valeurCompose(nom: string, compose: string = COMPOSE): string | null {
 }
 
 describe('docker-compose.yml — les variables documentées atteignent le conteneur', () => {
-  it.each(variablesDocumentees())(
+  it.each(variablesDeLApplication())(
     '%s est transmise au service app',
     (nom) => {
       // `docker compose` ne propage RIEN de l'environnement de l'hôte tout
@@ -318,7 +336,7 @@ describe("l'image Docker n'emporte pas la base de développement", () => {
  * « Mettre à jour » — c'est-à-dire au pire moment.
  */
 describe('docker-compose.prod.yml — la composition qui sera déployée', () => {
-  it.each(variablesDocumentees())('%s est transmise au service app', (nom) => {
+  it.each(variablesDeLApplication())('%s est transmise au service app', (nom) => {
     expect(
       valeurCompose(nom, COMPOSE_PROD),
       `${nom} manque au bloc environment: du service app de production`,
@@ -352,6 +370,43 @@ describe('docker-compose.prod.yml — la composition qui sera déployée', () =>
   it('emporte une sauvegarde, et elle est logique et non un copie de fichiers', () => {
     expect(COMPOSE_PROD).toMatch(/pg_dump/)
     expect(COMPOSE_PROD).not.toMatch(/cp -r .*postgresql\/data/)
+  })
+})
+
+/**
+ * Le contrôle **en sens inverse**, et il manquait.
+ *
+ * Les contrôles précédents vérifient que tout ce que `.env.example` documente
+ * atteint le conteneur. Rien ne vérifiait le contraire : une variable réclamée
+ * par une composition et **absente du fichier d'exemple** est une variable que
+ * personne ne pense à renseigner — l'installation refuse alors de démarrer sur
+ * un nom que le porteur n'a jamais vu.
+ *
+ * C'est arrivé le 22 août 2026 : `POSTGRES_PASSWORD` a été introduit dans la
+ * composition de production sans être documenté, et c'est le porteur qui l'a
+ * remarqué en lisant le fichier.
+ */
+describe('les compositions ne réclament rien que .env.example ne documente', () => {
+  /** Noms interpolés depuis l'environnement dans une composition. */
+  function variablesReclamees(compose: string): string[] {
+    const noms = [...compose.matchAll(/\$\{([A-Z_][A-Z0-9_]*)/g)]
+      .map((m) => m[1])
+      .filter((n): n is string => n !== undefined)
+    return [...new Set(noms)]
+  }
+
+  it.each([
+    ['docker-compose.yml', COMPOSE],
+    ['docker-compose.prod.yml', COMPOSE_PROD],
+  ])('%s ne réclame que des variables documentées', (nom, compose) => {
+    const documentees = new Set(variablesDocumentees())
+    const orphelines = variablesReclamees(compose).filter((v) => !documentees.has(v))
+
+    expect(
+      orphelines,
+      `${nom} réclame ${orphelines.join(', ')} — absente(s) de .env.example, ` +
+        'donc invisible(s) pour qui installe',
+    ).toEqual([])
   })
 })
 
