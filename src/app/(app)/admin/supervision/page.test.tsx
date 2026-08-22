@@ -73,7 +73,6 @@ const TRAVAIL: JobView = {
 const ORDONNANCEUR: Ordonnanceur = {
   proprietaireId: 'u1',
   proprietaireLabel: 'Keveen',
-  autreCompte: false,
   comptes: 1,
 }
 

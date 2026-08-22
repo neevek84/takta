@@ -152,6 +152,28 @@ describe('rappel de saisie', () => {
     expect(envois[0]!.corps).not.toContain('2026-08-01') // samedi
   })
 
+  it('ADRESSE LE RAPPEL À LA PERSONNE, PAS À LA BOÎTE DE L INSTANCE', async () => {
+    // Sans cela, trois consultants reçoivent leurs trois rappels dans la même
+    // boîte — celle du réglage `notificationEmail` — et deux d'entre eux ne
+    // reçoivent jamais le leur. C'est la raison d'être de tout ce chemin.
+    await saveEntry({ userId, lineId, date: '2026-08-03', minutes: 480, kind: 'REALISE' })
+
+    await rappelSaisie({ now: NOW, userId, mailer, destinataire: 'ada@exemple.test' })
+
+    expect(envois).toHaveLength(1)
+    expect(envois[0]!.to).toBe('ada@exemple.test')
+  })
+
+  it("SANS destinataire, retombe sur la boîte de l'instance", async () => {
+    // Les travaux d'instance — la chaîne du journal, les webhooks — n'ont
+    // personne à qui écrire : le réglage reste leur adresse.
+    await saveEntry({ userId, lineId, date: '2026-08-03', minutes: 480, kind: 'REALISE' })
+
+    await rappelSaisie({ now: NOW, userId, mailer })
+
+    expect(envois[0]!.to).toBe('keveen@exemple.test')
+  })
+
   it('N ENVOIE RIEN quand tout est saisi', async () => {
     // Pas de notification pour ce qui n'appelle aucune action.
     for (const jour of ['2026-08-03', '2026-08-04', '2026-08-06']) {

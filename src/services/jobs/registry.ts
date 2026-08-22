@@ -12,8 +12,22 @@ import {
 
 export interface JobContext {
   now: Date
-  /** propriétaire de l'instance sous un réveil externe, appelant sous un clic */
+  /**
+   * La personne pour qui ce passage travaille.
+   *
+   * Pour un travail d'instance, le propriétaire sous un réveil externe et
+   * l'appelant sous un clic. Pour un travail `parPersonne`, chacun à son
+   * tour : l'ordonnanceur rappelle le traitement une fois par compte actif.
+   */
   userId: string
+  /**
+   * L'adresse de cette personne-là, quand le travail s'adresse à quelqu'un.
+   *
+   * Absente pour un travail d'instance : `notify` retombe alors sur le
+   * destinataire réglé dans l'instance, qui est le bon pour ce qui
+   * n'appartient à personne.
+   */
+  destinataire?: string
   /** injecté par les tests ; la production n'en passe aucun */
   fetchFn?: FetchLike
   /** injecté par les tests ; en production, la configuration SMTP décide */
@@ -32,6 +46,16 @@ export interface JobDefinition {
   label: string
   intervalMinutes: number
   enabledByDefault: boolean
+  /**
+   * Vrai quand le travail s'adresse à **une personne** et doit donc tourner
+   * une fois par compte actif.
+   *
+   * **Obligatoire, jamais optionnel** : un champ facultatif ferait hériter un
+   * travail ajouté demain de « instance » sans que personne ne l'ait décidé —
+   * c'est-à-dire exactement du défaut qui a produit ce défaut. Un test fige en
+   * plus la liste des deux, pour qu'un troisième se remarque.
+   */
+  parPersonne: boolean
 }
 
 const JOUR = 24 * 60
@@ -55,37 +79,56 @@ export const JOB_DEFINITIONS: readonly JobDefinition[] = [
     // `POST /api/sync/flush` suffisent à l'autoportance ; automatiser une
     // écriture sortante se décide, cela ne s'hérite pas d'une installation.
     enabledByDefault: false,
+    // La file porte déjà le `userId` de chaque ligne : la vider une fois les
+    // vide toutes. La rejouer par personne rejouerait les mêmes lignes.
+    parPersonne: false,
   },
   {
     name: 'webhooks.distribute',
     label: 'Distribution des rappels sortants',
     intervalMinutes: 5,
     enabledByDefault: true,
+    parPersonne: false,
   },
-  { name: 'rappel.saisie', label: 'Rappel de saisie', intervalMinutes: JOUR, enabledByDefault: false },
+  {
+    name: 'rappel.saisie',
+    label: 'Rappel de saisie',
+    intervalMinutes: JOUR,
+    enabledByDefault: false,
+    // Les jours ouvrés sans saisie sont ceux **de quelqu'un**.
+    parPersonne: true,
+  },
   {
     name: 'rappel.cloture',
     label: 'Rappel de clôture',
     intervalMinutes: JOUR,
     enabledByDefault: false,
+    // Un CRA appartient à une personne, et c'est elle qui doit le clôturer.
+    parPersonne: true,
   },
   {
     name: 'signature.relance',
     label: 'Relance de signature',
     intervalMinutes: JOUR,
     enabledByDefault: false,
+    // La relance part vers le **client**, pas vers le consultant : la balayer
+    // par personne enverrait autant de relances que de comptes.
+    parPersonne: false,
   },
   {
     name: 'signature.rafraichissement',
     label: 'Rafraîchissement des signatures',
     intervalMinutes: JOUR,
     enabledByDefault: false,
+    parPersonne: false,
   },
   {
     name: 'journal.verification',
     label: 'Vérification de la chaîne du journal',
     intervalMinutes: JOUR,
     enabledByDefault: true,
+    // La chaîne est celle de l'instance, indivise.
+    parPersonne: false,
   },
 ]
 

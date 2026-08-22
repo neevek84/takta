@@ -214,7 +214,7 @@ describe('alertes', () => {
  * agrégat est le seul endroit d'où l'écran peut le dire.
  */
 describe('ordonnanceur', () => {
-  it('NOMME LE COMPTE POUR LEQUEL LES TRAVAUX TOURNENT, et prévient le second', async () => {
+  it('NOMME LE COMPTE QUI PORTE LES TRAVAUX D INSTANCE', async () => {
     // Datés dans un passé lointain : ces deux comptes sont les plus anciens de
     // la base de test, quels que soient les comptes laissés par les autres
     // fichiers de test.
@@ -235,14 +235,15 @@ describe('ordonnanceur', () => {
       },
     })
 
+    // Le propriétaire ne désigne plus que les travaux d'instance — la file,
+    // les webhooks, la chaîne du journal. Les deux rappels, eux, passent par
+    // compte actif : c'est l'ordonnanceur qui le prouve, pas cet écran.
     const vueDuSecond = await readOrdonnanceur(second.id)
     expect(vueDuSecond.proprietaireLabel).toBe('Premier')
-    expect(vueDuSecond.autreCompte).toBe(true)
     expect(vueDuSecond.comptes).toBeGreaterThanOrEqual(2)
 
     const vueDuPremier = await readOrdonnanceur(premier.id)
     expect(vueDuPremier.proprietaireLabel).toBe('Premier')
-    expect(vueDuPremier.autreCompte).toBe(false)
 
     await prisma.user.deleteMany({
       where: { id: { in: [premier.id, second.id] } },

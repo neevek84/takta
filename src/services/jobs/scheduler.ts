@@ -2,12 +2,14 @@ import { prisma } from '@/db/client'
 import { ACTEUR_SYSTEME, appendAudit } from '@/services/audit'
 import type { FetchLike } from '@/services/webhooks/delivery'
 import type { Mailer } from '@/services/notify'
+import { destinatairesActifs } from './destinataires'
 import {
   JOB_DEFINITIONS,
   JOB_HANDLERS,
   TRAVAUX_DIFFERES,
   type JobDefinition,
   type JobHandler,
+  type JobResult,
 } from './registry'
 
 export type JobState = 'SUCCES' | 'ECHEC' | 'IGNORE' | 'INDISPONIBLE'
@@ -112,6 +114,50 @@ interface ContexteExecution {
   mailer?: Mailer
 }
 
+/**
+ * Un passage, ou un passage par personne.
+ *
+ * **Ce que cette fonction répare.** `tick` n'a pas de session : il exécutait
+ * tout sous le compte le plus ancien. Tant qu'une seule personne saisissait,
+ * la décision se défendait. Depuis que l'application porte plusieurs
+ * consultants, elle veut dire qu'un second consultant ne reçoit **aucun**
+ * rappel de saisie ni de clôture — et que rien ne le lui apprend : la
+ * supervision affiche « succès », puisque le travail a bien tourné, pour
+ * quelqu'un d'autre. Un silence qui se donne l'air d'un service rendu.
+ *
+ * **Chacun est tenté, même après un échec.** Sans cette reprise, une seule
+ * boîte en panne priverait de rappel tout le monde derrière elle dans
+ * l'ordre, indéfiniment. Les échecs sont rassemblés et relancés à la fin :
+ * la ligne de supervision passe en ÉCHEC, et elle **nomme** qui n'a pas été
+ * servi — « échec » seul enverrait chercher dans les journaux ce que l'écran
+ * peut dire.
+ */
+async function lancer(
+  handler: JobHandler,
+  definition: JobDefinition,
+  ctx: ContexteExecution,
+): Promise<JobResult> {
+  if (!definition.parPersonne) return handler(ctx)
+
+  const destinataires = await destinatairesActifs()
+  if (destinataires.length === 0) return { message: 'Aucun compte actif à servir.' }
+
+  const comptes: string[] = []
+  const echecs: string[] = []
+
+  for (const personne of destinataires) {
+    try {
+      const resultat = await handler({ ...ctx, userId: personne.id, destinataire: personne.email })
+      comptes.push(`${personne.email} — ${resultat.message}`)
+    } catch (err) {
+      echecs.push(`${personne.email} — ${messageDe(err)}`)
+    }
+  }
+
+  if (echecs.length > 0) throw new Error(echecs.join(' ; '))
+  return { message: comptes.join(' ; ') }
+}
+
 async function executer(
   ligne: Ligne,
   definition: JobDefinition,
@@ -143,7 +189,7 @@ async function executer(
   })
 
   try {
-    const resultat = await handler(ctx)
+    const resultat = await lancer(handler, definition, ctx)
 
     await prisma.scheduledJob.update({
       where: { id: ligne.id },

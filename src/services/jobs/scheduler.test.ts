@@ -43,6 +43,16 @@ describe('le registre', () => {
     ])
   })
 
+  it('dit lesquels des sept s adressent à une personne', () => {
+    // La liste est figée pour qu'un huitième travail ne s'y glisse pas sans
+    // que quiconque ait tranché : « instance » est le mauvais défaut, c'est
+    // lui qui a laissé un second consultant sans aucun rappel.
+    expect(JOB_DEFINITIONS.filter((d) => d.parPersonne).map((d) => d.name)).toEqual([
+      'rappel.saisie',
+      'rappel.cloture',
+    ])
+  })
+
   it('chaque travail déclaré est traité, ou explicitement différé', () => {
     // Le jour où un lot livre son travail, il retire son nom d'ici — et ce
     // test l'y oblige plutôt que de laisser pourrir un travail orphelin.
@@ -341,7 +351,15 @@ describe('exécution à la main', () => {
     })
 
     expect(appels).toBe(1)
-    expect(rapport).toMatchObject({ name: 'rappel.saisie', state: 'SUCCES', message: 'fait' })
+    // Le compte rendu **nomme la personne servie**, y compris sur un seul
+    // compte : le bouton « Exécuter » d'un rappel sert désormais tout le
+    // monde, et un message anonyme laisserait croire au superviseur qu'il
+    // vient de se rappeler quelque chose à lui-même.
+    expect(rapport).toMatchObject({
+      name: 'rappel.saisie',
+      state: 'SUCCES',
+      message: 'jobs@test.local — fait',
+    })
   })
 
   it('exécute même un travail désactivé — un automatisme qu on ne peut pas déclencher soi-même ne se débogue pas', async () => {
@@ -379,5 +397,130 @@ describe('vue des travaux', () => {
       expect(v.disponible, v.name).toBe(true)
       expect(v.label.length).toBeGreaterThan(0)
     }
+  })
+})
+
+/**
+ * **Le trou que le lot des rôles vient d'ouvrir en grand.**
+ *
+ * `tick` n'a pas de session : il exécutait donc tout sous le compte le plus
+ * ancien. Tant qu'une seule personne saisissait, personne ne pouvait s'en
+ * apercevoir. Depuis que l'application sait porter plusieurs consultants,
+ * cette décision veut dire qu'un second consultant **ne reçoit aucun rappel
+ * de saisie ni de clôture, jamais, et que rien ne le lui apprend** — pas même
+ * un échec dans la supervision : le travail s'affiche « succès », puisqu'il a
+ * bien tourné, pour quelqu'un d'autre.
+ *
+ * Les rappels s'adressent à une personne : ils tournent une fois par compte
+ * actif. Les six autres travaux s'adressent à l'instance — la file de sortie,
+ * les webhooks, la chaîne du journal n'appartiennent à personne — et gardent
+ * un seul passage.
+ */
+describe('les rappels tournent pour chaque personne, pas pour la plus ancienne', () => {
+  const AUTRE = 'jobs-second@test.local'
+  const PARTI = 'jobs-parti@test.local'
+
+  beforeEach(async () => {
+    await prisma.user.deleteMany({ where: { email: { in: [AUTRE, PARTI] } } })
+    // Les deux rappels sont désactivés par défaut : sans activation, il n'y
+    // aurait rien à faire tourner et les tests passeraient à vide.
+    await syncJobDefinitions()
+    await setJobEnabled(userId, 'rappel.saisie', true)
+    await setJobEnabled(userId, 'rappel.cloture', true)
+  })
+
+  afterAll(async () => {
+    await prisma.user.deleteMany({ where: { email: { in: [AUTRE, PARTI] } } })
+  })
+
+  it('appelle le rappel une fois par compte, avec son adresse', async () => {
+    await prisma.user.create({ data: { email: AUTRE, name: 'Ada', passwordHash: 'x' } })
+    const vus: Array<{ userId: string; destinataire: string | undefined }> = []
+
+    await tick({
+      now: NOW,
+      userId,
+      handlers: registre({
+        'rappel.saisie': async (ctx) => {
+          vus.push({ userId: ctx.userId, destinataire: ctx.destinataire })
+          return { message: `vu ${ctx.destinataire}` }
+        },
+      }),
+    })
+
+    expect(vus).toHaveLength(2)
+    // Chacun reçoit à SON adresse : servir tout le monde au même endroit
+    // remplacerait un silence par un tas de courrier qui ne concerne personne.
+    expect(vus.map((v) => v.destinataire).sort()).toEqual(['jobs-second@test.local', 'jobs@test.local'])
+    // Et sous SON identité : le rappel lit les saisies de `ctx.userId`.
+    expect(new Set(vus.map((v) => v.userId)).size).toBe(2)
+  })
+
+  it('saute un compte dont l accès a été coupé', async () => {
+    await prisma.user.create({
+      data: { email: PARTI, name: 'Parti', passwordHash: 'x', disabled: true },
+    })
+    const vus: string[] = []
+
+    await tick({
+      now: NOW,
+      userId,
+      handlers: registre({
+        'rappel.cloture': async (ctx) => {
+          vus.push(ctx.destinataire ?? '')
+          return { message: 'vu' }
+        },
+      }),
+    })
+
+    expect(vus).toEqual(['jobs@test.local'])
+  })
+
+  it("n'appelle qu'une fois un travail qui appartient à l'instance", async () => {
+    await prisma.user.create({ data: { email: AUTRE, name: 'Ada', passwordHash: 'x' } })
+    // `outbox.flush` est désactivé par défaut — il écrit chez autrui.
+    await setJobEnabled(userId, 'outbox.flush', true)
+    let appels = 0
+
+    await tick({
+      now: NOW,
+      userId,
+      handlers: registre({
+        'outbox.flush': async () => {
+          appels += 1
+          return { message: 'vidée' }
+        },
+      }),
+    })
+
+    expect(appels).toBe(1)
+  })
+
+  it('tente tout le monde même si le premier échoue, et le dit', async () => {
+    await prisma.user.create({ data: { email: AUTRE, name: 'Ada', passwordHash: 'x' } })
+    const vus: string[] = []
+
+    const rapport = await tick({
+      now: NOW,
+      userId,
+      handlers: registre({
+        'rappel.saisie': async (ctx) => {
+          vus.push(ctx.destinataire ?? '')
+          if (ctx.destinataire === 'jobs@test.local') throw new Error('boîte pleine')
+          return { message: 'vu' }
+        },
+      }),
+    })
+
+    // Sans cette reprise, une seule boîte en panne priverait de rappel tous
+    // ceux qui la suivent dans l'ordre, indéfiniment.
+    expect(vus).toHaveLength(2)
+
+    const ligne = rapport.executes.find((e) => e.name === 'rappel.saisie')!
+    expect(ligne.state).toBe('ECHEC')
+    // L'échec nomme QUI n'a pas été servi : « échec » seul enverrait chercher
+    // dans les journaux ce que la supervision peut dire.
+    expect(ligne.message).toContain('jobs@test.local')
+    expect(ligne.message).toContain('boîte pleine')
   })
 })

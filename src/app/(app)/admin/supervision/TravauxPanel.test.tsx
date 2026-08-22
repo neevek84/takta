@@ -26,7 +26,6 @@ function travail(patch: Partial<JobView> = {}): JobView {
 const SEUL: Ordonnanceur = {
   proprietaireId: 'u1',
   proprietaireLabel: 'Keveen',
-  autreCompte: false,
   comptes: 1,
 }
 
@@ -95,18 +94,20 @@ describe('panneau des travaux', () => {
     expect(screen.getByText(/Keveen/)).toBeTruthy()
   })
 
-  it('AVERTIT LE CONSULTANT QUI NE SERA PAS SERVI', () => {
-    // Sans cet avertissement, un second consultant ne reçoit aucun rappel et
-    // rien ne le lui apprend : c'est le pire des silences.
+  it('DIT QUE LES RAPPELS PASSENT PAR COMPTE, ET NON PAR PROPRIÉTAIRE', () => {
+    // Cet écran portait l'avertissement inverse — « vous ne recevrez aucun
+    // rappel » — et il disait vrai. Le garder maintenant que l'ordonnanceur
+    // sert tout le monde mentirait dans l'autre sens ; ne rien dire du tout
+    // laisserait croire que le silence d'hier dure.
     rendre([travail()], {
       proprietaireId: 'u1',
       proprietaireLabel: 'Keveen',
-      autreCompte: true,
       comptes: 2,
     })
-    const avertissement = screen.getByRole('alert')
-    expect(avertissement.textContent).toMatch(/Keveen/)
-    expect(avertissement.textContent).toMatch(/ne recevrez|aucun rappel/i)
+    const texte = document.body.textContent ?? ''
+    expect(texte).toMatch(/une fois\s+par compte actif/)
+    expect(texte).toMatch(/2 compte\(s\)/)
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('ne crie pas quand le compte servi est le vôtre', () => {

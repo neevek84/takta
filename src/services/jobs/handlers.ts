@@ -44,11 +44,20 @@ function jourDeSemaine(d: Date): number {
 }
 
 /**
- * Le double d'envoi éventuel du contexte, sous la forme qu'attend `notify`.
- * Absent en production : c'est alors la configuration SMTP qui décide.
+ * Ce que le contexte a d'utile pour `notify` : le double d'envoi éventuel, et
+ * l'adresse de la personne servie.
+ *
+ * Le double est absent en production — c'est alors la configuration SMTP qui
+ * décide. Le destinataire, lui, est absent des travaux d'instance, et
+ * `notify` retombe sur celui qui est réglé dans les paramètres : c'est le bon
+ * pour ce qui n'appartient à personne. Le porter ici est ce qui empêche trois
+ * consultants de recevoir leurs trois rappels dans la même boîte.
  */
 function depsEnvoi(ctx: JobContext) {
-  return ctx.mailer === undefined ? {} : { mailer: ctx.mailer }
+  return {
+    ...(ctx.mailer === undefined ? {} : { mailer: ctx.mailer }),
+    ...(ctx.destinataire === undefined ? {} : { destinataire: ctx.destinataire }),
+  }
 }
 
 /**

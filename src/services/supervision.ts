@@ -32,18 +32,21 @@ export interface Alerte {
 /**
  * Pour qui les traitements de fond travaillent.
  *
- * `tick` n'a pas de session : il exécute les travaux pour le compte le plus
- * ancien de l'instance. Le produit est mono-organisation, la décision se
- * défend — mais elle **échoue en silence** dès qu'un second compte existe :
- * ce consultant-là ne recevrait aucun rappel de saisie ni de clôture, et rien
- * ne l'en avertirait. L'écran le dit ; c'est tout ce qu'un écran peut faire.
+ * `tick` n'a pas de session. Les travaux qui s'adressent à **une personne** —
+ * les deux rappels — tournent depuis lors une fois par compte actif, chacun à
+ * son adresse. Ceux qui appartiennent à l'**instance** — la file de sortie,
+ * les webhooks, la chaîne du journal — n'appartiennent à personne et tournent
+ * une fois, sous le compte le plus ancien, qui n'est plus qu'un porteur
+ * d'identité pour le journal.
+ *
+ * L'écran affichait ici un avertissement : « vous ne recevrez aucun rappel ».
+ * Il disait vrai, et c'était tout ce qu'un écran pouvait faire. Il n'a plus
+ * lieu d'être, et le laisser mentirait dans l'autre sens.
  */
 export interface Ordonnanceur {
   proprietaireId: string
   /** nom du compte, ou son identifiant à défaut ; '' si l'instance est vide */
   proprietaireLabel: string
-  /** vrai quand l'utilisateur de la session n'est pas celui qui est servi */
-  autreCompte: boolean
   comptes: number
 }
 
@@ -62,7 +65,6 @@ export async function readOrdonnanceur(userId: string): Promise<Ordonnanceur> {
   return {
     proprietaireId,
     proprietaireLabel: proprietaireId === '' ? '' : (proprietaire?.name ?? proprietaireId),
-    autreCompte: proprietaireId !== '' && proprietaireId !== userId,
     comptes,
   }
 }

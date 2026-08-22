@@ -129,14 +129,6 @@ Aucune n'empêche l'usage. Toutes sont des choix de ne pas payer maintenant.
   la base, seule la page le fait.
 - **`month` n'est pas validé côté service** : `'2026-13'` est accepté et
   interprété comme janvier 2027.
-- **`dolibarrUserId` est de portée instance alors qu'il désigne une personne.**
-  Tous les temps poussés partent sous le même utilisateur Dolibarr, quel que soit
-  le propriétaire du CRA. Invisible à un seul consultant, faux à deux. Le rôle
-  `User.role` existe et n'est lu par aucun écran. Le porteur a demandé de valider
-  d'abord le fonctionnement, puis de faire l'évolution.
-- **`tick` exécute les travaux du compte le plus ancien** : un second consultant
-  ne recevrait aucun rappel. `/admin/supervision` le dit à l'écran — le dire
-  n'est pas le corriger.
 - **Une ligne archivée portant du réalisé reste affichée** dans la matrice de
   charge. Voulu — son chiffre d'affaires est un fait comptable — mais à arbitrer
   côté affichage.

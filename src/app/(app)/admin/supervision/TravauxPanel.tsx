@@ -1,5 +1,4 @@
 import { Badge, type Tone } from '@/components/ui/Badge'
-import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { DataTable } from '@/components/ui/DataTable'
@@ -37,26 +36,16 @@ export function TravauxPanel({
 }) {
   return (
     <Card title="Travaux">
-      {/* Pour qui ces travaux tournent. Le réveil externe n'a pas de session :
-          il sert le compte le plus ancien de l'instance, et lui seul. */}
+      {/* Pour qui ces travaux tournent. Les deux rappels s'adressent à
+          quelqu'un et passent une fois par compte actif ; le reste appartient
+          à l'instance et ne passe qu'une fois. */}
       <p className="mb-3 text-sm text-muted">
-        Les réveils externes exécutent ces travaux pour le compte{' '}
-        <span className="font-medium">{ordonnanceur.proprietaireLabel}</span> — le plus
-        ancien de l’installation. {ordonnanceur.comptes} compte(s) enregistré(s).
+        Les rappels de saisie et de clôture tournent <span className="font-medium">une fois
+        par compte actif</span>, chacun à son adresse — {ordonnanceur.comptes} compte(s)
+        enregistré(s). Les autres travaux appartiennent à l’installation et s’exécutent une
+        seule fois, sous le compte{' '}
+        <span className="font-medium">{ordonnanceur.proprietaireLabel}</span>, le plus ancien.
       </p>
-
-      {ordonnanceur.autreCompte && (
-        <div className="mb-3">
-          <Banner tone="warning" title="Ces travaux ne travaillent pas pour vous">
-            <p className="text-sm">
-              Les rappels de saisie et de clôture partent pour le compte{' '}
-              {ordonnanceur.proprietaireLabel}. Vous ne recevrez aucun rappel tant que
-              l’ordonnanceur servira un seul compte. Les exécutions lancées depuis ce bouton,
-              elles, portent bien votre compte.
-            </p>
-          </Banner>
-        </div>
-      )}
 
       <DataTable caption="État des traitements récurrents">
         <thead>
