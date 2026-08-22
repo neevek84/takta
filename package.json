@@ -20,7 +20,8 @@
     "backfill:heures": "node scripts/backfill-heures-saisies.mjs",
     "theme:reprise": "node scripts/migrer-theme-encre.mjs",
     "fonts:sync": "node scripts/sync-fonts.mjs",
-    "empaqueter": "node scripts/empaqueter.mjs"
+    "empaqueter": "node scripts/empaqueter.mjs",
+    "doc:integrations": "CRA_DOC_ECRIRE=1 vitest run src/integrations/chapitre.test.ts"
   },
   "keywords": [],
   "author": "KREATIV PROJECT MANAGEMENT SASU",
