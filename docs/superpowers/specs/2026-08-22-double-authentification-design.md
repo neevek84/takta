@@ -19,9 +19,11 @@ aujourd'hui deux parcours, sur deux écrans, dont le second est si peu signalé
 que le porteur ne l'a pas trouvé. Les fondre supprime le problème plutôt que de
 le documenter.
 
-**Un contrôle d'accès gratuit.** Le client OAuth du porteur est de type
-**Interne** : seuls les comptes de son domaine Workspace peuvent consentir.
-Ouvrir la porte Google, c'est donc ouvrir une porte qui filtre déjà.
+**Un périmètre d'accès gratuit — le périmètre, pas les droits.** Le client OAuth
+du porteur est de type **Interne** : seuls les comptes de son domaine Workspace
+peuvent consentir. La porte filtre donc **qui** entre. Elle ne dit rien de ce
+qu'on peut faire une fois entré : tant que les rôles ne sont pas appliqués, qui
+entre peut tout. Voir « Les rôles sont posés, pas appliqués ».
 
 ## Ce qui reste vrai quoi qu'il arrive
 
@@ -196,13 +198,113 @@ reprise des temps a créés. Le libellé dira « définir » autant que
 L'envoi réutilise l'existant : un gabarit pur dans `src/core/notify/templates.ts`,
 expédié par `notify()`. Aucun second canal de courriel n'est créé.
 
-## Ce que le lot ne fait pas
+## Ce que le lot ne fait pas, et ce que ça coûte
 
-Pas de dissociation d'un compte et de son Google. Pas de changement d'adresse.
-Pas de second facteur. Pas de limitation de débit — un outil auto-hébergé à
-quelques utilisateurs n'en a pas besoin, et l'expiration à dix minutes borne déjà
-la fenêtre. Pas d'application des rôles. Pas de flux iCal ni de Microsoft 365,
-consignés dans `EVOLUTIONS.md`.
+Chaque exclusion est tenable. Aucune n'est sans conséquence, et les taire
+reviendrait à les découvrir en production.
+
+### Aucun moyen de couper l'accès d'une personne
+
+**Ce que ça veut dire.** Il n'existe ni bouton pour dissocier un compte de son
+Google, ni **drapeau pour désactiver un compte**. `User` ne porte que
+`id`, `email`, `name`, `passwordHash`, `role`, `createdAt`.
+
+**Le cas d'usage.** Un consultant quitte la mission. Son compte Workspace est
+désactivé, donc la porte Google se ferme d'elle-même — Google refusera. Mais
+**s'il avait un mot de passe, la seconde porte reste ouverte**. Même chose si son
+compte Google est compromis : l'attaquant entre par Google, et rien dans
+l'application ne permet de l'en empêcher.
+
+**Ce qu'il en coûte aujourd'hui.** Le seul geste disponible est la
+**suppression** du compte — qui détruit ses saisies par cascade. Fermer une porte
+oblige donc à détruire l'historique qu'elle protégeait.
+
+**Le remède provisoire.** Changer l'adresse du compte en base pour qu'elle ne
+corresponde plus à l'identité Google, et vider son empreinte de mot de passe.
+C'est une manipulation directe, sans écran.
+
+**Ce que ça appelle.** Un drapeau `disabled` sur `User`, refusé par
+`requireUser()` — qui relit déjà l'utilisateur en base à chaque requête, donc la
+révocation serait immédiate et sur les deux portes à la fois. C'est un petit lot,
+et il devrait suivre celui-ci de près.
+
+### L'adresse ne peut pas changer
+
+**Ce que ça veut dire.** `User.email` est la clé de fusion. Rien ne permet de la
+modifier depuis l'application.
+
+**Le cas d'usage.** Un changement de nom, ou une migration de domaine —
+`kreativpm.fr` vers autre chose. L'identité Google ne correspond alors plus au
+compte local.
+
+**Ce qu'il en coûte.** La connexion Google **crée un second compte**, en silence
+et sans erreur. Les CRA, les saisies et les correspondances Dolibarr restent sur
+l'ancien ; le nouveau est vide. Rien ne signale la scission — c'est la
+conséquence la plus probable de cette liste, et la plus discrète.
+
+**Le remède provisoire.** Modifier l'adresse en base **avant** la première
+connexion sous la nouvelle identité.
+
+### Le mot de passe est la surface d'attaque
+
+**Ce que ça veut dire.** Pas de second facteur sur la porte mot de passe, et pas
+de limitation de débit sur `/login`. La porte Google, elle, hérite du second
+facteur que le Workspace impose déjà.
+
+**Le cas d'usage.** L'instance est publiée sur un domaine — ce que la
+distribution portable prévoit. `/login` devient atteignable depuis Internet.
+
+**Ce qu'il en coûte.** Les deux absences se composent : sans limitation, un mot
+de passe faible se casse ; sans second facteur, il n'y a rien derrière. La porte
+Google est alors nettement mieux protégée que la porte locale, alors que les deux
+mènent au même compte — la sécurité de l'ensemble est celle du maillon faible.
+
+**Le remède provisoire, et il est réel.** Ne pas exposer l'instance
+publiquement : la joindre par VPN, comme le porteur le fait déjà. Une porte
+qu'on n'atteint pas ne se force pas.
+
+**Une honnêteté supplémentaire.** La réponse uniforme du formulaire d'oubli
+empêche l'énumération par le *message*, pas par le *temps* : une adresse connue
+déclenche une écriture et un envoi de courriel, une inconnue non. L'écart est
+mesurable par quelqu'un qui cherche. Le corriger demanderait un traitement à
+durée constante, hors de ce lot.
+
+### Les rôles sont posés, pas appliqués
+
+**Ce que ça veut dire.** Ce lot écrit `CONSULTANT` dans la colonne. Aucun écran,
+aucun service ne consulte encore ce rôle.
+
+**Le cas d'usage.** Un collègue du domaine Workspace se connecte avec Google,
+par curiosité ou parce qu'on lui a donné le lien.
+
+**Ce qu'il en coûte — et c'est le point le plus lourd de cette liste.** Son
+compte naît `CONSULTANT` et il voit **exactement ce que voit un administrateur** :
+les réglages, le connecteur Dolibarr, la suppression des clients et des missions.
+La création automatique de comptes, combinée à l'absence d'application des rôles,
+ouvre donc l'instance entière à tout le domaine.
+
+**Ce que ça corrige dans cette spec.** La section « Ce que ça vaut » présentait
+le type Interne comme « un contrôle d'accès gratuit ». C'est vrai du périmètre —
+seul le domaine entre — et faux des **droits** : qui entre peut tout faire. La
+formule est corrigée plus haut.
+
+**Le remède provisoire.** Deux options, et c'est un arbitrage du porteur :
+enchaîner le lot des rôles immédiatement après celui-ci, ou différer la
+**création automatique** — la connexion Google resterait réservée aux comptes
+déjà créés — jusqu'à ce que les rôles mordent.
+
+### Pas de flux iCal ni de Microsoft 365
+
+**Ce que ça veut dire.** L'agenda passe par Google, ou ne passe pas.
+
+**Le cas d'usage.** Quelqu'un auto-héberge l'application sans Google Workspace.
+
+**Ce qu'il en coûte.** Il devra faire valider son application par Google — le
+scope `auth/calendar` étant sensible — ou se passer de l'agenda. La saisie, les
+CRA et les PDF fonctionnent intégralement sans.
+
+**Ce que ça appelle.** Le flux iCal, consigné dans `EVOLUTIONS.md`, qui
+supprimerait cette dépendance pour la vue en lecture.
 
 ## Les épreuves
 
