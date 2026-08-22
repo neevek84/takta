@@ -88,3 +88,36 @@ describe('requireUser', () => {
     expect(await requireUser()).toEqual({ id: userId, role: 'ADMIN' })
   })
 })
+
+describe('un compte désactivé n a plus de session', () => {
+  // Un jeton signé survit à la désactivation : il ne prouve que sa propre
+  // signature. Sans cette relecture, couper un accès ne couperait rien avant
+  // l'expiration du jeton — c'est-à-dire trente jours, par défaut.
+  it('refuse la session d un compte désactivé', async () => {
+    const u = await prisma.user.create({
+      data: {
+        email: 'desactive@test.local',
+        name: 'Coupé',
+        passwordHash: '',
+        role: 'CONSULTANT',
+        disabled: true,
+      },
+    })
+    authMock.mockResolvedValue({ user: { id: u.id } })
+
+    await expect(requireUser()).rejects.toThrow('Non authentifié')
+
+    await prisma.user.delete({ where: { id: u.id } })
+  })
+
+  it('laisse entrer un compte actif', async () => {
+    const u = await prisma.user.create({
+      data: { email: 'actif@test.local', name: 'Actif', passwordHash: '', role: 'CONSULTANT' },
+    })
+    authMock.mockResolvedValue({ user: { id: u.id } })
+
+    await expect(requireUser()).resolves.toEqual({ id: u.id, role: 'CONSULTANT' })
+
+    await prisma.user.delete({ where: { id: u.id } })
+  })
+})

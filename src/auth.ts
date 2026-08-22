@@ -45,7 +45,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
  * ouverte — est le prix d'une session qui dit vrai.
  */
 const loadSessionUser = cache(async (id: string) =>
-  prisma.user.findUnique({ where: { id }, select: { id: true, role: true } }),
+  prisma.user.findUnique({
+    where: { id },
+    select: { id: true, role: true, disabled: true },
+  }),
 )
 
 /**
@@ -53,8 +56,9 @@ const loadSessionUser = cache(async (id: string) =>
  * porteur : après suppression (ou recréation) de la table `User`, la session
  * reste « valide » et l'application ne casse qu'au premier appel touchant une
  * clé étrangère. On confronte donc systématiquement l'identifiant à la base ;
- * supprimer un compte révoque du même coup ses sessions. Le rôle est lui aussi
- * relu en base, le jeton pouvant porter un rôle périmé.
+ * supprimer un compte révoque du même coup ses sessions. Le rôle **et le
+ * drapeau de désactivation** sont relus en base, le jeton pouvant porter l'un
+ * comme l'autre périmés.
  */
 export async function requireUser(): Promise<{ id: string; role: Role }> {
   const session = await auth()
@@ -63,6 +67,16 @@ export async function requireUser(): Promise<{ id: string; role: Role }> {
 
   const user = await loadSessionUser(id)
   if (user === null) throw new Error('Non authentifié')
+
+  // Un jeton signé survit à la désactivation : il ne prouve que sa propre
+  // signature, pas que son porteur ait encore le droit d'entrer. Le drapeau est
+  // donc relu à chaque requête, comme le rôle — couper un accès coupe la
+  // session en cours, et pas seulement les suivantes.
+  //
+  // Le message est **identique** à celui d'un compte absent : distinguer les
+  // deux apprendrait à un compte coupé qu'il existe encore, et à qui teste des
+  // identifiants qu'une adresse est connue.
+  if (user.disabled) throw new Error('Non authentifié')
 
   return { id: user.id, role: user.role as Role }
 }
