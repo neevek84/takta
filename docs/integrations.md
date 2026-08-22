@@ -249,7 +249,7 @@ En échec : Abandonné — le rejouer donnerait le même refus. L'écran affiche
 
 | Paramètre | Source | D'où vient la valeur | Exemple |
 |---|---|---|---|
-| `fk_socpeople` | réglage | `ProviderCredential.metadata.dolibarrUserId, saisi dans Administration · Dolibarr` | `7` |
+| `fk_socpeople` | réglage | `ExternalLink de type LIEN_UTILISATEUR, renseigné dans Mon profil` | `7` |
 | `type_contact` | constante | `PROJECTLEADER, code de llx_c_type_contact pour l'élément « project »` | `PROJECTLEADER` |
 | `source` | constante | `internal : fk_socpeople désigne alors un utilisateur Dolibarr, pas un contact de tiers` | `internal` |
 
@@ -285,7 +285,7 @@ En échec : Rejoué par la file de synchronisation. L'écran de synchronisation 
 | `taskId` | identifiant externe | `ExternalLink (ligne de mission → tâche), posé par src/services/dolibarr/push.ts` | `17` |
 | `date` | calcul | `src/core/dolibarr/timespent.ts · buildTimeSpentPayloads` | `2026-04-13` |
 | `duration` | calcul | `src/core/dolibarr/timespent.ts · buildTimeSpentPayloads — minutes × 60, en secondes` | `28800` |
-| `user_id` | réglage | `ProviderCredential.metadata.dolibarrUserId, saisi dans Administration · Dolibarr` | `42` |
+| `user_id` | réglage | `ExternalLink de type LIEN_UTILISATEUR, renseigné dans Mon profil` | `42` |
 | `note` | saisie | `commentaire de la saisie de temps` | `Atelier de cadrage` |
 
 Prouvé contre Dolibarr 23.0.1 le 2026-08-16, contre le double d’API.
@@ -302,7 +302,7 @@ Réglage tiers : `TIMESHEET_DAY_DURATION`.
 
 | Paramètre | Source | D'où vient la valeur | Exemple |
 |---|---|---|---|
-| `fk_socpeople` | réglage | `ProviderCredential.metadata.dolibarrUserId, saisi dans Administration · Dolibarr` | `7` |
+| `fk_socpeople` | réglage | `ExternalLink de type LIEN_UTILISATEUR, renseigné dans Mon profil` | `7` |
 | `type_contact` | constante | `TASKEXECUTIVE, code de llx_c_type_contact pour l'élément « project_task »` | `TASKEXECUTIVE` |
 | `source` | constante | `internal : fk_socpeople désigne un utilisateur Dolibarr` | `internal` |
 

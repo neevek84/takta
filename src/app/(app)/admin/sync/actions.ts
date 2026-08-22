@@ -7,7 +7,6 @@ import { resolveConflict, type ResolveResult } from '@/services/sync/conflicts'
 import { drainProvidersForUser } from '@/services/sync/drain'
 import type { DrainReport } from '@/services/sync/flush'
 import { retrySyncRow } from '@/services/sync/queue'
-import { disconnectGoogle } from '@/services/google/connect'
 
 /**
  * Le déclenchement manuel, celui qui rend l'application autoportante : aucun
@@ -51,17 +50,4 @@ export async function rejouer(rowId: string): Promise<boolean> {
   const r = await retrySyncRow(rowId)
   revalidatePath('/admin/sync')
   return r
-}
-
-/**
- * Déconnecte le compte Google de la session — au sens strict : les jetons
- * stockés ici sont effacés, rien de plus. Elle ne s'appelle pas
- * `revoquerGoogle` : l'autorisation accordée par l'utilisateur reste active
- * côté compte Google (voir `disconnectGoogle`), et un nom de révocation le
- * cacherait. `SyncClient` porte l'explication à l'écran.
- */
-export async function deconnecterGoogle(): Promise<void> {
-  const user = await exigerAdministration()
-  await disconnectGoogle(user.id)
-  revalidatePath('/admin/sync')
 }

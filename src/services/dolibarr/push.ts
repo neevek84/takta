@@ -14,6 +14,10 @@ import {
   type DolibarrTask,
 } from './api'
 import { LIEN_LIGNE, LIEN_MISSION, LIEN_TEMPS, SEPARATEUR } from './liens'
+import {
+  identifiantDolibarrDe,
+  reprendreIdentifiantDolibarrDInstance,
+} from './utilisateur'
 import { chargePrevueDeLaPrestation } from './taches'
 
 export interface PushResult {
@@ -28,22 +32,40 @@ function toIsoDate(d: Date): string {
 }
 
 /**
- * `llx_projet_task_time` porte un `fk_user` obligatoire : sans identifiant
- * d'utilisateur Dolibarr, aucun temps ne peut être enregistré. Le manque est
- * une erreur de configuration, pas une panne — rejouer n'y changerait rien,
- * d'où la `DolibarrMappingError` que le gestionnaire traduit en abandon.
+ * L'utilisateur Dolibarr sous lequel les temps de **ce CRA** seront enregistrés.
+ *
+ * `llx_projet_task_time` porte un `fk_user` obligatoire, et c'est sur ce champ
+ * que Dolibarr attribue — donc facture — le temps. Il vient de la correspondance
+ * du **propriétaire du CRA**, jamais d'un réglage global : c'était le défaut du
+ * 19 août 2026, où tous les temps seraient partis au nom de l'utilisateur
+ * technique dont la clé d'API avait servi à la connexion.
+ *
+ * **Sans correspondance, on refuse.** Retomber sur celle d'un autre — ou sur une
+ * quelconque valeur par défaut — enverrait chez le client du temps attribué à
+ * quelqu'un qui ne l'a pas passé. Le manque est une erreur de configuration, pas
+ * une panne : rejouer n'y changerait rien, d'où la `DolibarrMappingError` que le
+ * gestionnaire traduit en abandon.
+ *
+ * La reprise de l'ancien réglage d'instance est tentée **ici**, au moment exact
+ * où son absence allait faire refuser : le porteur ne doit pas voir son premier
+ * push refusé pour un réglage qu'il avait déjà fait. Elle est idempotente, et
+ * elle ne peut servir que le compte que sa propre règle désigne.
  */
-async function dolibarrUserId(): Promise<number> {
-  const credential = await getInstanceCredential(DOLIBARR)
-  const id = Number(credential?.metadata.dolibarrUserId ?? '')
+async function dolibarrUserIdDe(userId: string): Promise<number> {
+  const direct = await identifiantDolibarrDe(userId)
+  if (direct !== null) return direct
 
-  if (!Number.isInteger(id) || id <= 0) {
-    throw new DolibarrMappingError(
-      "Aucun utilisateur Dolibarr n'est renseigné : l'enregistrement d'un temps passé en exige un. " +
-        'Renseignez-le dans Administration · Dolibarr.',
-    )
+  const servi = await reprendreIdentifiantDolibarrDInstance()
+  if (servi === userId) {
+    const apresReprise = await identifiantDolibarrDe(userId)
+    if (apresReprise !== null) return apresReprise
   }
-  return id
+
+  throw new DolibarrMappingError(
+    "Aucun utilisateur Dolibarr n'est associé au propriétaire de ce CRA : " +
+      "l'enregistrement d'un temps passé en exige un, et il ne peut pas partir sous celui de " +
+      'quelqu’un d’autre. Renseignez-le dans Mon profil.',
+  )
 }
 
 /**
@@ -172,7 +194,7 @@ export async function pushCraTimes(args: {
   }
 
   const projectId = Number(lienMission.externalId)
-  const dolUser = await dolibarrUserId()
+  const dolUser = await dolibarrUserIdDe(args.userId)
 
   const debut = new Date(Date.UTC(cra.month.getUTCFullYear(), cra.month.getUTCMonth(), 1))
   const fin = new Date(Date.UTC(cra.month.getUTCFullYear(), cra.month.getUTCMonth() + 1, 1))

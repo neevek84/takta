@@ -264,7 +264,7 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
         {
           nom: 'fk_socpeople',
           source: 'REGLAGE',
-          origine: 'ProviderCredential.metadata.dolibarrUserId, saisi dans Administration · Dolibarr',
+          origine: 'ExternalLink de type LIEN_UTILISATEUR, renseigné dans Mon profil',
           exemple: '7',
         },
         {
@@ -307,7 +307,7 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
         {
           nom: 'fk_socpeople',
           source: 'REGLAGE',
-          origine: 'ProviderCredential.metadata.dolibarrUserId, saisi dans Administration · Dolibarr',
+          origine: 'ExternalLink de type LIEN_UTILISATEUR, renseigné dans Mon profil',
           exemple: '7',
         },
         {
@@ -449,7 +449,7 @@ export const CATALOGUE_DOLIBARR: CatalogueSysteme = {
           nom: 'user_id',
           source: 'REGLAGE',
           origine:
-            'ProviderCredential.metadata.dolibarrUserId, saisi dans Administration · Dolibarr',
+            'ExternalLink de type LIEN_UTILISATEUR, renseigné dans Mon profil',
           exemple: '42',
         },
         {

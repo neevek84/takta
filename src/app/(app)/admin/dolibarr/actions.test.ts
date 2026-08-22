@@ -95,7 +95,6 @@ function formulaireConnexion(patch: Record<string, string> = {}): FormData {
   const champs: Record<string, string> = {
     instanceUrl: INSTANCE_FICTIVE,
     apiKey: CLE_FICTIVE,
-    dolibarrUserId: '3',
     ...patch,
   }
   for (const [k, v] of Object.entries(champs)) fd.set(k, v)
@@ -175,35 +174,20 @@ describe('connecterDolibarr', () => {
   it('refuse une saisie incomplète sans rien enregistrer', async () => {
     const state = await connecterDolibarr(
       null,
-      formulaireConnexion({ instanceUrl: '', apiKey: '', dolibarrUserId: 'moi' }),
+      formulaireConnexion({ instanceUrl: '', apiKey: '' }),
     )
 
     expect(state?.ok).toBe(false)
-    expect(state !== null && state.ok === false ? state.erreurs : []).toHaveLength(3)
+    expect(state !== null && state.ok === false ? state.erreurs : []).toHaveLength(2)
     expect(saveInstanceCredential).not.toHaveBeenCalled()
     // Et surtout : aucun appel réseau sur une saisie qu'on sait déjà fausse.
     expect(createHttpDolibarrApi).not.toHaveBeenCalled()
   })
 
-  it('dit ce qu est l identifiant utilisateur, et ou le trouver', async () => {
-    // Ce nombre n'apparaît nulle part dans l'application, et se confond avec
-    // l'identifiant de connexion. « Requis » tout seul laisse chercher.
-    const state = await connecterDolibarr(
-      null,
-      formulaireConnexion({ dolibarrUserId: 'keveen' }),
-    )
-
-    const message = state !== null && state.ok === false ? state.erreurs.join(' ') : ''
-    expect(message).toMatch(/nombre/i)
-    expect(message).toMatch(/identifiant de connexion/i)
-    expect(message).toMatch(/Utilisateurs & groupes/i)
-    expect(createHttpDolibarrApi).not.toHaveBeenCalled()
-  })
-
-  it('accepte un identifiant utilisateur numerique', async () => {
-    const state = await connecterDolibarr(null, formulaireConnexion({ dolibarrUserId: '1' }))
-    expect(state?.ok).toBe(true)
-  })
+  // Les deux cas qui exigeaient ici un identifiant utilisateur numérique ont
+  // disparu avec le champ : l'identifiant est personnel, et c'est
+  // `definirIdentifiantDolibarr` — avec son propre test — qui refuse désormais
+  // ce qui n'en est pas un.
 
   it('refuse ce qui n est pas une adresse web', async () => {
     // Un `fetch` sur une chaîne pareille lève un « Invalid URL » que le client
@@ -272,14 +256,16 @@ describe('connecterDolibarr', () => {
     expect(state?.ok).toBe(true)
   })
 
-  it('enregistre la clé en portée instance, avec l identifiant utilisateur en métadonnée', async () => {
-    await connecterDolibarr(null, formulaireConnexion({ dolibarrUserId: '7' }))
+  it('enregistre la clé en portée instance, sans aucune métadonnée', async () => {
+    await connecterDolibarr(null, formulaireConnexion())
 
     expect(saveInstanceCredential).toHaveBeenCalledWith({
       provider: 'DOLIBARR',
       secret: CLE_FICTIVE,
       baseUrl: URL_FICTIVE,
-      metadata: { dolibarrUserId: '7' },
+      // `dolibarrUserId` était le seul contenu de cet objet. L'y laisser en
+      // ferait un second lieu de vérité que le push ne lit plus.
+      metadata: {},
     })
     expect(revalidatePath).toHaveBeenCalledWith('/admin/dolibarr')
   })

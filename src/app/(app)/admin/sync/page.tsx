@@ -2,7 +2,6 @@ import { Banner } from '@/components/ui/Banner'
 import { PageShell } from '@/components/ui/PageShell'
 import { requireUser } from '@/auth'
 import { peutAdministrer } from '@/core/auth/roles'
-import { getConnectionState } from '@/services/google/connect'
 import { listOpenConflicts } from '@/services/sync/conflicts'
 import { listFailedSyncRows, listPendingSyncRows } from '@/services/sync/queue'
 import { SyncClient } from './SyncClient'
@@ -36,8 +35,7 @@ export default async function AdminSyncPage({
   // Elle est simplement montrée, ou pas.
   const administre = peutAdministrer(user.role)
 
-  const [connection, conflicts, failures, pending] = await Promise.all([
-    getConnectionState(user.id),
+  const [conflicts, failures, pending] = await Promise.all([
     listOpenConflicts(user.id),
     listFailedSyncRows(user.id),
     administre ? listPendingSyncRows() : Promise.resolve([]),
@@ -51,7 +49,6 @@ export default async function AdminSyncPage({
         </div>
       )}
       <SyncClient
-        connection={connection}
         conflicts={conflicts}
         failures={failures}
         pending={pending}

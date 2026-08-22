@@ -6,14 +6,12 @@ import type { FailedSyncRow } from '@/services/sync/queue'
 
 const {
   requireUser,
-  getConnectionState,
   listOpenConflicts,
   listFailedSyncRows,
   listPendingSyncRows,
 } = vi.hoisted(
   () => ({
     requireUser: vi.fn(),
-    getConnectionState: vi.fn(),
     listOpenConflicts: vi.fn(),
     listFailedSyncRows: vi.fn(),
     listPendingSyncRows: vi.fn(),
@@ -38,7 +36,6 @@ vi.mock('@/auth', () => ({
     return { autorise: peutAdministrer(u.role), user: u }
   },
 }))
-vi.mock('@/services/google/connect', () => ({ getConnectionState }))
 vi.mock('@/services/sync/conflicts', () => ({ listOpenConflicts }))
 vi.mock('@/services/sync/queue', () => ({ listFailedSyncRows, listPendingSyncRows }))
 
@@ -53,13 +50,6 @@ vi.mock('./SyncClient', () => ({
 }))
 
 import AdminSyncPage from './page'
-
-const CONNEXION = {
-  connected: true,
-  calendarId: 'cra@group.calendar.google.com',
-  scope: 'calendar',
-  connectedAt: new Date('2026-03-01T09:00:00.000Z'),
-}
 
 const conflit: OpenConflict = {
   id: 'c1',
@@ -84,7 +74,6 @@ const echec: FailedSyncRow = {
 beforeEach(() => {
   recu.props = null
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
-  getConnectionState.mockReset().mockResolvedValue(CONNEXION)
   listOpenConflicts.mockReset().mockResolvedValue([conflit])
   listFailedSyncRows.mockReset().mockResolvedValue([echec])
   listPendingSyncRows.mockReset().mockResolvedValue([])
@@ -97,7 +86,6 @@ describe('page Administration · Synchronisation', () => {
 
     // La lecture est scopée par l'identifiant de la session : une page qui
     // lirait sans le passer montrerait les divergences de tout le monde.
-    expect(getConnectionState).toHaveBeenCalledWith('u1')
     expect(listOpenConflicts).toHaveBeenCalledWith('u1')
     expect(listFailedSyncRows).toHaveBeenCalledWith('u1')
     // La file en attente est lue pour **toute l'instance** : un CRA appartient
@@ -108,7 +96,6 @@ describe('page Administration · Synchronisation', () => {
     // Et elle les transmet : un écran câblé sur des tableaux vides afficherait
     // « aucune divergence » pendant qu'une divergence attend en base.
     expect(recu.props).toEqual({
-      connection: CONNEXION,
       conflicts: [conflit],
       failures: [echec],
       pending: [],

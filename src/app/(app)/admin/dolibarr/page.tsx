@@ -77,7 +77,6 @@ export default async function AdminDolibarrPage({
 
       <ConnexionForm
         instanceUrl={instanceDepuisBaseApi(credential?.baseUrl ?? '')}
-        dolibarrUserId={credential?.metadata.dolibarrUserId ?? ''}
         connecte={credential !== null}
         connectedAt={credential?.connectedAt ?? null}
       />

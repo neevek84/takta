@@ -17,13 +17,11 @@ import { connecterDolibarr, deconnecterDolibarr, type ConnexionState } from './a
  */
 export function ConnexionForm({
   instanceUrl,
-  dolibarrUserId,
   connecte,
   connectedAt,
 }: {
   /** l'adresse de l'instance, sans le chemin de l'API : ce qui se saisit se réaffiche */
   instanceUrl: string
-  dolibarrUserId: string
   connecte: boolean
   connectedAt: Date | null
 }) {
@@ -68,18 +66,16 @@ export function ConnexionForm({
           hint="Saisie ici, jamais dans un fichier d'environnement."
           className="w-64"
         />
-        <Field
-          label="Identifiant utilisateur Dolibarr"
-          name="dolibarrUserId"
-          defaultValue={dolibarrUserId}
-          inputMode="numeric"
-          hint="Un nombre, pas votre identifiant de connexion : celui de votre fiche dans Dolibarr."
-          className="w-56"
-        />
         <Button type="submit" variant="primary" loading={enCours}>
           {enCours ? 'Vérification' : 'Connecter'}
         </Button>
       </form>
+
+      <p className="mt-3 text-sm text-muted">
+        L’identifiant de <em>votre</em> utilisateur Dolibarr n’est plus ici : il est personnel, et
+        il se renseigne dans <strong>Mon profil</strong>. C’est sous lui que vos temps sont
+        enregistrés chez Dolibarr, et deux consultants ne peuvent pas partager le même.
+      </p>
 
       {state !== null && state.ok && (
         <div className="mt-3">

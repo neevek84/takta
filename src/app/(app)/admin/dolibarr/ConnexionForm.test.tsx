@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 const { connecterDolibarr, deconnecterDolibarr } = vi.hoisted(() => ({
   connecterDolibarr: vi.fn(),
@@ -22,7 +23,6 @@ function rendre(patch: Partial<Parameters<typeof ConnexionForm>[0]> = {}) {
   render(
     <ConnexionForm
       instanceUrl={INSTANCE_FICTIVE}
-      dolibarrUserId="3"
       connecte={true}
       connectedAt={new Date('2026-08-15T08:00:00.000Z')}
       {...patch}
@@ -49,40 +49,40 @@ describe('ConnexionForm', () => {
     expect(document.body.textContent ?? '').not.toContain('DOLAPIKEY')
   })
 
-  it('rappelle l URL et l identifiant utilisateur déjà connus', () => {
-    // Sans eux, corriger une URL obligerait à la retaper de mémoire.
+  it('rappelle l URL déjà connue', () => {
+    // Sans elle, corriger une URL obligerait à la retaper de mémoire.
     rendre()
     // Ce que le champ réaffiche est ce qu'il accepte : l'adresse de l'instance,
     // jamais la base d'API que l'application en dérive.
     expect(
       (screen.getByLabelText("URL de l'instance Dolibarr") as HTMLInputElement).value,
     ).toBe(INSTANCE_FICTIVE)
-    expect(
-      (screen.getByLabelText('Identifiant utilisateur Dolibarr') as HTMLInputElement).value,
-    ).toBe('3')
   })
 
-  it('transmet les trois champs sous les noms que l action relit', async () => {
-    // Cette couture est invisible : renommer un champ d'un seul côté fait
-    // échouer la connexion sans qu'aucune erreur ne l'explique.
-    rendre({ instanceUrl: '', dolibarrUserId: '', connecte: false, connectedAt: null })
+  it('envoie l’URL et la clé, et rien d’autre', async () => {
+    rendre({ instanceUrl: '', connecte: false, connectedAt: null })
 
-    fireEvent.change(screen.getByLabelText("URL de l'instance Dolibarr"), {
-      target: { value: INSTANCE_FICTIVE },
-    })
-    fireEvent.change(screen.getByLabelText("Clé d'API"), { target: { value: 'cle-de-test' } })
-    fireEvent.change(screen.getByLabelText('Identifiant utilisateur Dolibarr'), {
-      target: { value: '7' },
-    })
-    fireEvent.submit(formulaireDeConnexion())
+    await userEvent.type(screen.getByLabelText("URL de l'instance Dolibarr"), INSTANCE_FICTIVE)
+    await userEvent.type(screen.getByLabelText("Clé d'API"), 'cle-de-test')
+    await userEvent.click(screen.getByRole('button', { name: 'Connecter' }))
 
     await waitFor(() => expect(connecterDolibarr).toHaveBeenCalled())
     const fd = connecterDolibarr.mock.calls[0]![1] as FormData
-    expect({
-      instanceUrl: fd.get('instanceUrl'),
-      apiKey: fd.get('apiKey'),
-      dolibarrUserId: fd.get('dolibarrUserId'),
-    }).toEqual({ instanceUrl: INSTANCE_FICTIVE, apiKey: 'cle-de-test', dolibarrUserId: '7' })
+    expect({ instanceUrl: fd.get('instanceUrl'), apiKey: fd.get('apiKey') }).toEqual({
+      instanceUrl: INSTANCE_FICTIVE,
+      apiKey: 'cle-de-test',
+    })
+    expect(fd.get('dolibarrUserId')).toBeNull()
+  })
+
+  // Deux lieux pour un même réglage, et c'est le second qui gagne en silence :
+  // l'identifiant est personnel depuis que le push lit celui du propriétaire du
+  // CRA. Le laisser ici le ferait ressaisir pour tout le monde.
+  it('ne demande plus l’identifiant utilisateur, qui est personnel', () => {
+    rendre({ instanceUrl: '', connecte: true, connectedAt: null })
+
+    expect(screen.queryByLabelText('Identifiant utilisateur Dolibarr')).toBeNull()
+    expect(document.body.textContent).toMatch(/Mon profil/)
   })
 
   it('annonce les refus rendus par l action', async () => {

@@ -13,7 +13,9 @@ import type { SyncJob } from '@/services/sync/types'
 import { FakeDolibarr } from './fake'
 import { DOLIBARR, DolibarrMappingError, DolibarrUnavailableError } from './api'
 import { attachClient, attachMission, detachEntity } from './import'
+import { LIEN_UTILISATEUR } from './liens'
 import { pushCraTimes, createDolibarrHandler } from './push'
+import { definirIdentifiantDolibarr, identifiantDolibarrDe } from './utilisateur'
 
 let userId = ''
 let autreId = ''
@@ -119,6 +121,10 @@ beforeEach(async () => {
   await prisma.timeEntry.deleteMany({})
   await prisma.cra.deleteMany({})
   await prisma.externalLink.deleteMany({ where: { provider: DOLIBARR } })
+  // Les correspondances d'utilisateur survivraient d'un cas à l'autre, et la
+  // reprise du dernier test hériterait de ce que les précédents ont posé.
+  await prisma.externalLink.deleteMany({ where: { entityType: LIEN_UTILISATEUR } })
+  await prisma.user.deleteMany({ where: { email: { startsWith: 'push-' } } })
   await prisma.syncOutbox.deleteMany({})
   await prisma.providerCredential.deleteMany({ where: { provider: DOLIBARR } })
   // Un test renomme la prestation : le libellé revient à sa valeur d'origine
@@ -157,6 +163,8 @@ afterAll(async () => {
   await prisma.syncOutbox.deleteMany({})
   await prisma.externalLink.deleteMany({ where: { provider: DOLIBARR } })
   await prisma.providerCredential.deleteMany({ where: { provider: DOLIBARR } })
+  await prisma.externalLink.deleteMany({ where: { entityType: LIEN_UTILISATEUR } })
+  await prisma.user.deleteMany({ where: { email: { startsWith: 'push-' } } })
   await prisma.user.deleteMany({
     where: { email: { in: ['push@test.local', 'autre-push@test.local'] } },
   })
@@ -967,5 +975,88 @@ describe('inscription dans la file générique', () => {
     })
     expect(ligne.state).toBe('FAILED')
     expect(ligne.lastError).toContain('projet Dolibarr')
+  })
+})
+
+
+describe("l'identifiant Dolibarr est celui du propriétaire du CRA", () => {
+  /**
+   * Un CRA validé portant une seule journée réalisée. Assemblé avec `craValide`
+   * et `saveEntry`, les deux outils déjà employés par tout ce fichier : un
+   * second assembleur divergerait du premier au premier changement de décor.
+   */
+  async function craValideAvecUneJournee(): Promise<{ id: string }> {
+    await saveEntry({ userId, lineId, date: '2026-05-04', minutes: 480, kind: 'REALISE' })
+    return { id: await craValide('2026-05') }
+  }
+
+  /**
+   * Une instance **sans** ancien réglage : c'est ce qu'écrit Administration ·
+   * Dolibarr depuis que l'identifiant est personnel (`metadata: {}`).
+   *
+   * Le décor du fichier, lui, porte encore `{ dolibarrUserId: '7' }` — la base
+   * d'avant la bascule, celle dont le dernier cas vérifie la reprise. Les deux
+   * cas de refus ci-dessous ne parlent pas de cette base-là : sans cette ligne,
+   * la reprise servirait légitimement le porteur et le refus qu'ils prétendent
+   * garder n'aurait jamais lieu d'être.
+   */
+  async function sansAncienReglageDInstance(): Promise<void> {
+    await saveInstanceCredential({
+      provider: DOLIBARR,
+      secret: 'cle-de-test',
+      baseUrl: 'https://dolibarr.invalid/api/index.php',
+      metadata: {},
+    })
+  }
+
+  it("pousse sous la correspondance du propriétaire, pas sous celle d'un autre", async () => {
+    // Deux comptes, deux identifiants Dolibarr. Le CRA appartient au premier :
+    // c'est son `fk_user` qui doit partir, et lui seul — c'est sur ces temps que
+    // la facturation se fait.
+    await definirIdentifiantDolibarr(userId, 3)
+    const autre = await prisma.user.create({
+      data: { email: 'push-autre@test.local', name: 'Autre', passwordHash: '', role: 'CONSULTANT' },
+    })
+    await definirIdentifiantDolibarr(autre.id, 11)
+
+    const cra = await craValideAvecUneJournee()
+    await pushCraTimes({ userId, craId: cra.id, api })
+
+    expect(api.timespents.map((t) => t.dolibarrUserId)).toEqual([3])
+  })
+
+  // « Un CRA dont le propriétaire n'a pas de correspondance ne doit pas partir
+  // sous celle d'un autre : il doit être refusé. » C'est le cœur de la spec §1.
+  it('refuse un CRA dont le propriétaire n a pas de correspondance', async () => {
+    await sansAncienReglageDInstance()
+    const autre = await prisma.user.create({
+      data: { email: 'push-seul@test.local', name: 'Seul', passwordHash: '', role: 'CONSULTANT' },
+    })
+    await definirIdentifiantDolibarr(autre.id, 11)
+
+    const cra = await craValideAvecUneJournee()
+
+    await expect(pushCraTimes({ userId, craId: cra.id, api })).rejects.toThrow(DolibarrMappingError)
+    expect(api.timespents).toEqual([])
+  })
+
+  it('dit où le renseigner', async () => {
+    await sansAncienReglageDInstance()
+    const cra = await craValideAvecUneJournee()
+
+    await expect(pushCraTimes({ userId, craId: cra.id, api })).rejects.toThrow(/Mon profil/)
+  })
+
+  // La reprise de l'ancien réglage d'instance : le porteur ne doit pas voir son
+  // premier push refusé pour un réglage qu'il avait déjà fait.
+  it("reprend l'ancien réglage d'instance plutôt que de refuser le porteur", async () => {
+    // Le décor du fichier a déjà enregistré la clé avec `{ dolibarrUserId: '7' }`,
+    // et `userId` est le plus ancien compte de la base de test.
+    const cra = await craValideAvecUneJournee()
+
+    await pushCraTimes({ userId, craId: cra.id, api })
+
+    expect(api.timespents.map((t) => t.dolibarrUserId)).toEqual([7])
+    expect(await identifiantDolibarrDe(userId)).toBe(7)
   })
 })

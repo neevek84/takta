@@ -90,7 +90,7 @@ const CANDIDATS: ImportCandidates = {
 const CREDENTIAL = {
   provider: 'DOLIBARR',
   baseUrl: 'https://erp.invalid/api/index.php',
-  metadata: { dolibarrUserId: '7' },
+  metadata: {},
   connectedAt: new Date('2026-08-15T08:00:00.000Z'),
 }
 
@@ -160,7 +160,6 @@ describe('page Administration · Dolibarr — câblage', () => {
       // Le formulaire reçoit l'adresse de l'instance, pas la base d'API
       // enregistrée : ce qu'il réaffiche doit être ce qu'il accepte.
       instanceUrl: 'https://erp.invalid',
-      dolibarrUserId: '7',
       connecte: true,
       connectedAt: CREDENTIAL.connectedAt,
     })
@@ -176,7 +175,6 @@ describe('page Administration · Dolibarr — câblage', () => {
 
     expect(recu.props).toEqual({
       instanceUrl: '',
-      dolibarrUserId: '',
       connecte: false,
       connectedAt: null,
     })

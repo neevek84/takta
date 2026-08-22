@@ -93,7 +93,7 @@ describe('vérification de l état', () => {
     const reponse = await GET(requete('?state=etat-attendu&code=code-google&userId=u2&user=u2'))
 
     expect(connectGoogle).toHaveBeenCalledWith({ userId: 'u1', code: 'code-google' })
-    expect(destination(reponse).pathname).toBe('/admin/sync')
+    expect(destination(reponse).pathname).toBe('/profil')
     expect(destination(reponse).searchParams.get('message')).toBe('Google Calendar est connecté.')
   })
 
@@ -141,7 +141,7 @@ describe('destination du retour', () => {
 
     const url = destination(reponse)
     expect(url.origin).toBe('https://cra.test')
-    expect(url.pathname).toBe('/admin/sync')
+    expect(url.pathname).toBe('/profil')
   })
 })
 

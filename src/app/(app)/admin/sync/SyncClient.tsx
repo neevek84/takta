@@ -8,7 +8,7 @@ import type { ConflictResolution } from '@/core/sync/policy'
 import type { OpenConflict } from '@/services/sync/conflicts'
 import type { FailedSyncRow, PendingSyncRow } from '@/services/sync/queue'
 import type { DrainReport } from '@/services/sync/flush'
-import { arbitrer, deconnecterGoogle, rejouer, synchroniserMaintenant } from './actions'
+import { arbitrer, rejouer, synchroniserMaintenant } from './actions'
 
 const ISSUES: Array<{ resolution: ConflictResolution; label: string }> = [
   { resolution: 'RETABLIR', label: 'Rétablir' },
@@ -71,27 +71,7 @@ function panne(quoi: string): Message {
   }
 }
 
-/**
- * Ce que la déconnexion fait, et ce qu'elle ne fait pas.
- *
- * `deconnecterGoogle` n'appelle aucun point de révocation chez Google : elle
- * efface seulement ce qui est stocké ici. Sans ce message, l'utilisateur
- * croit avoir tout coupé alors que l'application reste autorisée dans son
- * compte Google jusqu'à ce qu'il l'y retire lui-même — le porteur a choisi ce
- * comportement limité plutôt qu'un appel réseau qui peut échouer à moitié,
- * mais un choix limité doit se dire, pas se taire.
- */
-function messageDeconnexion(): Message {
-  return {
-    tone: 'warning',
-    title: 'Déconnecté ici, pas dans votre compte Google',
-    texte:
-      "L'accès stocké sur cet ordinateur est bien supprimé. Mais votre compte Google, lui, autorise toujours cette application : ça ne s'efface pas tout seul en cliquant ici. Pour la retirer, ouvrez la page de vos autorisations Google — myaccount.google.com/permissions — et retirez-la vous-même.",
-  }
-}
-
 export function SyncClient(props: {
-  connection: { connected: boolean; calendarId: string; scope: string; connectedAt: Date | null }
   conflicts: OpenConflict[]
   failures: FailedSyncRow[]
   /**
@@ -130,15 +110,6 @@ export function SyncClient(props: {
     }
   }
 
-  async function onDeconnecter(): Promise<void> {
-    try {
-      await deconnecterGoogle()
-      setMessage(messageDeconnexion())
-    } catch {
-      setMessage(panne('La déconnexion'))
-    }
-  }
-
   async function onSynchroniser(): Promise<void> {
     setEnCours(true)
     try {
@@ -163,29 +134,6 @@ export function SyncClient(props: {
           {message.texte}
         </Banner>
       )}
-
-      <Card title="Connexion">
-        {props.connection.connected ? (
-          <div className="flex flex-col items-start gap-3 text-sm">
-            <p>
-              Connecté. Calendrier dédié : <code>{props.connection.calendarId}</code>
-            </p>
-            <Button onClick={() => void onDeconnecter()}>Déconnecter</Button>
-          </div>
-        ) : (
-          <div className="flex flex-col items-start gap-3 text-sm">
-            <p className="text-muted">
-              Aucun agenda connecté. La saisie fonctionne normalement ; rien n’est poussé.
-            </p>
-            <a
-              href="/api/google/connect"
-              className="touch-target inline-flex items-center rounded-md border border-rule px-4 text-sm font-medium text-link hover:bg-off"
-            >
-              Connecter Google Calendar
-            </a>
-          </div>
-        )}
-      </Card>
 
       <Card title="Synchronisation">
         <div className="flex flex-col items-start gap-3 text-sm">

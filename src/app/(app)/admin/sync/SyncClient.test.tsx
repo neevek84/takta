@@ -4,13 +4,12 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import type { OpenConflict } from '@/services/sync/conflicts'
 import type { FailedSyncRow } from '@/services/sync/queue'
 
-const { arbitrer, synchroniserMaintenant, rejouer, deconnecterGoogle } = vi.hoisted(() => ({
+const { arbitrer, synchroniserMaintenant, rejouer } = vi.hoisted(() => ({
   arbitrer: vi.fn(),
   synchroniserMaintenant: vi.fn(),
   rejouer: vi.fn(),
-  deconnecterGoogle: vi.fn(),
 }))
-vi.mock('./actions', () => ({ arbitrer, synchroniserMaintenant, rejouer, deconnecterGoogle }))
+vi.mock('./actions', () => ({ arbitrer, synchroniserMaintenant, rejouer }))
 
 import { SyncClient } from './SyncClient'
 
@@ -38,18 +37,11 @@ const echec: FailedSyncRow = {
   libelle: '2026-03-13 · ACME · ITSM · Consultant',
 }
 
-const CONNECTE = {
-  connected: true,
-  calendarId: 'cra@group.calendar.google.com',
-  scope: 'calendar',
-  connectedAt: new Date('2026-03-01T09:00:00.000Z'),
-}
-
 function renderSync(
   overrides: Partial<React.ComponentProps<typeof SyncClient>> = {},
 ): ReturnType<typeof render> {
   return render(
-    <SyncClient connection={CONNECTE} conflicts={[]} failures={[]} pending={[]} {...overrides} />,
+    <SyncClient conflicts={[]} failures={[]} pending={[]} {...overrides} />,
   )
 }
 
@@ -57,66 +49,8 @@ beforeEach(() => {
   arbitrer.mockReset()
   synchroniserMaintenant.mockReset()
   rejouer.mockReset()
-  deconnecterGoogle.mockReset()
 })
 afterEach(cleanup)
-
-describe('état de la connexion', () => {
-  it('propose de connecter quand aucun compte ne l est', () => {
-    renderSync({
-      connection: { connected: false, calendarId: '', scope: '', connectedAt: null },
-    })
-    const lien = screen.getByRole('link', { name: 'Connecter Google Calendar' })
-    expect(lien.getAttribute('href')).toBe('/api/google/connect')
-    expect(screen.queryByRole('button', { name: 'Déconnecter' })).toBeNull()
-  })
-
-  it('affiche le calendrier dédié et propose de se déconnecter', () => {
-    renderSync()
-    expect(screen.getByText(/cra@group\.calendar\.google\.com/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Déconnecter' })).toBeTruthy()
-  })
-})
-
-/**
- * `deconnecterGoogle` n'appelle aucun point de révocation chez Google : elle
- * n'efface que ce qui est stocké ici (voir `disconnectGoogle`). Sans ce
- * message, l'utilisateur croirait avoir tout coupé alors que l'application
- * reste autorisée dans son compte Google jusqu'à ce qu'il l'y retire
- * lui-même.
- */
-describe('déconnexion Google', () => {
-  it('dit que l’autorisation reste active côté Google, et comment la retirer', async () => {
-    deconnecterGoogle.mockResolvedValue(undefined)
-    renderSync()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Déconnecter' }))
-
-    const bandeau = await screen.findByRole('alert')
-    // Deux vérifications indépendantes plutôt qu'un fragment court : l'une ne
-    // suffit pas à distinguer ce message d'un message générique de succès.
-    expect(bandeau.textContent).toContain('myaccount.google.com/permissions')
-    expect(bandeau.textContent).toContain('autorise toujours cette application')
-    expect(deconnecterGoogle).toHaveBeenCalledTimes(1)
-
-    // Signalement, pas une erreur : le geste a bien réussi.
-    expect(bandeau.className).toContain('bg-warning')
-    expect(bandeau.className).not.toContain('bg-danger')
-  })
-
-  it('annonce l’échec de la déconnexion au lieu de ne rien dire', async () => {
-    deconnecterGoogle.mockRejectedValue(new Error('connexion perdue'))
-    renderSync()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Déconnecter' }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('alert').textContent).toMatch(/échoué|impossible/i)
-    })
-    // Et le message d'avertissement Google ne s'affiche pas sur un échec.
-    expect(screen.queryByText(/myaccount\.google\.com/)).toBeNull()
-  })
-})
 
 describe('divergences', () => {
   it('offre les trois issues', () => {

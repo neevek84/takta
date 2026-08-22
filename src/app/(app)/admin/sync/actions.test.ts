@@ -7,7 +7,6 @@ const {
   drainSyncOutbox,
   resolveConflict,
   retrySyncRow,
-  disconnectGoogle,
 } = vi.hoisted(() => ({
   requireUser: vi.fn(),
   revalidatePath: vi.fn(),
@@ -15,7 +14,6 @@ const {
   drainSyncOutbox: vi.fn(),
   resolveConflict: vi.fn(),
   retrySyncRow: vi.fn(),
-  disconnectGoogle: vi.fn(),
 }))
 
 vi.mock('@/auth', () => ({
@@ -41,9 +39,8 @@ vi.mock('@/services/sync/drain', () => ({ drainProvidersForUser }))
 vi.mock('@/services/sync/flush', () => ({ drainSyncOutbox }))
 vi.mock('@/services/sync/conflicts', () => ({ resolveConflict }))
 vi.mock('@/services/sync/queue', () => ({ retrySyncRow }))
-vi.mock('@/services/google/connect', () => ({ disconnectGoogle }))
 
-import { arbitrer, deconnecterGoogle, rejouer, synchroniserMaintenant } from './actions'
+import { arbitrer, rejouer, synchroniserMaintenant } from './actions'
 
 const RAPPORT = { nonConnecte: false, traitees: 1, reussies: 1, conflits: 0, echecs: 0, reste: 0 }
 
@@ -54,7 +51,6 @@ beforeEach(() => {
   drainSyncOutbox.mockReset().mockResolvedValue(RAPPORT)
   resolveConflict.mockReset().mockResolvedValue({ ok: true, resolution: 'RETABLIR' })
   retrySyncRow.mockReset().mockResolvedValue(true)
-  disconnectGoogle.mockReset().mockResolvedValue(undefined)
 })
 
 /**
@@ -68,7 +64,6 @@ describe('chaque action exige une session', () => {
     ['synchroniserMaintenant', () => synchroniserMaintenant()],
     ['arbitrer', () => arbitrer('c1', 'RETABLIR')],
     ['rejouer', () => rejouer('r1')],
-    ['deconnecterGoogle', () => deconnecterGoogle()],
   ]
 
   for (const [nom, appeler] of actions) {
@@ -81,7 +76,6 @@ describe('chaque action exige une session', () => {
       expect(drainSyncOutbox).not.toHaveBeenCalled()
       expect(resolveConflict).not.toHaveBeenCalled()
       expect(retrySyncRow).not.toHaveBeenCalled()
-      expect(disconnectGoogle).not.toHaveBeenCalled()
     })
   }
 })
@@ -133,8 +127,7 @@ describe('chaque action agit sur le seul compte de la session', () => {
     expect(retrySyncRow).toHaveBeenCalledWith('r1')
   })
 
-  it('déconnecte le compte Google de la session', async () => {
-    await deconnecterGoogle()
-    expect(disconnectGoogle).toHaveBeenCalledWith('u1')
-  })
+  // La déconnexion de l'agenda a quitté ce fichier : elle est de portée
+  // personnelle, et vit désormais dans `(app)/profil/actions.ts`, où son propre
+  // test reprend les deux mêmes garanties — session exigée, compte de la session.
 })

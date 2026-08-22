@@ -26,7 +26,7 @@ const MESSAGE_CLE_ABSENTE =
  * connexion refusée avait exactement l'air d'une connexion réussie.
  */
 function retour(request: Request, message: string, tone: 'success' | 'danger' = 'danger'): Response {
-  const url = new URL('/admin/sync', request.url)
+  const url = new URL('/profil', request.url)
   url.searchParams.set('message', message)
   url.searchParams.set('tone', tone)
   return Response.redirect(url.toString(), 302)

@@ -53,7 +53,6 @@ export async function connecterDolibarr(
 
   const instanceUrl = String(formData.get('instanceUrl') ?? '').trim()
   const apiKey = String(formData.get('apiKey') ?? '').trim()
-  const dolibarrUserId = String(formData.get('dolibarrUserId') ?? '').trim()
 
   const erreurs: string[] = []
   // Le porteur saisit l'adresse de son instance ; `/api/index.php` est le même
@@ -65,16 +64,6 @@ export async function connecterDolibarr(
     erreurs.push(err instanceof Error ? err.message : String(err))
   }
   if (apiKey === '') erreurs.push("La clé d'API est requise.")
-  if (!/^\d+$/.test(dolibarrUserId)) {
-    // Dire ce qui est attendu **et** où le trouver : c'est un nombre que rien
-    // dans cette application ne révèle, et qui se confond avec l'identifiant
-    // de connexion. « Requis » tout seul laisse chercher.
-    erreurs.push(
-      "L'identifiant de l'utilisateur Dolibarr doit être un nombre — celui de votre fiche " +
-        'utilisateur, pas votre identifiant de connexion. Dans Dolibarr : Utilisateurs & groupes, ' +
-        'ouvrez votre fiche, le nombre est à la fin de son adresse (…?id=3). Un temps passé en exige un.',
-    )
-  }
   if (erreurs.length > 0) return { ok: false, erreurs }
 
   try {
@@ -89,7 +78,10 @@ export async function connecterDolibarr(
     provider: DOLIBARR,
     secret: apiKey,
     baseUrl,
-    metadata: { dolibarrUserId },
+    // Aucune métadonnée : `dolibarrUserId` était le seul contenu de cet objet, et
+    // il est devenu personnel. Le laisser ici en ferait un second lieu de vérité,
+    // que le push ne lit plus — donc un réglage qui ne règle rien.
+    metadata: {},
   })
 
   // La connexion est l'un des deux instants où le push s'arme. Tout ce qui a

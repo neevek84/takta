@@ -29,9 +29,13 @@ const TRAVAIL: { href: string; label: string; icone: Icone }[] = [
 ]
 
 /**
- * Les sept écrans de réglage. `src/app/(app)/admin/` en contient exactement
- * sept, et `layout.test.tsx` lit ce dossier pour exiger un lien par écran :
- * cette liste **s'étend**, elle ne se remplace pas.
+ * Les écrans de réglage, et l'écran de profil. `layout.test.tsx` lit
+ * `src/app/(app)/admin/` pour exiger un lien par écran : cette liste
+ * **s'étend**, elle ne se remplace pas.
+ *
+ * « Mon profil » vient en tête, et il n'est pas sous `/admin/` : c'est le seul
+ * du tiroir qu'un consultant a le droit d'ouvrir, et ce qu'il porte — son
+ * utilisateur Dolibarr, son agenda — n'appartient qu'à lui.
  *
  * Deux libellés seulement changent, et ce sont les deux qui nommaient la route
  * plutôt que ce que la personne contrôle : « Admin » → « Règles de saisie »,
@@ -41,6 +45,7 @@ const TRAVAIL: { href: string; label: string; icone: Icone }[] = [
  * nulle part ailleurs, et quatre tests les cherchent par ce nom-là.
  */
 const REGLAGES = [
+  { href: '/profil', label: 'Mon profil' },
   { href: '/admin/saisie', label: 'Règles de saisie' },
   { href: '/admin/theme', label: 'Apparence' },
   { href: '/admin/dolibarr', label: 'Dolibarr' },
@@ -49,6 +54,7 @@ const REGLAGES = [
   { href: '/admin/webhooks', label: 'Abonnements' },
   { href: '/admin/supervision', label: 'Supervision' },
   { href: '/admin/donnees', label: 'Données' },
+  { href: '/admin/comptes', label: 'Comptes' },
 ] as const
 
 /**
@@ -95,10 +101,10 @@ function classesDuLien(actif: boolean, onglet = false): string {
   return cn(
     'touch-target flex w-full items-center gap-2 rounded-md px-3 text-sm',
     'border-l-2 transition-colors duration-150',
-    // Les sept entrées du tiroir n'en sont pas : elles vivent dans un panneau
-    // de 224 points, où le libellé a toute sa place et garde le dessin du
-    // rail. Les empiler et les réduire à 10 points là aussi n'économiserait
-    // aucune largeur et rendrait sept lignes illisibles.
+    // Les entrées du tiroir n'en sont pas : elles vivent dans un panneau de
+    // 224 points, où le libellé a toute sa place et garde le dessin du rail.
+    // Les empiler et les réduire à 10 points là aussi n'économiserait aucune
+    // largeur et rendrait toutes ces lignes illisibles.
     onglet && 'max-md:flex-col max-md:justify-center max-md:gap-0.5 max-md:px-0.5 max-md:text-[10px]',
     onglet && 'max-md:border-l-0 max-md:border-t-2',
     actif
@@ -130,8 +136,8 @@ export function NavRail({ onSignOut }: { onSignOut: () => Promise<void> }) {
    * Déplié dans le rail, replié dans la barre basse — et l'état repart de la
    * largeur à chaque changement de route.
    *
-   * Dans le rail, sept écrans de réglage cachés derrière un geste
-   * supplémentaire sont sept écrans qu'on oublie d'ouvrir. Sur téléphone, le
+   * Dans le rail, des écrans de réglage cachés derrière un geste
+   * supplémentaire sont des écrans qu'on oublie d'ouvrir. Sur téléphone, le
    * même état déplié produit tout autre chose : le tiroir y est un panneau
    * flottant de 224 × 427 points, soit 31 % de l'écran couverts dès la
    * première peinture de **chaque** page, que rien ne refermait sinon un
@@ -212,7 +218,7 @@ export function NavRail({ onSignOut }: { onSignOut: () => Promise<void> }) {
             tiroir replié « n'est que masqué » et que ses `<a>` restaient
             atteignables : c'est faux — `display:none` les retire de l'arbre
             d'accessibilité et de l'ordre de tabulation, exactement comme un
-            démontage. Le contrôle de couverture des sept écrans
+            démontage. Le contrôle de couverture des écrans de réglage
             (`layout.test.tsx`) ne le voyait pas, faute de feuille de style en
             test. L'attribut, lui, se voit partout : le garde-fou tombe
             désormais si quelqu'un replie le tiroir par défaut sur le rail. */}
