@@ -6,7 +6,6 @@
 # jamais de mise à jour : Container Manager surveille un registre, pas un
 # Dockerfile local.
 #
-# Remplacez `VOTRE_COMPTE` par le compte Docker Hub qui publie l'image.
 services:
   db:
     image: postgres:16-alpine
@@ -25,7 +24,7 @@ services:
     restart: unless-stopped
 
   app:
-    image: VOTRE_COMPTE/takta:latest
+    image: kreativpm/takta:latest
     depends_on:
       db:
         condition: service_healthy
