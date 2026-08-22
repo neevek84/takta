@@ -372,6 +372,47 @@ export async function updateMissionSignataire(
   return { ok: true }
 }
 
+export type LibelleResult = { ok: true } | { ok: false; erreur: string }
+
+/**
+ * Renomme une mission. **Localement, et rien d'autre.**
+ *
+ * Le libellé était figé à la création : une faute de frappe, un intitulé qui
+ * change en cours de contrat, et la seule issue était de supprimer la mission
+ * — donc ses saisies et ses CRA — pour la recréer.
+ *
+ * Rien n'est poussé chez Dolibarr, et c'est une règle, pas un raccourci : le
+ * projet distant porte la référence d'un bon de commande et le titre que le
+ * client connaît. Le réécrire d'ici modifierait un document commercial, ce que
+ * l'application ne fait jamais — c'est déjà ce que dit le verrou de
+ * `updateLine` sur les jours vendus. La correspondance `mission → projet` n'est
+ * pas touchée non plus : renommer ne repointe rien, et rompre le lien ferait
+ * que les temps suivants ne partiraient plus.
+ *
+ * Scopé par affectation, comme le signataire : sans ligne affectée, la mission
+ * n'est pas la sienne et il ne renomme pas celle d'un autre consultant.
+ */
+export async function updateMissionLabel(
+  userId: string,
+  missionId: string,
+  label: string,
+): Promise<LibelleResult> {
+  const propre = label.trim()
+  // Une mission sans libellé n'est plus reconnaissable dans la liste, et la
+  // confirmation de suppression — recopier le libellé — n'aurait plus rien à
+  // faire recopier.
+  if (propre === '') return { ok: false, erreur: 'Le libellé de la mission ne peut pas être vide.' }
+
+  const mission = await prisma.mission.findFirst({
+    where: { id: missionId, lines: { some: { assignments: { some: { userId } } } } },
+    select: { id: true },
+  })
+  if (mission === null) return { ok: false, erreur: 'Cette mission ne vous est pas affectée.' }
+
+  await prisma.mission.update({ where: { id: missionId }, data: { label: propre } })
+  return { ok: true }
+}
+
 export async function listActiveLines(userId: string): Promise<LineForGrid[]> {
   const settings = await getSettings()
 

@@ -6,6 +6,7 @@ import {
   createLine,
   listActiveLines,
   listMissionsForUser,
+  updateMissionLabel,
   updateLine,
   updateMissionSignataire,
 } from './missions'
@@ -50,6 +51,7 @@ afterAll(async () => {
   await prisma.client.deleteMany({ where: { name: { startsWith: 'AFFECTATION' } } })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'NON AFFECTE' } } })
   await prisma.client.deleteMany({ where: { name: { startsWith: 'SOURCE' } } })
+  await prisma.client.deleteMany({ where: { name: { startsWith: 'RENOMMAGE' } } })
   await prisma.$disconnect()
 })
 
@@ -1092,5 +1094,102 @@ describe('engagement issu d une propale', () => {
     })
     const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
     expect(relue.soldCentiemes).toBe(1500)
+  })
+})
+
+describe('renommer une mission', () => {
+  /** Une mission affectée à `userId`, avec sa correspondance de projet Dolibarr. */
+  async function decorRenommage(nom: string) {
+    const c = await createClient(`RENOMMAGE ${nom}`)
+    const m = await createMission({ clientId: c.id, label: 'Ancien libellé' })
+    await createLine({ missionId: m.id, userId, label: 'L', soldCentiemes: 100, tjmCents: 0 })
+    return m
+  }
+
+  it('renomme, et le détail de la mission le montre', async () => {
+    const m = await decorRenommage('simple')
+
+    expect(await updateMissionLabel(userId, m.id, 'AMOA ITSM')).toEqual({ ok: true })
+
+    const relue = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect(relue.label).toBe('AMOA ITSM')
+    expect((await listMissionsForUser(userId)).find((x) => x.id === m.id)!.label).toBe('AMOA ITSM')
+  })
+
+  it('coupe les espaces qui entourent le libellé', async () => {
+    const m = await decorRenommage('espaces')
+
+    await updateMissionLabel(userId, m.id, '   AMOA ITSM   ')
+
+    expect((await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })).label).toBe('AMOA ITSM')
+  })
+
+  // Une mission sans libellé n'est plus reconnaissable dans la liste, et la
+  // confirmation de suppression — recopier le libellé — n'aurait plus rien à
+  // recopier.
+  it('refuse un libellé vide, et n écrit rien', async () => {
+    const m = await decorRenommage('vide')
+
+    const r = await updateMissionLabel(userId, m.id, '   ')
+
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erreur).toContain('libellé')
+    expect((await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })).label).toBe(
+      'Ancien libellé',
+    )
+  })
+
+  // Même règle que le signataire : sans ligne affectée, la mission n'est pas
+  // la sienne.
+  it('refuse une mission qui ne lui est pas affectée, et n écrit rien', async () => {
+    const m = await decorRenommage('non affectee')
+    const autre = await prisma.user.create({
+      data: {
+        email: 'autre-renommage@test.local',
+        name: 'A',
+        passwordHash: 'x',
+        role: 'CONSULTANT',
+      },
+    })
+
+    const r = await updateMissionLabel(autre.id, m.id, 'Volée')
+
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erreur).toContain('affectée')
+    expect((await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })).label).toBe(
+      'Ancien libellé',
+    )
+
+    await prisma.user.delete({ where: { id: autre.id } })
+  })
+
+  /**
+   * **La règle du produit.** Renommer est local. Le projet Dolibarr porte la
+   * référence d'un bon de commande et le titre que le client connaît : le
+   * renommer depuis ici modifierait un document commercial, ce que
+   * l'application ne fait jamais.
+   */
+  it('ne pousse rien chez Dolibarr, et laisse la correspondance intacte', async () => {
+    const m = await decorRenommage('dolibarr')
+    const lien = await prisma.externalLink.create({
+      data: {
+        userId,
+        entityType: 'Mission',
+        entityId: m.id,
+        provider: DOLIBARR,
+        externalId: '178',
+        syncState: 'SYNCED',
+        etag: 'abc',
+      },
+    })
+    const enFileAvant = await prisma.syncOutbox.count()
+
+    await updateMissionLabel(userId, m.id, 'Nouveau nom local')
+
+    expect(await prisma.syncOutbox.count()).toBe(enFileAvant)
+    const relu = await prisma.externalLink.findUniqueOrThrow({ where: { id: lien.id } })
+    expect([relu.externalId, relu.syncState, relu.etag]).toEqual(['178', 'SYNCED', 'abc'])
+
+    await prisma.externalLink.delete({ where: { id: lien.id } })
   })
 })

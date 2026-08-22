@@ -9,6 +9,7 @@ import {
   createMission,
   createLine,
   updateLine,
+  updateMissionLabel,
   updateMissionSignataire,
   type SignataireResult,
 } from '@/services/missions'
@@ -35,9 +36,13 @@ import {
 import { getSettings } from '@/services/settings'
 import {
   archiverMission,
+  archiverPrestation,
   impactSuppressionMission,
+  impactSuppressionPrestation,
   supprimerMission,
+  supprimerPrestation,
   type ImpactSuppression,
+  type ImpactSuppressionPrestation,
 } from '@/services/archivage'
 import { detachEntity } from '@/services/dolibarr/import'
 import type { DisplayUnit } from '@/core/types'
@@ -538,5 +543,99 @@ export async function detruireMission(
     }
   } catch (err) {
     return { ok: false, erreur: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+
+/**
+ * Renomme une mission, **localement**.
+ *
+ * Le libellé était figé à la création : le corriger imposait de supprimer la
+ * mission, donc ses saisies et ses CRA, pour la recréer.
+ *
+ * Rien n'est poussé chez Dolibarr : le projet distant porte la référence d'un
+ * bon de commande et le titre que le client connaît, et l'application ne
+ * modifie jamais un document commercial.
+ */
+export async function renommerMission(
+  missionId: string,
+  label: string,
+): Promise<GestionMissionState> {
+  const user = await requireUser()
+
+  const r = await updateMissionLabel(user.id, missionId, label)
+  if (!r.ok) return { ok: false, erreur: r.erreur }
+
+  revalidatePath('/missions')
+  // La grille de saisie et le CRA portent tous deux le libellé de la mission :
+  // les laisser sur l'ancien afficherait deux noms pour une même mission.
+  revalidatePath('/saisie')
+  revalidatePath('/cra')
+  return { ok: true, message: 'Mission renommée. Rien n’a été modifié dans Dolibarr.' }
+}
+
+/** Ce qu'une suppression de prestation emporterait — montré **avant** de la proposer. */
+export async function chargerImpactPrestation(
+  lineId: string,
+): Promise<ImpactSuppressionPrestation> {
+  await requireUser()
+  return impactSuppressionPrestation(lineId)
+}
+
+/** Range une prestation, ou la sort de l'archive. Réversible : rien n'est perdu. */
+export async function rangerPrestation(
+  lineId: string,
+  archive: boolean,
+): Promise<GestionMissionState> {
+  const user = await requireUser()
+
+  const r = await archiverPrestation({ userId: user.id, lineId, archive })
+  if (!r.ok) return { ok: false, erreur: 'Cette prestation ne vous est pas affectée.' }
+
+  revalidatePath('/missions')
+  // La grille de saisie liste les prestations actives : une prestation rangée
+  // qui y resterait continuerait de recevoir des temps.
+  revalidatePath('/saisie')
+  return { ok: true, message: archive ? 'Prestation archivée.' : 'Prestation désarchivée.' }
+}
+
+/**
+ * Détruit une prestation, ses saisies et son affectation, **localement**.
+ *
+ * Le libellé exact est exigé en confirmation, comme pour une mission : la
+ * suppression emporte des saisies parfois déjà validées — donc facturées — et
+ * un clic ne doit pas suffire à les faire disparaître.
+ */
+export async function detruirePrestation(
+  lineId: string,
+  confirmation: string,
+): Promise<GestionMissionState> {
+  const user = await requireUser()
+
+  const ligne = await prisma.missionLine.findUnique({
+    where: { id: lineId },
+    select: { label: true },
+  })
+  if (ligne === null) return { ok: false, erreur: 'Cette prestation n’existe plus.' }
+  if (confirmation.trim() !== ligne.label) {
+    return {
+      ok: false,
+      erreur: `Pour supprimer, recopiez exactement le libellé de la prestation : « ${ligne.label} ».`,
+    }
+  }
+
+  const r = await supprimerPrestation({ userId: user.id, lineId })
+  if (!r.ok) return { ok: false, erreur: 'Cette prestation ne vous est pas affectée.' }
+
+  revalidatePath('/missions')
+  revalidatePath('/saisie')
+  // Le CRA du mois reste, mais son contenu change : il ne doit pas continuer
+  // d'afficher des temps qui n'existent plus.
+  revalidatePath('/cra')
+  return {
+    ok: true,
+    message:
+      `Prestation supprimée : ${r.impact.saisies} saisie(s) et ${r.impact.correspondances} ` +
+      'correspondance(s). Rien n’a été supprimé dans Dolibarr.',
   }
 }

@@ -1,17 +1,27 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import { prisma } from '@/db/client'
 import { createClient } from '@/services/clients'
-import { createMission, createLine, listMissionsForUser } from '@/services/missions'
+import { createMission, createLine, listActiveLines, listMissionsForUser } from '@/services/missions'
 import { listClients } from '@/services/clients'
 import { DOLIBARR } from './dolibarr/api'
-import { LIEN_LIGNE, LIEN_MISSION, LIEN_TEMPS, LIEN_TEMPS_REPRIS } from './dolibarr/liens'
+import {
+  LIEN_COMMANDE,
+  LIEN_LIGNE,
+  LIEN_MISSION,
+  LIEN_PROPALE,
+  LIEN_TEMPS,
+  LIEN_TEMPS_REPRIS,
+} from './dolibarr/liens'
 import {
   archiverClient,
   archiverMission,
+  archiverPrestation,
   impactSuppressionClient,
   impactSuppressionMission,
+  impactSuppressionPrestation,
   supprimerClient,
   supprimerMission,
+  supprimerPrestation,
 } from './archivage'
 
 let userId = ''
@@ -31,7 +41,18 @@ beforeEach(async () => {
 afterAll(async () => {
   await prisma.client.deleteMany({ where: { name: { startsWith: 'ARC' } } })
   await prisma.externalLink.deleteMany({ where: { provider: DOLIBARR } })
-  await prisma.user.deleteMany({ where: { email: 'archivage@test.local' } })
+  await prisma.user.deleteMany({
+    where: {
+      email: {
+        in: [
+          'archivage@test.local',
+          'archivage-archive@test.local',
+          'archivage-suppression@test.local',
+          'archivage-voisin@test.local',
+        ],
+      },
+    },
+  })
   await prisma.$disconnect()
 })
 
@@ -227,5 +248,392 @@ describe('supprimerClient', () => {
       true,
     )
     expect(await prisma.mission.count({ where: { clientId: d.client.id } })).toBe(1)
+  })
+})
+
+/**
+ * Une seconde prestation dans la même mission, avec sa saisie et sa
+ * correspondance de tâche. Elle sert de témoin : supprimer une prestation ne
+ * doit rien emporter de sa voisine.
+ */
+async function voisine(missionId: string, craId?: string) {
+  const ligne = await createLine({
+    missionId,
+    userId,
+    label: 'Voisine',
+    soldCentiemes: 200,
+    tjmCents: 0,
+  })
+  const saisie = await prisma.timeEntry.create({
+    data: {
+      lineId: ligne.id,
+      userId,
+      date: new Date('2026-07-16T00:00:00Z'),
+      minutes: 420,
+      kind: 'REALISE',
+      slotId: '',
+      startMinute: 540,
+      endMinute: 960,
+      minutesParJour: 420,
+    },
+  })
+  await prisma.externalLink.create({
+    data: {
+      userId,
+      entityType: LIEN_LIGNE,
+      entityId: ligne.id,
+      provider: DOLIBARR,
+      externalId: '35',
+      syncState: 'SYNCED',
+    },
+  })
+  // Sa cellule poussée, quand le décor en fournit le CRA : les quatre parts de
+  // `craId|lineId|jour|creneau` partagent le préfixe du CRA, et c'est la
+  // deuxième qui distingue les deux prestations.
+  if (craId !== undefined) {
+    await prisma.externalLink.create({
+      data: {
+        userId,
+        entityType: LIEN_TEMPS,
+        entityId: `${craId}|${ligne.id}|2026-07-16|`,
+        provider: DOLIBARR,
+        externalId: '382',
+        syncState: 'SYNCED',
+      },
+    })
+  }
+  return { ligne, saisie }
+}
+
+describe('impactSuppressionPrestation', () => {
+  // Comme pour la mission : ce qu'une suppression emporte se montre **avant**.
+  it('compte ce que la suppression de la prestation emporterait', async () => {
+    const d = await decor()
+
+    expect(await impactSuppressionPrestation(d.ligne.id)).toEqual({
+      saisies: 1,
+      // La saisie tombe dans un mois déjà validé : c'est une pièce comptable.
+      saisiesValidees: 1,
+      // Le CRA n'est PAS détruit — son contenu change, ce qui est pire à
+      // taire : il a été envoyé au client, parfois signé.
+      crasValides: 1,
+      // La correspondance mission → projet n'est pas de la partie.
+      correspondances: 3,
+    })
+  })
+
+  it('compte aussi les engagements repris — propale et commande', async () => {
+    const d = await decor()
+    for (const [type, externe] of [
+      [LIEN_PROPALE, '12:340'],
+      [LIEN_COMMANDE, '13:341'],
+    ] as const) {
+      await prisma.externalLink.create({
+        data: {
+          userId,
+          entityType: type,
+          entityId: d.ligne.id,
+          provider: DOLIBARR,
+          externalId: externe,
+          syncState: 'SYNCED',
+        },
+      })
+    }
+
+    expect((await impactSuppressionPrestation(d.ligne.id)).correspondances).toBe(5)
+  })
+
+  it('ne compte pas les saisies de la prestation voisine', async () => {
+    const d = await decor()
+    await voisine(d.mission.id)
+
+    expect((await impactSuppressionPrestation(d.ligne.id)).saisies).toBe(1)
+  })
+
+  // Un mois en brouillon n'est pas une pièce comptable : le dire validé
+  // ferait crier au loup à chaque suppression de brouillon.
+  it('ne compte comme validé que ce qui l est', async () => {
+    const d = await decor()
+    await prisma.cra.update({ where: { id: d.cra.id }, data: { status: 'BROUILLON' } })
+
+    const impact = await impactSuppressionPrestation(d.ligne.id)
+    expect(impact.saisies).toBe(1)
+    expect(impact.saisiesValidees).toBe(0)
+    expect(impact.crasValides).toBe(0)
+  })
+
+  // Un CRA porte un mois : une saisie d'un autre mois n'y est pas.
+  it('ne rattache pas une saisie au CRA validé d un autre mois', async () => {
+    const d = await decor()
+    await prisma.timeEntry.update({
+      where: { id: d.saisie.id },
+      data: { date: new Date('2026-08-15T00:00:00Z') },
+    })
+
+    expect((await impactSuppressionPrestation(d.ligne.id)).saisiesValidees).toBe(0)
+  })
+
+  // Un CRA appartient à un consultant. Rapprocher sur le seul mois
+  // attribuerait à l'un le CRA validé de l'autre — et ferait crier au loup sur
+  // une mission partagée.
+  it('ne valide pas mes saisies avec le CRA validé d un autre consultant', async () => {
+    const d = await decor()
+    const autre = await prisma.user.create({
+      data: {
+        email: 'archivage-voisin@test.local',
+        name: 'C',
+        passwordHash: 'x',
+        role: 'CONSULTANT',
+      },
+    })
+    await prisma.cra.update({ where: { id: d.cra.id }, data: { userId: autre.id } })
+
+    const impact = await impactSuppressionPrestation(d.ligne.id)
+    expect(impact.saisies).toBe(1)
+    expect(impact.saisiesValidees).toBe(0)
+    expect(impact.crasValides).toBe(0)
+
+    await prisma.cra.update({ where: { id: d.cra.id }, data: { userId } })
+    await prisma.user.delete({ where: { id: autre.id } })
+  })
+
+  it('rend un impact vide pour une prestation qui n existe pas', async () => {
+    expect(await impactSuppressionPrestation('inexistante')).toEqual({
+      saisies: 0,
+      saisiesValidees: 0,
+      crasValides: 0,
+      correspondances: 0,
+    })
+  })
+})
+
+describe('archiverPrestation', () => {
+  it('range et déserange, sans rien détruire', async () => {
+    const d = await decor()
+
+    expect(await archiverPrestation({ userId, lineId: d.ligne.id, archive: true })).toEqual({
+      ok: true,
+    })
+    expect(
+      (await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })).archived,
+    ).toBe(true)
+    expect(await prisma.timeEntry.count({ where: { lineId: d.ligne.id } })).toBe(1)
+
+    expect(await archiverPrestation({ userId, lineId: d.ligne.id, archive: false })).toEqual({
+      ok: true,
+    })
+    expect(
+      (await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })).archived,
+    ).toBe(false)
+  })
+
+  // Ranger sans faire disparaître ne range rien.
+  it('sort la prestation archivée de la saisie et du détail de la mission', async () => {
+    const d = await decor()
+    expect((await listActiveLines(userId)).some((l) => l.id === d.ligne.id)).toBe(true)
+
+    await archiverPrestation({ userId, lineId: d.ligne.id, archive: true })
+
+    expect((await listActiveLines(userId)).some((l) => l.id === d.ligne.id)).toBe(false)
+    const mission = (await listMissionsForUser(userId)).find((m) => m.id === d.mission.id)
+    expect(mission?.lines.some((l) => l.id === d.ligne.id)).toBe(false)
+  })
+
+  // Même règle que `updateLine` : sans affectation, la prestation n'est pas la
+  // sienne.
+  it('refuse une prestation qui n est pas affectée, et n écrit rien', async () => {
+    const d = await decor()
+    const autre = await prisma.user.create({
+      data: {
+        email: 'archivage-archive@test.local',
+        name: 'B',
+        passwordHash: 'x',
+        role: 'CONSULTANT',
+      },
+    })
+
+    expect(
+      await archiverPrestation({ userId: autre.id, lineId: d.ligne.id, archive: true }),
+    ).toEqual({ ok: false, reason: 'NON_AFFECTE' })
+    expect(
+      (await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })).archived,
+    ).toBe(false)
+
+    await prisma.user.delete({ where: { id: autre.id } })
+  })
+
+  // Le verrou d'engagement porte sur les jours vendus et le TJM, pas sur le
+  // rangement : une prestation reprise se range comme une autre.
+  it('range une prestation dont l engagement vient de Dolibarr', async () => {
+    const d = await decor()
+    await prisma.missionLine.update({
+      where: { id: d.ligne.id },
+      data: { engagementSource: 'DOLIBARR_PROPALE' },
+    })
+
+    expect(await archiverPrestation({ userId, lineId: d.ligne.id, archive: true })).toEqual({
+      ok: true,
+    })
+  })
+})
+
+describe('supprimerPrestation', () => {
+  it('détruit la prestation, ses saisies et son affectation', async () => {
+    const d = await decor()
+
+    const r = await supprimerPrestation({ userId, lineId: d.ligne.id })
+
+    expect(r.ok).toBe(true)
+    expect(await prisma.missionLine.count({ where: { id: d.ligne.id } })).toBe(0)
+    expect(await prisma.timeEntry.count({ where: { id: d.saisie.id } })).toBe(0)
+    expect(await prisma.assignment.count({ where: { lineId: d.ligne.id } })).toBe(0)
+  })
+
+  // Supprimer une prestation n'est pas supprimer la mission : le CRA du mois
+  // reste, son contenu change.
+  it('laisse la mission, ses CRA et sa prestation voisine intacts', async () => {
+    const d = await decor()
+    const v = await voisine(d.mission.id)
+
+    await supprimerPrestation({ userId, lineId: d.ligne.id })
+
+    expect(await prisma.mission.count({ where: { id: d.mission.id } })).toBe(1)
+    expect(await prisma.cra.count({ where: { id: d.cra.id } })).toBe(1)
+    expect(await prisma.missionLine.count({ where: { id: v.ligne.id } })).toBe(1)
+    expect(await prisma.timeEntry.count({ where: { id: v.saisie.id } })).toBe(1)
+  })
+
+  // `ExternalLink.entityId` est une chaîne nue, reliée à rien : la cascade de
+  // la base ne l'emporte pas. Une correspondance survivante désignerait le
+  // vide, et la prochaine prestation à recevoir le même identifiant en
+  // hériterait.
+  it('emporte les correspondances de la prestation, que la base ne relie à rien', async () => {
+    const d = await decor()
+    for (const [type, externe] of [
+      [LIEN_PROPALE, '12:340'],
+      [LIEN_COMMANDE, '13:341'],
+    ] as const) {
+      await prisma.externalLink.create({
+        data: {
+          userId,
+          entityType: type,
+          entityId: d.ligne.id,
+          provider: DOLIBARR,
+          externalId: externe,
+          syncState: 'SYNCED',
+        },
+      })
+    }
+    const v = await voisine(d.mission.id, d.cra.id)
+
+    await supprimerPrestation({ userId, lineId: d.ligne.id })
+
+    expect(await prisma.externalLink.count({ where: { entityId: d.ligne.id } })).toBe(0)
+    expect(await prisma.externalLink.count({ where: { entityId: d.saisie.id } })).toBe(0)
+    // La cellule poussée : `craId|lineId|jour|creneau`, illisible autrement que
+    // par préfixe.
+    expect(
+      await prisma.externalLink.count({
+        where: { entityId: { startsWith: `${d.cra.id}|${d.ligne.id}|` } },
+      }),
+    ).toBe(0)
+    // Et rien de ce qui n'était pas à elle : la mission garde son projet, la
+    // voisine sa tâche **et sa cellule** — le CRA du mois survit, et ce qui a
+    // été poussé pour les autres prestations reste retrouvable.
+    expect(await prisma.externalLink.count({ where: { entityId: d.mission.id } })).toBe(1)
+    expect(await prisma.externalLink.count({ where: { entityId: v.ligne.id } })).toBe(1)
+    expect(
+      await prisma.externalLink.count({
+        where: { entityId: { startsWith: `${d.cra.id}|${v.ligne.id}|` } },
+      }),
+    ).toBe(1)
+  })
+
+  // Une ligne de file qui vise une saisie détruite ne pourra jamais aboutir :
+  // elle resterait à réessayer indéfiniment dans l'écran de supervision.
+  it('vide la file de ce qui visait les saisies détruites', async () => {
+    const d = await decor()
+    const v = await voisine(d.mission.id)
+    for (const saisie of [d.saisie, v.saisie]) {
+      await prisma.syncOutbox.create({
+        data: {
+          userId,
+          entityType: 'TimeEntry',
+          entityId: saisie.id,
+          provider: DOLIBARR,
+          operation: 'UPSERT',
+          payloadJson: '{}',
+          state: 'PENDING',
+          nextAttemptAt: new Date(),
+        },
+      })
+    }
+
+    await supprimerPrestation({ userId, lineId: d.ligne.id })
+
+    expect(await prisma.syncOutbox.count({ where: { entityId: d.saisie.id } })).toBe(0)
+    expect(await prisma.syncOutbox.count({ where: { entityId: v.saisie.id } })).toBe(1)
+  })
+
+  it('rend ce qu elle a emporté, compté avant destruction', async () => {
+    const d = await decor()
+    const attendu = await impactSuppressionPrestation(d.ligne.id)
+
+    const r = await supprimerPrestation({ userId, lineId: d.ligne.id })
+
+    expect(r).toEqual({ ok: true, impact: attendu })
+  })
+
+  /**
+   * **La décision de conception.** Une prestation dont les saisies sont déjà
+   * parties chez Dolibarr se supprime quand même — on compte, on ne refuse
+   * pas. C'est ce que fait déjà la suppression d'une mission, qui emporte des
+   * CRA validés après les avoir comptés. Refuser ici et accepter un niveau
+   * au-dessus pousserait à supprimer la mission entière pour se débarrasser
+   * d'une prestation : bien pire. Et rien n'est supprimé chez Dolibarr, où
+   * l'historique reste.
+   */
+  it('ne refuse pas une prestation déjà poussée : elle la compte', async () => {
+    const d = await decor()
+
+    const r = await supprimerPrestation({ userId, lineId: d.ligne.id })
+
+    expect(r).toEqual({
+      ok: true,
+      impact: { saisies: 1, saisiesValidees: 1, crasValides: 1, correspondances: 3 },
+    })
+    expect(await prisma.missionLine.count({ where: { id: d.ligne.id } })).toBe(0)
+  })
+
+  it('supprime une prestation dont l engagement vient de Dolibarr', async () => {
+    const d = await decor()
+    await prisma.missionLine.update({
+      where: { id: d.ligne.id },
+      data: { engagementSource: 'DOLIBARR_COMMANDE' },
+    })
+
+    expect((await supprimerPrestation({ userId, lineId: d.ligne.id })).ok).toBe(true)
+    expect(await prisma.missionLine.count({ where: { id: d.ligne.id } })).toBe(0)
+  })
+
+  it('refuse une prestation qui n est pas affectée, et ne détruit rien', async () => {
+    const d = await decor()
+    const autre = await prisma.user.create({
+      data: {
+        email: 'archivage-suppression@test.local',
+        name: 'B',
+        passwordHash: 'x',
+        role: 'CONSULTANT',
+      },
+    })
+
+    expect(await supprimerPrestation({ userId: autre.id, lineId: d.ligne.id })).toEqual({
+      ok: false,
+      reason: 'NON_AFFECTE',
+    })
+    expect(await prisma.missionLine.count({ where: { id: d.ligne.id } })).toBe(1)
+    expect(await prisma.timeEntry.count({ where: { id: d.saisie.id } })).toBe(1)
+
+    await prisma.user.delete({ where: { id: autre.id } })
   })
 })

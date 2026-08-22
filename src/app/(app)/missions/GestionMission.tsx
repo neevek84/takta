@@ -9,12 +9,21 @@ import {
   detacherMissionDeDolibarr,
   detruireMission,
   rangerMission,
+  renommerMission,
   type GestionMissionState,
 } from './actions'
 import type { ImpactSuppression } from '@/services/archivage'
 
 /**
- * Détacher, archiver, supprimer — trois gestes qui ne s'échangent pas.
+ * Renommer, détacher, archiver, supprimer — quatre gestes qui ne s'échangent
+ * pas.
+ *
+ * **Renommer** ne touche qu'au nom local. Le geste manquait entièrement : une
+ * faute de frappe ou un intitulé qui change en cours de contrat n'avait pour
+ * seule issue que la suppression de la mission — donc de ses saisies et de ses
+ * CRA — pour la recréer. Rien n'est poussé chez Dolibarr : le projet distant
+ * porte la référence d'un bon de commande, et l'application ne modifie jamais
+ * un document commercial.
  *
  * **Détacher** rompt le lien avec Dolibarr et ne perd rien : c'est le geste qui
  * convient quand le projet distant a été supprimé, ce que Dolibarr ne dit à
@@ -39,6 +48,7 @@ export function GestionMission({
   dansDolibarr: boolean
 }) {
   const [ouvert, setOuvert] = useState(false)
+  const [libelle, setLibelle] = useState(label)
   const [impact, setImpact] = useState<ImpactSuppression | null>(null)
   const [confirmation, setConfirmation] = useState('')
   const [etat, setEtat] = useState<GestionMissionState>(null)
@@ -64,7 +74,7 @@ export function GestionMission({
     return (
       <div className="mt-4">
         <Button type="button" onClick={ouvrir} disabled={enCours}>
-          Détacher, archiver ou supprimer cette mission
+          Renommer, détacher, archiver ou supprimer cette mission
         </Button>
       </div>
     )
@@ -72,7 +82,7 @@ export function GestionMission({
 
   return (
     <section className="mt-4 border-t border-rule pt-4">
-      <h3 className="mb-2 font-medium">Détacher, archiver ou supprimer</h3>
+      <h3 className="mb-2 font-medium">Renommer, détacher, archiver ou supprimer</h3>
 
       {etat !== null && (
         <div className="mb-3">
@@ -81,6 +91,26 @@ export function GestionMission({
           </Banner>
         </div>
       )}
+
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <Field
+          label="Nouveau libellé de la mission"
+          name="libelle"
+          value={libelle}
+          onChange={(e) => setLibelle(e.target.value)}
+          className="w-80"
+          hint="Renommage local : le projet Dolibarr garde son nom et sa référence."
+        />
+        <Button
+          type="button"
+          onClick={() => agir(() => renommerMission(missionId, libelle))}
+          // Une mission sans libellé n'est plus reconnaissable dans la liste,
+          // et la confirmation de suppression n'aurait plus rien à recopier.
+          disabled={enCours || libelle.trim() === ''}
+        >
+          Renommer
+        </Button>
+      </div>
 
       {dansDolibarr && (
         <p className="mb-3 text-sm">

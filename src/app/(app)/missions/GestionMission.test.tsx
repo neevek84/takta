@@ -2,18 +2,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 
-const { chargerImpactMission, detacherMissionDeDolibarr, detruireMission, rangerMission } =
-  vi.hoisted(() => ({
-    chargerImpactMission: vi.fn(),
-    detacherMissionDeDolibarr: vi.fn(),
-    detruireMission: vi.fn(),
-    rangerMission: vi.fn(),
-  }))
+const {
+  chargerImpactMission,
+  detacherMissionDeDolibarr,
+  detruireMission,
+  rangerMission,
+  renommerMission,
+} = vi.hoisted(() => ({
+  chargerImpactMission: vi.fn(),
+  detacherMissionDeDolibarr: vi.fn(),
+  detruireMission: vi.fn(),
+  rangerMission: vi.fn(),
+  renommerMission: vi.fn(),
+}))
 vi.mock('./actions', () => ({
   chargerImpactMission,
   detacherMissionDeDolibarr,
   detruireMission,
   rangerMission,
+  renommerMission,
 }))
 
 import { GestionMission } from './GestionMission'
@@ -25,6 +32,7 @@ beforeEach(() => {
   detacherMissionDeDolibarr.mockReset().mockResolvedValue({ ok: true, message: 'Détachée.' })
   detruireMission.mockReset().mockResolvedValue({ ok: true, message: 'Supprimée.' })
   rangerMission.mockReset().mockResolvedValue({ ok: true, message: 'Archivée.' })
+  renommerMission.mockReset().mockResolvedValue({ ok: true, message: 'Mission renommée.' })
 })
 
 afterEach(cleanup)
@@ -35,7 +43,7 @@ afterEach(cleanup)
  */
 async function ouvrir(dansDolibarr = true) {
   render(<GestionMission missionId="m1" label="VALID connecteur" dansDolibarr={dansDolibarr} />)
-  fireEvent.click(screen.getByRole('button', { name: /Détacher, archiver ou supprimer/ }))
+  fireEvent.click(screen.getByRole('button', { name: /Renommer, détacher, archiver ou supprimer/ }))
   await screen.findByRole('button', { name: /Supprimer définitivement/ })
 }
 
@@ -85,12 +93,16 @@ describe('GestionMission', () => {
     )
   })
 
-  it('transmet la confirmation exacte au service', async () => {
+  // Ce qui part est ce que l'utilisateur a **tapé**, jamais le libellé que le
+  // composant connaît déjà : envoyer le second rendrait la vérification du
+  // serveur vide de sens, et `disabled` n'est pas une barrière — un clic peut
+  // être déclenché sans souris.
+  it('transmet la confirmation exacte au service, telle que tapée', async () => {
     await ouvrir()
-    fireEvent.change(screen.getByLabelText(/Recopiez/), { target: { value: 'VALID connecteur' } })
+    fireEvent.change(screen.getByLabelText(/Recopiez/), { target: { value: 'VALID connecteur ' } })
     fireEvent.click(screen.getByRole('button', { name: /Supprimer définitivement/ }))
 
-    await waitFor(() => expect(detruireMission).toHaveBeenCalledWith('m1', 'VALID connecteur'))
+    await waitFor(() => expect(detruireMission).toHaveBeenCalledWith('m1', 'VALID connecteur '))
   })
 
   // Le geste qui convient quand le projet distant a disparu.
@@ -102,6 +114,35 @@ describe('GestionMission', () => {
     cleanup()
     await ouvrir(false)
     expect(screen.queryByRole('button', { name: 'Détacher de Dolibarr' })).toBeNull()
+  })
+
+  // Le libellé était figé à la création : le corriger imposait de supprimer la
+  // mission — donc ses saisies et ses CRA — pour la recréer.
+  it('renomme la mission, sans rien détruire', async () => {
+    await ouvrir()
+    fireEvent.change(screen.getByLabelText(/Nouveau libellé/), {
+      target: { value: 'AMOA ITSM' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Renommer' }))
+
+    await waitFor(() => expect(renommerMission).toHaveBeenCalledWith('m1', 'AMOA ITSM'))
+    expect(await screen.findByText('Mission renommée.')).toBeTruthy()
+    expect(detruireMission).not.toHaveBeenCalled()
+  })
+
+  it('part du libellé actuel, et refuse de le vider', async () => {
+    await ouvrir()
+    expect(screen.getByLabelText(/Nouveau libellé/)).toHaveProperty('value', 'VALID connecteur')
+
+    fireEvent.change(screen.getByLabelText(/Nouveau libellé/), { target: { value: '   ' } })
+    expect(screen.getByRole('button', { name: 'Renommer' })).toHaveProperty('disabled', true)
+  })
+
+  // Renommer est local : le projet Dolibarr porte la référence d'un bon de
+  // commande, et l'application ne modifie jamais un document commercial.
+  it('dit que le renommage ne touche pas à Dolibarr', async () => {
+    await ouvrir()
+    expect(screen.getByText(/le projet Dolibarr garde son nom/)).toBeTruthy()
   })
 
   it('archive sans rien détruire', async () => {

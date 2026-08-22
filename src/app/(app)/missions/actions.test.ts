@@ -1,13 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { requireUser, revalidatePath, createMission, updateMissionSignataire, updateLine } =
-  vi.hoisted(() => ({
-    requireUser: vi.fn(),
-    revalidatePath: vi.fn(),
-    createMission: vi.fn(),
-    updateMissionSignataire: vi.fn(),
-    updateLine: vi.fn(),
-  }))
+const {
+  requireUser,
+  revalidatePath,
+  createMission,
+  updateMissionSignataire,
+  updateMissionLabel,
+  updateLine,
+  archiverPrestation,
+  impactSuppressionPrestation,
+  supprimerPrestation,
+  ligneTrouvee,
+} = vi.hoisted(() => ({
+  requireUser: vi.fn(),
+  revalidatePath: vi.fn(),
+  createMission: vi.fn(),
+  updateMissionSignataire: vi.fn(),
+  updateMissionLabel: vi.fn(),
+  updateLine: vi.fn(),
+  archiverPrestation: vi.fn(),
+  impactSuppressionPrestation: vi.fn(),
+  supprimerPrestation: vi.fn(),
+  ligneTrouvee: vi.fn(),
+}))
 
 vi.mock('@/auth', () => ({
   requireUser,
@@ -33,10 +48,36 @@ vi.mock('@/services/missions', () => ({
   createMission,
   createLine: vi.fn(),
   updateMissionSignataire,
+  updateMissionLabel,
   updateLine,
 }))
+vi.mock('@/services/archivage', () => ({
+  archiverMission: vi.fn(),
+  archiverPrestation,
+  impactSuppressionMission: vi.fn(),
+  impactSuppressionPrestation,
+  supprimerMission: vi.fn(),
+  supprimerPrestation,
+}))
+// Les actions relisent le libellé en base pour exiger sa recopie : c'est la
+// seule chose que la base leur apporte ici.
+vi.mock('@/db/client', () => ({
+  prisma: {
+    mission: { findUnique: vi.fn() },
+    missionLine: { findUnique: ligneTrouvee },
+  },
+}))
 
-import { addClient, addMission, modifierLigne, saveSignataire } from './actions'
+import {
+  addClient,
+  addMission,
+  chargerImpactPrestation,
+  detruirePrestation,
+  modifierLigne,
+  rangerPrestation,
+  renommerMission,
+  saveSignataire,
+} from './actions'
 
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
@@ -44,7 +85,14 @@ beforeEach(() => {
   createMission.mockReset().mockResolvedValue({ id: 'm1' })
   updateMissionSignataire.mockReset().mockResolvedValue({ ok: true })
   updateLine.mockReset().mockResolvedValue({ ok: true })
+  updateMissionLabel.mockReset().mockResolvedValue({ ok: true })
+  archiverPrestation.mockReset().mockResolvedValue({ ok: true })
+  supprimerPrestation.mockReset().mockResolvedValue({ ok: true, impact: IMPACT })
+  impactSuppressionPrestation.mockReset().mockResolvedValue(IMPACT)
+  ligneTrouvee.mockReset().mockResolvedValue({ label: 'Cadrage' })
 })
+
+const IMPACT = { saisies: 12, saisiesValidees: 4, crasValides: 1, correspondances: 3 }
 
 function formulaire(champs: Record<string, string>): FormData {
   const fd = new FormData()
@@ -190,5 +238,125 @@ describe('addClient', () => {
     const { createClient } = await import('@/services/clients')
     await addClient(formulaire({ name: 'ACME' }))
     expect(createClient).toHaveBeenCalledWith('ACME', null, 'u1')
+  })
+})
+
+describe('renommerMission', () => {
+  it('scope le renommage sur l utilisateur de la session', async () => {
+    await renommerMission('m1', 'AMOA ITSM')
+    expect(updateMissionLabel).toHaveBeenCalledWith('u1', 'm1', 'AMOA ITSM')
+  })
+
+  // Renommer est local : le projet Dolibarr garde sa référence et son titre.
+  it('dit que rien n a bougé chez Dolibarr', async () => {
+    const r = await renommerMission('m1', 'AMOA ITSM')
+    expect(r).toEqual({ ok: true, message: expect.stringContaining('Dolibarr') })
+  })
+
+  it('relaie le refus du service au lieu de l avaler', async () => {
+    updateMissionLabel.mockResolvedValue({ ok: false, erreur: 'Le libellé ne peut pas être vide.' })
+
+    expect(await renommerMission('m1', '  ')).toEqual({
+      ok: false,
+      erreur: 'Le libellé ne peut pas être vide.',
+    })
+    expect(revalidatePath).not.toHaveBeenCalled()
+  })
+
+  // Le libellé de la mission s affiche dans la grille de saisie et sur le CRA :
+  // les laisser sur l ancien nom afficherait deux noms pour une même mission.
+  it('revalide les missions, la saisie et les CRA', async () => {
+    await renommerMission('m1', 'AMOA ITSM')
+    for (const chemin of ['/missions', '/saisie', '/cra']) {
+      expect(revalidatePath).toHaveBeenCalledWith(chemin)
+    }
+  })
+})
+
+describe('rangerPrestation', () => {
+  it('scope l archivage sur l utilisateur de la session', async () => {
+    await rangerPrestation('l1', true)
+    expect(archiverPrestation).toHaveBeenCalledWith({ userId: 'u1', lineId: 'l1', archive: true })
+  })
+
+  it('dit lequel des deux gestes a été fait', async () => {
+    expect(await rangerPrestation('l1', true)).toEqual({
+      ok: true,
+      message: expect.stringContaining('archivée'),
+    })
+    expect(await rangerPrestation('l1', false)).toEqual({
+      ok: true,
+      message: expect.stringContaining('désarchivée'),
+    })
+  })
+
+  it('dit le refus de portée en français, sans code technique', async () => {
+    archiverPrestation.mockResolvedValue({ ok: false, reason: 'NON_AFFECTE' })
+
+    const r = await rangerPrestation('l1', true)
+    expect(r).toEqual({ ok: false, erreur: expect.stringContaining('affectée') })
+    expect(revalidatePath).not.toHaveBeenCalled()
+  })
+
+  // La grille de saisie liste les prestations actives : une prestation rangée
+  // qui y resterait continuerait de recevoir des temps.
+  it('revalide les missions et la saisie', async () => {
+    await rangerPrestation('l1', true)
+    expect(revalidatePath).toHaveBeenCalledWith('/missions')
+    expect(revalidatePath).toHaveBeenCalledWith('/saisie')
+  })
+})
+
+describe('detruirePrestation', () => {
+  // Un clic ne doit pas suffire à détruire des saisies déjà validées.
+  it('refuse tant que le libellé n est pas recopié exactement', async () => {
+    const r = await detruirePrestation('l1', 'cadrage')
+
+    expect(r).toEqual({ ok: false, erreur: expect.stringContaining('Cadrage') })
+    expect(supprimerPrestation).not.toHaveBeenCalled()
+  })
+
+  it('détruit quand la recopie est exacte, et rend le compte', async () => {
+    const r = await detruirePrestation('l1', '  Cadrage  ')
+
+    expect(supprimerPrestation).toHaveBeenCalledWith({ userId: 'u1', lineId: 'l1' })
+    // `GestionMissionState` porte aussi `null` — l'état « rien n'a encore été
+    // soumis » de l'écran : il faut l'écarter avant de lire le message.
+    expect(r?.ok).toBe(true)
+    if (r?.ok === true) {
+      expect(r.message).toContain('12')
+      expect(r.message).toContain('3')
+      expect(r.message).toContain('Dolibarr')
+    }
+  })
+
+  it('le dit quand la prestation a déjà disparu', async () => {
+    ligneTrouvee.mockResolvedValue(null)
+
+    const r = await detruirePrestation('l1', 'Cadrage')
+    expect(r).toEqual({ ok: false, erreur: expect.stringContaining('n’existe plus') })
+    expect(supprimerPrestation).not.toHaveBeenCalled()
+  })
+
+  it('dit le refus de portée en français, sans code technique', async () => {
+    supprimerPrestation.mockResolvedValue({ ok: false, reason: 'NON_AFFECTE' })
+
+    const r = await detruirePrestation('l1', 'Cadrage')
+    expect(r).toEqual({ ok: false, erreur: expect.stringContaining('affectée') })
+    expect(revalidatePath).not.toHaveBeenCalled()
+  })
+
+  it('revalide les missions, la saisie et les CRA', async () => {
+    await detruirePrestation('l1', 'Cadrage')
+    for (const chemin of ['/missions', '/saisie', '/cra']) {
+      expect(revalidatePath).toHaveBeenCalledWith(chemin)
+    }
+  })
+})
+
+describe('chargerImpactPrestation', () => {
+  it('compte ce que la suppression emporterait, avant de la proposer', async () => {
+    expect(await chargerImpactPrestation('l1')).toEqual(IMPACT)
+    expect(impactSuppressionPrestation).toHaveBeenCalledWith('l1')
   })
 })

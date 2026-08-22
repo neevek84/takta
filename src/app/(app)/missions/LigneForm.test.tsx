@@ -2,8 +2,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 
-const { modifierLigne } = vi.hoisted(() => ({ modifierLigne: vi.fn() }))
-vi.mock('./actions', () => ({ modifierLigne }))
+const { modifierLigne, chargerImpactPrestation } = vi.hoisted(() => ({
+  modifierLigne: vi.fn(),
+  chargerImpactPrestation: vi.fn(),
+}))
+// `GestionPrestation` est rendu par ce formulaire et lit les mêmes actions :
+// un double partiel le ferait tomber au premier clic.
+vi.mock('./actions', () => ({
+  modifierLigne,
+  chargerImpactPrestation,
+  detruirePrestation: vi.fn(),
+  rangerPrestation: vi.fn(),
+}))
 
 // `vi.mock` est hissé au-dessus des imports : le server action n'est jamais
 // chargé, seul le composant l'est.
@@ -11,6 +21,9 @@ import { LigneForm } from './LigneForm'
 
 beforeEach(() => {
   modifierLigne.mockReset().mockResolvedValue({ ok: true })
+  chargerImpactPrestation
+    .mockReset()
+    .mockResolvedValue({ saisies: 0, saisiesValidees: 0, crasValides: 0, correspondances: 0 })
 })
 
 afterEach(cleanup)
@@ -146,6 +159,26 @@ describe('LigneForm', () => {
       expect(screen.getByRole('status').textContent).toContain('Prestation enregistrée.')
     })
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  // Le geste manquait : une prestation créée par erreur, ou terminée, restait
+  // dans la grille de saisie pour toujours.
+  it('donne accès à l archivage et à la suppression de la prestation', () => {
+    render(<LigneForm line={MANUELLE} />)
+    expect(screen.queryByRole('button', { name: /Archiver ou supprimer/ })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Modifier/ }))
+
+    expect(
+      screen.getByRole('button', { name: /Archiver ou supprimer « Consultant ITSM »/ }),
+    ).toBeTruthy()
+  })
+
+  // Le verrou d'engagement porte sur les jours vendus et le TJM, pas sur le
+  // rangement : une prestation reprise se range comme une autre.
+  it('le propose aussi sur une prestation reprise de Dolibarr', () => {
+    rendreOuvert(REPRISE)
+    expect(screen.getByRole('button', { name: /Archiver ou supprimer/ })).toBeTruthy()
   })
 
   it('ne confirme rien tant que rien n a été soumis', () => {
