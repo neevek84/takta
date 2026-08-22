@@ -35,3 +35,7 @@ prisma/test-*.db*
 distribution/build/
 distribution/*.zip
 prisma/.schema-portable.prisma
+
+# Propositions de logo : fichiers de travail, pas des sources.
+# La version retenue vivra dans public/ quand elle sera vectorisée.
+/logo/

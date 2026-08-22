@@ -28,6 +28,26 @@ automatisme, parce qu'elle engage. Et à la fin du mois, ce qui sort n'est pas u
 décompte : c'est un document que le client signe, qui verrouille le mois, et qui
 fait foi.
 
+## Prévoir, c'est déjà tenir la cadence
+
+Un jour prévu qui n'est écrit nulle part n'existe pas. Il ne vous empêche pas
+d'en promettre un autre au même moment, il ne se voit pas quand on vous demande
+vos disponibilités, et il ne pèse rien face à une urgence. C'est ainsi qu'on se
+retrouve à trois missions pour deux semaines.
+
+takta pousse donc vos jours prévus **dans votre agenda**, sur un calendrier
+dédié qui ne se mélange jamais au reste. Ce que vous avez engagé devient visible
+là où vous regardez déjà, à côté de vos rendez-vous et de vos congés. Un jour
+bloqué se voit, se défend, et se compte.
+
+C'est le sens du mot *takt* pris au sérieux : une cadence ne se constate pas
+après coup, elle se tient d'avance. Le mois qui se passe bien est celui qu'on
+avait posé avant qu'il commence.
+
+Et quand le mois se ferme, ce qui n'a pas eu lieu ne traîne pas : valider le CRA
+annule les jours restés à l'état de prévision. Ils ne comptent ni comme servis,
+ni comme perdus — ils disparaissent, parce qu'ils n'ont pas eu lieu.
+
 **takta ne facture pas.** C'est délibéré, et c'est ce qui le garde léger : la
 facture appartient à votre logiciel de gestion, avec toute sa charge
 réglementaire. takta lui pousse les temps consommés et s'arrête là.
