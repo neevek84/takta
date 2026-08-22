@@ -38,7 +38,8 @@ function entree(partiel: Partial<CraDocumentInput> = {}): CraDocumentInput {
     mois: '2026-06',
     signataireNom: 'Claire Martin',
     signataireEmail: 'claire.martin@acme.test',
-    lignes: [{ id: 'l1', label: 'Consultant ITSM 30j' }],
+    lignes: [{ id: 'l1', label: 'Consultant ITSM 30j', soldCentiemes: 3000 }],
+    moisValides: [],
     entries: [saisie('l1', '2026-06-01', 480)],
     ...partiel,
   }
@@ -93,8 +94,8 @@ describe('buildCraDocument', () => {
     const doc = buildCraDocument(
       entree({
         lignes: [
-          { id: 'l1', label: 'Jour' },
-          { id: 'l2', label: 'Nuit' },
+          { id: 'l1', label: 'Jour', soldCentiemes: 3000 },
+          { id: 'l2', label: 'Nuit', soldCentiemes: 3000 },
         ],
         entries: [
           saisie('l1', '2026-06-01', 480),
@@ -197,8 +198,8 @@ describe('buildCraDocument', () => {
     const doc = buildCraDocument(
       entree({
         lignes: [
-          { id: 'l1', label: 'Jour' },
-          { id: 'l2', label: 'Nuit' },
+          { id: 'l1', label: 'Jour', soldCentiemes: 3000 },
+          { id: 'l2', label: 'Nuit', soldCentiemes: 3000 },
         ],
         entries: [saisie('l1', '2026-06-01', 480), saisie('l2', '2026-06-02', 240)],
       }),
@@ -210,8 +211,8 @@ describe('buildCraDocument', () => {
     const doc = buildCraDocument(
       entree({
         lignes: [
-          { id: 'l1', label: 'Jour' },
-          { id: 'l2', label: 'Jamais servie' },
+          { id: 'l1', label: 'Jour', soldCentiemes: 3000 },
+          { id: 'l2', label: 'Jamais servie', soldCentiemes: 3000 },
         ],
         entries: [saisie('l1', '2026-06-01', 480)],
       }),
@@ -300,5 +301,97 @@ describe('libelleJour', () => {
     expect(libelleJour('2026-06-01')).toBe('lun. 01')
     expect(libelleJour('2026-06-06')).toBe('sam. 06')
     expect(libelleJour('2026-06-07')).toBe('dim. 07')
+  })
+})
+
+describe('les fériés du mois', () => {
+  it('rend les fériés français qui tombent dans le mois', () => {
+    // Mai 2026 : Fête du Travail, Victoire 1945, et l'Ascension le 14.
+    const doc = buildCraDocument(entree({ mois: '2026-05' }))
+    expect(doc.feries).toContain('2026-05-01')
+    expect(doc.feries).toContain('2026-05-08')
+    expect(doc.feries).toContain('2026-05-14')
+  })
+
+  it('rend une liste vide pour un mois sans férié', () => {
+    expect(buildCraDocument(entree({ mois: '2026-06' })).feries).toEqual([])
+  })
+
+  it('ne rend jamais un férié d un autre mois', () => {
+    for (const date of buildCraDocument(entree({ mois: '2026-05' })).feries) {
+      expect(date.slice(0, 7)).toBe('2026-05')
+    }
+  })
+})
+
+describe('l engagement des prestations', () => {
+  const troisMois = {
+    lignes: [{ id: 'l1', label: 'Consultant', soldCentiemes: 3000 }],
+    mois: '2026-06',
+    moisValides: ['2026-04', '2026-05'],
+    entries: [
+      saisie('l1', '2026-04-10', 480),
+      saisie('l1', '2026-05-11', 480),
+      saisie('l1', '2026-06-01', 480),
+      saisie('l1', '2026-06-02', 240),
+      saisie('l1', '2026-07-01', 480, { kind: 'PREVISIONNEL' }),
+    ],
+  }
+
+  it('range le réalisé selon le statut du CRA de son mois', () => {
+    const e = buildCraDocument(entree(troisMois)).lignes[0]!.engagement
+    expect(e.venduCentiemes).toBe(3000)
+    // Avril et mai sont validés : deux journées pleines.
+    expect(e.valideCentiemes).toBe(200)
+    // Juin ne l'est pas — c'est le mois de ce document : 1,00 + 0,50.
+    expect(e.enValidationCentiemes).toBe(150)
+    expect(e.planifieCentiemes).toBe(100)
+    expect(e.resteCentiemes).toBe(2550)
+  })
+
+  it('compte en validation le réalisé d un mois passé resté non validé', () => {
+    // Le trou que la règle ferme : sans cela, mai ne serait dans aucun
+    // segment et le reste à consommer serait trop grand d'autant.
+    const e = buildCraDocument(
+      entree({ ...troisMois, moisValides: ['2026-04'] }),
+    ).lignes[0]!.engagement
+    expect(e.valideCentiemes).toBe(100)
+    expect(e.enValidationCentiemes).toBe(250)
+    expect(e.consommeCentiemes).toBe(450)
+    expect(e.resteCentiemes).toBe(2550)
+  })
+
+  it('ne compte l engagement qu une fois par saisie', () => {
+    const e = buildCraDocument(entree(troisMois)).lignes[0]!.engagement
+    expect(e.valideCentiemes + e.enValidationCentiemes + e.planifieCentiemes).toBe(
+      e.consommeCentiemes,
+    )
+    expect(e.consommeCentiemes + e.resteCentiemes - e.depassementCentiemes).toBe(
+      e.venduCentiemes,
+    )
+  })
+
+  it('cumule la mission sur toutes ses prestations, servies ce mois-ci ou non', () => {
+    // `l2` n'a rien servi en juin : elle ne paraît pas dans le tableau, mais
+    // ses jours vendus font toujours partie de la mission.
+    const doc = buildCraDocument(
+      entree({
+        ...troisMois,
+        lignes: [
+          { id: 'l1', label: 'Consultant', soldCentiemes: 3000 },
+          { id: 'l2', label: 'Astreinte', soldCentiemes: 1000 },
+        ],
+      }),
+    )
+    expect(doc.lignes).toHaveLength(1)
+    expect(doc.engagementMission.venduCentiemes).toBe(4000)
+    expect(doc.engagementMission.consommeCentiemes).toBe(450)
+  })
+
+  it('ne compte pas dans l engagement une saisie d une autre mission', () => {
+    const doc = buildCraDocument(
+      entree({ ...troisMois, entries: [...troisMois.entries, saisie('inconnue', '2026-06-03', 480)] }),
+    )
+    expect(doc.engagementMission.consommeCentiemes).toBe(450)
   })
 })

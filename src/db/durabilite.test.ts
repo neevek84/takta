@@ -120,6 +120,22 @@ describe('poserDurabiliteSqlite', () => {
     expect(mode[0]!.journal_mode.toLowerCase()).toBe('wal')
   })
 
+  it('replie le journal souvent, au lieu d attendre quatre mégaoctets', async () => {
+    // Le `-wal` est le seul exemplaire de ce qu'il porte tant qu'il n'est pas
+    // replié. Au seuil par défaut — mille pages —, cette application met des
+    // semaines à l'atteindre : le journal a donc porté des heures de saisie,
+    // seul. Perdu, la base principale reste valide, et périmée d'autant.
+    const fichier = fichierNeuf()
+    const client = ouvrir(urlSqliteDurable(`file:${fichier}`))
+    await poserDurabiliteSqlite(client, 'file:x.db')
+
+    const seuil = await client.$queryRawUnsafe<{ wal_autocheckpoint: number }[]>(
+      'PRAGMA wal_autocheckpoint',
+    )
+    expect(Number(seuil[0]!.wal_autocheckpoint)).toBe(100)
+    await client.$disconnect()
+  })
+
   it('refuse de laisser croire à la durabilité si le pragma n a pas pris', async () => {
     // Un SQLite compilé avec SQLITE_DEFAULT_WAL_SYNCHRONOUS=1, ou un système de
     // fichiers qui refuse WAL : mieux vaut une panne bruyante au démarrage

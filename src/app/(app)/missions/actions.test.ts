@@ -52,6 +52,9 @@ describe('addMission', () => {
       minutesParJour: null,
       signataireNom: 'Claire Martin',
       signataireEmail: 'claire@acme.test',
+      // Le formulaire de ce cas ne porte pas de date : `null`, et le projet
+      // Dolibarr sera créé sans `date_start`.
+      startDate: null,
       // L'utilisateur de la session est transmis pour que le journal de
       // preuve nomme l'auteur réel : un acte humain attribué à `SYSTEME`
       // serait une preuve fausse.

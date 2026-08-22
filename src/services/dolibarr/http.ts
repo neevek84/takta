@@ -2,10 +2,15 @@ import {
   DolibarrRequestError,
   DolibarrUnavailableError,
   type DolibarrApi,
+  type DolibarrOrder,
   type DolibarrProject,
+  type DolibarrProjectCreation,
+  type DolibarrPropalLine,
   type DolibarrProposal,
   type DolibarrTask,
   type DolibarrThirdparty,
+  type DolibarrTimeSpent,
+  type DolibarrUser,
 } from './api'
 
 const DELAI_PAR_DEFAUT_MS = 15_000
@@ -15,6 +20,12 @@ interface Contexte {
   apiKey: string
   fetchImpl: typeof fetch
   timeoutMs: number
+  /**
+   * L'utilisateur Dolibarr auquel la clé appartient, `null` s'il n'est pas
+   * renseigné. C'est lui qu'on affecte aux projets et aux tâches créés — sans
+   * quoi `GET /projects/{id}/tasks` ne lui rendrait rien sur un projet privé.
+   */
+  dolibarrUserId: number | null
 }
 
 /**
@@ -29,6 +40,19 @@ interface Options {
   statutsToleres?: number[]
 }
 
+/**
+ * Le drapeau `client` d'un tiers Dolibarr : 0 ni l'un ni l'autre, 1 client,
+ * 2 prospect, 3 client **et** prospect. Seuls 1 et 3 désignent un client.
+ *
+ * Le prospect seul est écarté volontairement : il n'a rien signé, donc aucune
+ * mission ni aucun temps à recevoir. Il redeviendra visible le jour où
+ * Dolibarr le passera client, ce qui est précisément le moment utile.
+ */
+function estClient(valeur: unknown): boolean {
+  const n = Number(valeur)
+  return n === 1 || n === 3
+}
+
 /** Vrai pour '1', 1, true — Dolibarr renvoie l'un ou l'autre selon les versions. */
 function vrai(valeur: unknown): boolean {
   return valeur === 1 || valeur === '1' || valeur === true
@@ -37,6 +61,48 @@ function vrai(valeur: unknown): boolean {
 function nombreOuNull(valeur: unknown): number | null {
   const n = Number(valeur)
   return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * Ce que Dolibarr dit de son refus, prêt à être accolé au message.
+ *
+ * Le corps d'erreur prend deux formes selon les versions : `{ error: { message } }`
+ * ou `{ error: '…' }`. Une lecture qui échoue ne doit surtout pas masquer le
+ * refus lui-même : on rend une chaîne vide et le code du statut suffit.
+ */
+async function motif(reponse: Response): Promise<string> {
+  let texte: string
+  try {
+    texte = await reponse.text()
+  } catch {
+    return ''
+  }
+
+  try {
+    const brut = JSON.parse(texte) as { error?: unknown }
+    const erreur = brut.error
+    const message =
+      typeof erreur === 'string'
+        ? erreur
+        : typeof erreur === 'object' && erreur !== null
+          ? String((erreur as { message?: unknown }).message ?? '')
+          : ''
+    if (message !== '') return ` : ${message}`
+  } catch {
+    // pas du JSON : voir plus bas
+  }
+
+  // Le corps n'était pas le JSON d'erreur attendu. C'est le cas d'une **erreur
+  // fatale de PHP**, que Dolibarr rend en page HTML : rendre `''` laissait alors
+  // « Dolibarr a répondu 500 » sans un mot de plus, et la file rejouait sans fin
+  // une requête dont personne ne pouvait connaître le défaut — constaté sur
+  // `POST /tasks/{id}/addtimespent`. Le texte est donc repris, débarrassé de son
+  // balisage et tronqué : illisible vaut mieux que muet.
+  const nu = texte
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return nu === '' ? '' : ` : ${nu.slice(0, 300)}`
 }
 
 async function appel(ctx: Contexte, chemin: string, options: Options = {}): Promise<unknown> {
@@ -69,20 +135,43 @@ async function appel(ctx: Contexte, chemin: string, options: Options = {}): Prom
 
   if (statutsToleres.includes(reponse.status)) return null
 
-  if (reponse.status === 401 || reponse.status === 403) {
+  if (reponse.status === 401) {
     throw new DolibarrRequestError(
       "Dolibarr a refusé la clé d'API. Reconnectez le connecteur dans Administration · Dolibarr.",
     )
   }
 
+  // 403 n'est pas 401, et les confondre produit un faux diagnostic : la clé est
+  // bonne, c'est l'utilisateur auquel elle appartient qui n'a pas le droit sur
+  // cette route-là. « Reconnectez le connecteur » ferait ressaisir une clé
+  // valide, indéfiniment, sans jamais nommer le droit qui manque.
+  if (reponse.status === 403) {
+    throw new DolibarrRequestError(
+      `L'utilisateur de la clé d'API n'a pas le droit d'accéder à ${chemin}. ` +
+        'La clé, elle, est valide : ajoutez la permission à cet utilisateur dans Dolibarr, ' +
+        "ou utilisez la clé d'un utilisateur qui l'a.",
+    )
+  }
+
   if (reponse.status >= 500) {
+    // Le motif est repris ici **aussi**. Un 500 reste rejouable — c'est une
+    // panne, pas un refus — mais il peut cacher une charge utile que Dolibarr
+    // n'a pas su traiter, et la file rejouera alors indéfiniment la même. Sans
+    // sa phrase, on ne saurait jamais laquelle : constaté sur `POST /tasks`,
+    // rejoué en boucle sans qu'aucun écran ne dise pourquoi.
     throw new DolibarrUnavailableError(
-      `Dolibarr a répondu ${reponse.status} sur ${chemin}. La synchronisation réessaiera.`,
+      `Dolibarr a répondu ${reponse.status} sur ${chemin}${await motif(reponse)}. ` +
+        'La synchronisation réessaiera.',
     )
   }
 
   if (!reponse.ok) {
-    throw new DolibarrRequestError(`Dolibarr a refusé la requête ${chemin} (${reponse.status}).`)
+    // Le motif de Dolibarr est **repris**, pas jeté. « Dolibarr a refusé la
+    // requête /projects (400) » ne dit pas quel champ manque : c'est un mur.
+    // Dolibarr, lui, le dit — et sans cette phrase il faut deviner.
+    throw new DolibarrRequestError(
+      `Dolibarr a refusé la requête ${chemin} (${reponse.status})${await motif(reponse)}`,
+    )
   }
 
   // Une suppression rend parfois un corps vide : `json()` lèverait, et la
@@ -105,9 +194,154 @@ async function liste(ctx: Contexte, chemin: string): Promise<Array<Record<string
   return brut as Array<Record<string, unknown>>
 }
 
+/**
+ * Un jour `'YYYY-MM-DD'` à partir de ce que Dolibarr rend pour une date.
+ *
+ * Dolibarr rend ses dates en **horodatage Unix**, et une chaîne vide quand la
+ * date n'est pas renseignée — le cas courant sur les lignes de commande. Les
+ * versions plus anciennes rendent parfois une chaîne datée : les deux sont
+ * acceptées, tout le reste vaut « pas de date ».
+ */
+function jourDepuisDolibarr(valeur: unknown): string | null {
+  if (valeur === null || valeur === undefined || valeur === '') return null
+
+  const n = Number(valeur)
+  if (Number.isFinite(n) && n > 0) return new Date(n * 1000).toISOString().slice(0, 10)
+
+  const texte = String(valeur)
+  return /^\d{4}-\d{2}-\d{2}/.test(texte) ? texte.slice(0, 10) : null
+}
+
+/**
+ * Les lignes d'un document vendeur, propale ou commande : Dolibarr les rend
+ * sous la même forme, et les deux se reprennent avec la même règle.
+ */
+function lignesVendues(brut: Record<string, unknown>): DolibarrPropalLine[] {
+  const lignes = (brut.lines ?? []) as Array<Record<string, unknown>>
+  return lignes.map((l) => ({
+    id: Number(l.id),
+    label: String(l.desc ?? l.libelle ?? l.product_label ?? ''),
+    qty: Number(l.qty),
+    subpriceCents: Math.round(Number(l.subprice) * 100),
+    service: Number(l.product_type) === 1,
+    dateStart: jourDepuisDolibarr(l.date_start),
+  }))
+}
+
+/**
+ * Affecte l'utilisateur de la clé à un projet ou à une tâche.
+ *
+ * **Ce que cette affectation ferme.** `GET /projects/{id}/tasks` passe par
+ * `getTasksArray(null, $user, …)`, qui écarte les tâches d'un projet **non
+ * public** dès lors que l'utilisateur n'y a aucun rôle. Un projet créé par
+ * l'application était donc invisible à la clé qui venait de le créer : la liste
+ * revenait vide, le connecteur croyait la tâche absente, la recréait, et
+ * Dolibarr refusait par « Error creating task » puisque la référence était
+ * déjà prise.
+ *
+ * Sans identifiant d'utilisateur configuré il n'y a personne à affecter :
+ * l'appel est simplement omis, la création reste valable.
+ */
+async function affecter(ctx: Contexte, chemin: string, type: string): Promise<void> {
+  if (ctx.dolibarrUserId === null) return
+
+  // **L'affectation n'est pas idempotente chez Dolibarr.** `add_contact` rend
+  // `0` quand le contact est déjà posé, et l'API traduit ce `0` en **500 sans
+  // message** — mesuré sur l'instance du porteur le 21 août 2026. On lit donc
+  // l'existant avant d'écrire, plutôt que de deviner un refus au motif muet.
+  const deja = await liste(ctx, `${chemin}/contacts`)
+  const present = deja.some(
+    (c) =>
+      String(c.code ?? '') === type &&
+      Number(c.id ?? c.fk_socpeople ?? c.socid ?? 0) === ctx.dolibarrUserId,
+  )
+  if (present) return
+
+  await appel(ctx, `${chemin}/contacts`, {
+    method: 'POST',
+    body: JSON.stringify({
+      fk_socpeople: ctx.dolibarrUserId,
+      type_contact: type,
+      // `internal` : `fk_socpeople` désigne alors un **utilisateur** Dolibarr,
+      // et non un contact de tiers.
+      source: 'internal',
+    }),
+  })
+}
+
+/**
+ * La date d'un temps passé, au format que l'API de Dolibarr exige :
+ * `YYYY-MM-DD HH:MI:SS`, en GMT.
+ *
+ * L'application raisonne en journées — un temps passé appartient à un jour,
+ * pas à un instant — mais l'API refuse la date nue. Envoyée sans heure, elle
+ * fait répondre **500 avec un corps vide** : une erreur fatale de PHP, donc
+ * sans un mot pour l'expliquer. Mesuré sur l'instance 23.0.1 du porteur, où
+ * `{"date":"2026-08-03","duration":25200,"user_id":1}` échouait ainsi.
+ *
+ * Minuit GMT, et non midi : c'est le début du jour demandé. Le décalage ne
+ * peut ramener l'enregistrement à la veille que sur un fuseau en retard sur
+ * GMT, ce que la France n'est jamais.
+ */
+function dateTempsPasse(jour: string): string {
+  return `${jour} 00:00:00`
+}
+
+/**
+ * Un jour `'YYYY-MM-DD'` en secondes depuis l'époque, à minuit GMT.
+ *
+ * C'est la forme que `idate()` attend côté Dolibarr — la même convention que
+ * pour les temps passés, et pour la même raison : l'application raisonne en
+ * journées, l'API en instants.
+ */
+function horodatageDuJour(jour: string): number {
+  return Date.parse(`${jour}T00:00:00Z`) / 1000
+}
+
+/**
+ * `planned_workload` tel que Dolibarr le rend : un nombre de secondes, ou rien.
+ *
+ * Le champ est **omis** sur une tâche qui n'en porte pas — `Number(undefined)`
+ * vaut alors `NaN` — et vaut `'0'` quand il a été mis à zéro. Les deux disent
+ * « pas de charge connue » : une charge nulle n'existe pas chez Dolibarr, la
+ * colonne est simplement vide.
+ */
+function chargeOuNull(valeur: unknown): number | null {
+  const n = Number(valeur ?? Number.NaN)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+function versCommande(brut: Record<string, unknown>): DolibarrOrder {
+  return {
+    id: Number(brut.id),
+    ref: String(brut.ref ?? ''),
+    // `ref_client` est nul sur l'immense majorité des commandes : c'est une
+    // absence ordinaire, pas une anomalie. `ref_customer` est son alias sur
+    // certaines versions, et les deux arrivent parfois côte à côte.
+    refClient: String(brut.ref_client ?? brut.ref_customer ?? ''),
+    socid: Number(brut.socid),
+    label: String(brut.label ?? brut.libelle ?? ''),
+    projectId: nombreOuNull(brut.fk_project ?? brut.fk_projet),
+    lines: lignesVendues(brut),
+  }
+}
+
+/**
+ * Les statuts de commande sur lesquels un projet peut naître : **validée** et
+ * **en cours**, rien d'autre.
+ *
+ * Un brouillon n'engage rien et une annulée n'engage plus — créer un projet
+ * sur l'un ou l'autre fabriquerait un chantier sans commande. Une **livrée**
+ * (statut 3) est close : le travail y est fini, et ouvrir un projet pour y
+ * saisir des temps à venir n'a plus de sens.
+ */
+const STATUTS_COMMANDE_UTILISABLES = new Set([1, 2])
+
 export function createHttpDolibarrApi(args: {
   baseUrl: string
   apiKey: string
+  /** `ProviderCredential.metadata.dolibarrUserId`, saisi dans Administration · Dolibarr */
+  dolibarrUserId?: number | null
   fetchImpl?: typeof fetch
   timeoutMs?: number
 }): DolibarrApi {
@@ -116,12 +350,22 @@ export function createHttpDolibarrApi(args: {
     apiKey: args.apiKey,
     fetchImpl: args.fetchImpl ?? fetch,
     timeoutMs: args.timeoutMs ?? DELAI_PAR_DEFAUT_MS,
+    dolibarrUserId:
+      args.dolibarrUserId !== undefined && args.dolibarrUserId !== null && args.dolibarrUserId > 0
+        ? args.dolibarrUserId
+        : null,
   }
 
   return {
     async listThirdparties(): Promise<DolibarrThirdparty[]> {
       const brut = await liste(ctx, '/thirdparties?limit=1000')
-      return brut.map((t) => ({ id: Number(t.id), name: String(t.name ?? '') }))
+      // Le filtre vit ici, comme celui de `listProjects`, et pour la même
+      // raison : un fournisseur ou un tiers neutre n'a pas de mission et ne
+      // recevra jamais de temps. L'exposer n'inviterait qu'à un rattachement
+      // qui n'a aucun sens.
+      return brut
+        .filter((t) => estClient(t.client))
+        .map((t) => ({ id: Number(t.id), name: String(t.name ?? '') }))
     },
 
     async createThirdparty(name: string): Promise<DolibarrThirdparty> {
@@ -154,30 +398,147 @@ export function createHttpDolibarrApi(args: {
         ref: String(t.ref ?? ''),
         label: String(t.label ?? ''),
         projectId,
+        plannedWorkloadSeconds: chargeOuNull(t.planned_workload),
       }))
     },
 
-    async createTask(a: { projectId: number; label: string }): Promise<DolibarrTask> {
+    async getTask(taskId: number): Promise<DolibarrTask | null> {
+      // 404 toléré : une tâche supprimée chez Dolibarr n'est pas une panne, et
+      // la correspondance qui la visait doit alors être abandonnée.
+      const brut = (await appel(ctx, `/tasks/${taskId}`, { statutsToleres: [404] })) as Record<
+        string,
+        unknown
+      > | null
+      if (brut === null) return null
+      return {
+        id: Number(brut.id),
+        ref: String(brut.ref ?? ''),
+        label: String(brut.label ?? ''),
+        projectId: Number(brut.fk_project ?? brut.fk_projet ?? 0),
+        plannedWorkloadSeconds: chargeOuNull(brut.planned_workload),
+      }
+    },
+
+    async createTask(a: {
+      projectId: number
+      label: string
+      plannedWorkloadSeconds: number | null
+    }): Promise<DolibarrTask> {
       const id = (await appel(ctx, '/tasks', {
         method: 'POST',
-        body: JSON.stringify({ fk_project: a.projectId, label: a.label, ref: a.label }),
+        body: JSON.stringify({
+          fk_project: a.projectId,
+          label: a.label,
+          ref: a.label,
+          // **Validée, pas brouillon.** Sans ce champ Dolibarr retient
+          // `STATUS_DRAFT = 0`, et la tâche naît inexploitable dans le projet.
+          status: 1,
+          // `planned_workload` est en **secondes** : `projet/tasks/task.php`
+          // le compose en `heures × 3600 + minutes × 60` et le relit par
+          // `convertSecondToTime`. Y envoyer des heures écrirait une charge
+          // 3 600 fois trop petite, sans un mot.
+          ...(a.plannedWorkloadSeconds === null
+            ? {}
+            : { planned_workload: a.plannedWorkloadSeconds }),
+        }),
       })) as number
-      return { id: Number(id), ref: a.label, label: a.label, projectId: a.projectId }
+
+      const taskId = Number(id)
+      // Responsable de la tâche, en miroir du chef de projet posé à la
+      // création du projet : la même personne pilote l'un et l'autre.
+      await affecter(ctx, `/tasks/${taskId}`, 'TASKEXECUTIVE')
+
+      return {
+        id: taskId,
+        ref: a.label,
+        label: a.label,
+        projectId: a.projectId,
+        plannedWorkloadSeconds: a.plannedWorkloadSeconds,
+      }
+    },
+
+    async createProject(a: DolibarrProjectCreation): Promise<DolibarrProject> {
+      const id = (await appel(ctx, '/projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          ref: a.ref,
+          title: a.title,
+          socid: a.socid,
+          // `Project::create` passe cette valeur à `idate()`, qui attend un
+          // horodatage Unix **en secondes**. Une chaîne y produirait une date
+          // fausse sans le dire. Minuit GMT, comme pour les temps passés.
+          ...(a.dateStart === null ? {} : { date_start: horodatageDuJour(a.dateStart) }),
+          // **Ouvert, pas brouillon.** Dolibarr crée un projet en statut 0 quand
+          // on ne dit rien : son interface le montre « Brouillon », et un projet
+          // brouillon n'accepte pas de temps consommé. Le porteur a validé un
+          // CRA et n'a rien vu arriver — c'est ce champ qui manquait.
+          status: 1,
+          ref_ext: a.refExt,
+          description: a.description,
+          // Imposés, jamais paramétrables : sans eux le projet n'accepte
+          // aucune tâche ni aucun temps facturable, et `listProjects` le
+          // filtrerait aussitôt — l'application aurait créé ce qu'elle refuse.
+          usage_task: 1,
+          usage_bill_time: 1,
+        }),
+      })) as number | Record<string, unknown>
+
+      const projectId = typeof id === 'number' ? id : Number(id.id)
+
+      // Immédiatement après la création, et avant toute relecture : c'est cette
+      // affectation qui rend le projet visible à la clé qui vient de le créer.
+      await affecter(ctx, `/projects/${projectId}`, 'PROJECTLEADER')
+
+      // La référence (`PJxxxx-nnnn`) est attribuée par Dolibarr : on la relit
+      // au lieu de l'inventer, sans quoi tout refus ultérieur nommerait un
+      // projet qui n'existe pas sous ce nom.
+      const cree = (await appel(ctx, `/projects/${projectId}`)) as Record<string, unknown>
+      return {
+        id: projectId,
+        ref: String(cree.ref ?? ''),
+        title: String(cree.title ?? a.title),
+        socid: nombreOuNull(cree.socid),
+      }
+    },
+
+    async assignerAuProjet(projectId: number): Promise<void> {
+      await affecter(ctx, `/projects/${projectId}`, 'PROJECTLEADER')
+    },
+
+    async listOrders(): Promise<DolibarrOrder[]> {
+      const brut = await liste(ctx, '/orders?limit=1000')
+      return brut
+        .filter((c) => STATUTS_COMMANDE_UTILISABLES.has(Number(c.statut ?? c.status)))
+        // `billed` à 1 dit que la commande est **entièrement** facturée : il
+        // n'y a plus rien à consommer dessus, et le projet qu'on ouvrirait ne
+        // serait jamais facturé. Une commande partiellement facturée, elle,
+        // reste proposée — c'est le cas courant d'une prestation en cours.
+        .filter((c) => !vrai(c.billed))
+        .map(versCommande)
+    },
+
+    async getOrder(id: number): Promise<DolibarrOrder> {
+      const brut = (await appel(ctx, `/orders/${id}`)) as Record<string, unknown>
+      return versCommande(brut)
+    },
+
+    async linkOrderToProject(a: { orderId: number; projectId: number }): Promise<void> {
+      // Un seul champ est écrit. Renvoyer la commande entière la ferait
+      // réenregistrer telle que l'API l'a rendue — et une valeur mal
+      // retranscrite au passage modifierait un document commercial signé.
+      await appel(ctx, `/orders/${a.orderId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ fk_project: a.projectId }),
+      })
     },
 
     async getProposal(id: number): Promise<DolibarrProposal> {
       const brut = (await appel(ctx, `/proposals/${id}`)) as Record<string, unknown>
-      const lignes = (brut.lines ?? []) as Array<Record<string, unknown>>
       return {
         id: Number(brut.id),
         ref: String(brut.ref ?? ''),
         socid: Number(brut.socid),
-        lines: lignes.map((l) => ({
-          id: Number(l.id),
-          label: String(l.desc ?? l.libelle ?? l.product_label ?? ''),
-          qty: Number(l.qty),
-          subpriceCents: Math.round(Number(l.subprice) * 100),
-        })),
+        lines: lignesVendues(brut),
       }
     },
 
@@ -188,19 +549,49 @@ export function createHttpDolibarrApi(args: {
       durationSeconds: number
       note: string
     }): Promise<{ timespentId: number }> {
-      const id = (await appel(ctx, `/tasks/${a.taskId}/addtimespent`, {
+      await appel(ctx, `/tasks/${a.taskId}/addtimespent`, {
         method: 'POST',
         // `duration` est un nombre de secondes, tel quel : ni le réglage local
         // ni `TIMESHEET_DAY_DURATION` n'entrent ici (voir core/dolibarr/timespent).
         body: JSON.stringify({
-          date: a.date,
+          date: dateTempsPasse(a.date),
           duration: a.durationSeconds,
           user_id: a.dolibarrUserId,
           note: a.note,
         }),
-      })) as number | Record<string, unknown>
+      })
 
-      const timespentId = typeof id === 'number' ? id : Number(id.id)
+      // Dolibarr ne rend que `{success:{code,message}}` — **jamais**
+      // l'identifiant de la ligne créée. Vérifié dans le code de son API, en
+      // 23.0.1 comme en 23.0.4. Il faut donc relire la tâche pour retrouver la
+      // ligne qu'on vient de poser : sans elle, la correspondance mémorisée est
+      // inexploitable et toute modification ultérieure de la cellule part sur
+      // une URL invalide.
+      const lignes = await liste(ctx, `/tasks/${a.taskId}/timespent`)
+      // Le triplet qu'on vient d'envoyer sert de signature. Deux saisies
+      // identiques le même jour restent légitimes : c'est alors la plus récente
+      // — le plus grand `rowid` — qui est la nôtre.
+      const timespentId = lignes
+        .filter(
+          (l) =>
+            Number(l.timespent_line_fk_user) === a.dolibarrUserId &&
+            Number(l.timespent_line_duration) === a.durationSeconds &&
+            String(l.timespent_line_note ?? '') === a.note,
+        )
+        .reduce((max, l) => Math.max(max, Number(l.timespent_line_id)), 0)
+
+      if (timespentId <= 0) {
+        // **Un refus, pas une panne.** Le temps est déjà chez Dolibarr : le
+        // POST a réussi et seule la relecture n'a rien reconnu. Lever un
+        // `DolibarrUnavailableError` ferait rejouer la file, et le rejeu
+        // poserait un second temps — la route de création n'est pas idempotente.
+        throw new DolibarrRequestError(
+          `Le temps a bien été enregistré sur la tâche n° ${a.taskId}, mais Dolibarr ne permet ` +
+            'pas de retrouver la ligne créée : elle ne pourra donc pas être modifiée depuis ' +
+            "l'application. Vérifiez le temps passé directement dans Dolibarr.",
+        )
+      }
+
       return { timespentId }
     },
 
@@ -213,7 +604,11 @@ export function createHttpDolibarrApi(args: {
     }): Promise<void> {
       await appel(ctx, `/tasks/${a.taskId}/timespent/${a.timespentId}`, {
         method: 'PUT',
-        body: JSON.stringify({ date: a.date, duration: a.durationSeconds, note: a.note }),
+        body: JSON.stringify({
+          date: dateTempsPasse(a.date),
+          duration: a.durationSeconds,
+          note: a.note,
+        }),
       })
     },
 
@@ -226,14 +621,55 @@ export function createHttpDolibarrApi(args: {
       })
     },
 
+    async listTimeSpent(taskId: number): Promise<DolibarrTimeSpent[]> {
+      const brut = await liste(ctx, `/tasks/${taskId}/timespent`)
+      return brut.map((l) => {
+        // `withhour` distingue une heure saisie d'une heure par défaut. Sans
+        // lui, tout temps paraîtrait situé — et la règle du porteur (« l'heure
+        // d'un autre fait foi, sinon 9 h ») n'aurait plus de « sinon ».
+        const avecHeure = vrai(l.timespent_line_withhour)
+        const instant = Number(l.timespent_line_datehour)
+        return {
+          id: Number(l.timespent_line_id),
+          taskId,
+          dolibarrUserId: Number(l.timespent_line_fk_user),
+          date: jourDepuisDolibarr(l.timespent_line_date) ?? '',
+          durationSeconds: Number(l.timespent_line_duration),
+          note: String(l.timespent_line_note ?? ''),
+          debutUnix: avecHeure && Number.isFinite(instant) && instant > 0 ? instant : null,
+        }
+      })
+    },
+
+    async getUser(id: number): Promise<DolibarrUser | null> {
+      const brut = (await appel(ctx, `/users/${id}`, { statutsToleres: [404] })) as Record<
+        string,
+        unknown
+      > | null
+      if (brut === null) return null
+
+      const prenom = String(brut.firstname ?? '').trim()
+      const nom = String(brut.lastname ?? '').trim()
+      return {
+        id: Number(brut.id),
+        login: String(brut.login ?? ''),
+        nom: [prenom, nom].filter((p) => p !== '').join(' '),
+        email: String(brut.email ?? ''),
+      }
+    },
+
     async getSetupValue(constant: string): Promise<string | null> {
       // `GET /setup/conf/{constant}` n'existe pas sur toutes les versions :
       // un 404 signifie « constante non lisible ici », pas « instance en
       // panne ». On rend null et l'écran de reprise n'en propose simplement
       // pas la valeur — le connecteur ne doit jamais tomber parce qu'une
       // constante facultative manque.
+      // 403 toléré au même titre que 404 : `/setup` est réservé aux
+      // administrateurs sur la plupart des instances, et une clé d'API portée
+      // par un utilisateur ordinaire ne doit pas faire tomber tout l'écran
+      // pour une valeur facultative.
       const brut = (await appel(ctx, `/setup/conf/${encodeURIComponent(constant)}`, {
-        statutsToleres: [404],
+        statutsToleres: [404, 403],
       })) as unknown
 
       if (brut === null || brut === undefined) return null

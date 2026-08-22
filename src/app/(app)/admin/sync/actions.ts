@@ -44,8 +44,11 @@ export async function arbitrer(
 }
 
 export async function rejouer(rowId: string): Promise<boolean> {
-  const user = await requireUser()
-  const r = await retrySyncRow(user.id, rowId)
+  // La session reste exigée — c'est le seul garde-fou tant que les rôles
+  // n'existent pas. Mais la ligne n'est plus filtrée sur son propriétaire : la
+  // file est de portée instance (arbitrage du 20 août 2026).
+  await requireUser()
+  const r = await retrySyncRow(rowId)
   revalidatePath('/admin/sync')
   return r
 }

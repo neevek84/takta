@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { buildCraDocument, formatJours, type CraDocument } from './document'
 import { layoutCraDocument, LIGNES_PAR_PAGE, MARGE } from './layout'
 import {
-  A4_WIDTH_PT,
-  A4_HEIGHT_PT,
+  A4_PAYSAGE_WIDTH_PT,
+  A4_PAYSAGE_HEIGHT_PT,
   extraireTextes,
   largeurApprox,
   renderPdf,
@@ -13,6 +13,7 @@ function document(nbLignes: number, joursParLigne = 2): CraDocument {
   const lignes = Array.from({ length: nbLignes }, (_, i) => ({
     id: `l${i}`,
     label: `Prestation ${i + 1}`,
+    soldCentiemes: 3000,
   }))
   const entries = lignes.flatMap((l) =>
     Array.from({ length: joursParLigne }, (_, j) => ({
@@ -37,6 +38,7 @@ function document(nbLignes: number, joursParLigne = 2): CraDocument {
     signataireNom: 'Claire Martin',
     signataireEmail: 'claire.martin@acme.test',
     lignes,
+    moisValides: [],
     entries,
   })
 }
@@ -65,16 +67,13 @@ function motsDe(chaines: ReadonlyArray<string>): string[] {
 /**
  * Aucune des chaînes ne porte de montant.
  *
- * La mention de garde du pied de page a le droit de nommer ce qu'elle exclut
- * — « aucun montant n'y figure » — mais à la condition de ne porter elle-même
- * aucun chiffre : sans quoi elle deviendrait la faille par laquelle un total
- * en euros passerait le contrôle.
+ * Le pied de page ne nomme plus ce qu'il exclut : « aucun montant n'y figure »
+ * a été retiré du document. Le contrôle porte donc sur **toutes** les chaînes
+ * sans exception — il n'y a plus de mention à laquelle accorder le droit
+ * d'employer le vocabulaire proscrit.
  */
 function verifierAucunMontant(chaines: ReadonlyArray<string>): void {
-  const mentions = chaines.filter((c) => c.includes('aucun montant'))
-  const reste = chaines.filter((c) => !c.includes('aucun montant'))
-  for (const mention of mentions) expect(mention).not.toMatch(/\d/)
-  for (const mot of motsDe(reste)) expect(MOTS_INTERDITS.has(mot)).toBe(false)
+  for (const mot of motsDe(chaines)) expect(MOTS_INTERDITS.has(mot)).toBe(false)
   expect(chaines.join(' ')).not.toContain('€')
 }
 
@@ -105,12 +104,16 @@ describe('layoutCraDocument', () => {
     }
   })
 
-  it('reprend la colonne des jours sur chaque page', () => {
+  it('reprend la bande des trente jours sur chaque page', () => {
+    // Le paysage écrit le quantième seul, surmonté de l'initiale du jour : à
+    // 20 points de large, « lun. 01 » ne tient pas dans une case.
     const pages = layoutCraDocument(document(LIGNES_PAR_PAGE + 1))
     for (const page of pages) {
       const contenu = page.texts.map((t) => t.text)
-      expect(contenu).toContain('lun. 01')
-      expect(contenu).toContain('mar. 30')
+      for (const quantieme of ['1', '15', '30']) expect(contenu).toContain(quantieme)
+      // Juin 2026 commence un lundi et finit un mardi.
+      expect(contenu.filter((t) => t === 'L')).toHaveLength(5)
+      expect(contenu.filter((t) => t === 'D')).toHaveLength(4)
     }
   })
 
@@ -143,18 +146,27 @@ describe('layoutCraDocument', () => {
     expect(contenu.filter((t) => t === formatJours(100))).toHaveLength(6)
   })
 
-  it('imprime le total de chaque colonne et le total du mois', () => {
+  it('imprime le total de chaque prestation et le total du mois', () => {
     const contenu = textes(layoutCraDocument(document(2, 3))).join(' | ')
-    expect(contenu).toContain('Total du mois')
+    expect(contenu).toContain('TOTAL DU MOIS')
     // 3 jours par prestation, deux prestations.
     expect(contenu).toContain(formatJours(300))
     expect(contenu).toContain(formatJours(600))
   })
 
-  it('rappelle sur chaque page que le document ne porte aucun montant', () => {
+  it('porte sur chaque page ce que le document atteste', () => {
     for (const page of layoutCraDocument(document(LIGNES_PAR_PAGE + 1))) {
-      expect(page.texts.map((t) => t.text).join(' ')).toContain('aucun montant')
+      expect(page.texts.map((t) => t.text).join(' ')).toContain(
+        'Document attestant du temps passé',
+      )
     }
+  })
+
+  it('n écrit nulle part « temps de travail »', () => {
+    // Le mot appartient au droit du travail : sur un document que le client
+    // signe, il prête le flanc à une requalification.
+    const contenu = textes(layoutCraDocument(document(3, 4))).join(' | ').toLowerCase()
+    expect(contenu).not.toContain('temps de travail')
   })
 
   it('n imprime jamais de montant', () => {
@@ -178,35 +190,78 @@ describe('layoutCraDocument', () => {
     avecEuros[0]!.texts.push({ x: MARGE, y: 100, size: 9, text: 'Total : 12 500,00 € HT' })
     expect(() => verifierAucunMontant(extraireTextes(renderPdf(avecEuros)))).toThrow()
 
-    // Y compris glissé dans la mention de garde elle-même.
-    const dansLaMention = layoutCraDocument(document(1))
-    const pied = dansLaMention[0]!.texts.find((t) => t.text.includes('aucun montant'))!
-    pied.text = `${pied.text} Total 12500.`
-    expect(() => verifierAucunMontant(extraireTextes(renderPdf(dansLaMention)))).toThrow()
+    // Et sans le symbole : c'est le vocabulaire qui est proscrit, pas le seul
+    // caractère.
+    const sansSymbole = layoutCraDocument(document(1))
+    sansSymbole[0]!.texts.push({ x: MARGE, y: 100, size: 9, text: 'Tarif journalier' })
+    expect(() => verifierAucunMontant(extraireTextes(renderPdf(sansSymbole)))).toThrow()
+  })
+
+  it('couche la page, et lui donne le format qu elle dessine', () => {
+    // `width` et `height` sont facultatifs au type `PdfPage` — sans valeur,
+    // l'écrivain retombe sur le portrait. Les deux égalités ci-dessous sont
+    // donc la vraie garde : elles échouent aussi bien sur une page sans
+    // dimensions que sur une page dressée.
+    for (const page of layoutCraDocument(document(2))) {
+      expect(page.width).toBe(A4_PAYSAGE_WIDTH_PT)
+      expect(page.height).toBe(A4_PAYSAGE_HEIGHT_PT)
+    }
+    // Et ce que ces valeurs signifient : la page est couchée.
+    expect(A4_PAYSAGE_WIDTH_PT).toBeGreaterThan(A4_PAYSAGE_HEIGHT_PT)
   })
 
   it('tient dans les marges de la page', () => {
-    for (const page of layoutCraDocument(document(LIGNES_PAR_PAGE * 2 + 1, 31))) {
+    // Le bandeau de tête est à fond perdu : c'est un aplat, et son texte est
+    // posé dedans, au-dessus de la marge haute. Tout le reste s'y tient.
+    const HAUT_BANDEAU = A4_PAYSAGE_HEIGHT_PT - 28
+
+    for (const page of layoutCraDocument(document(LIGNES_PAR_PAGE * 2 + 1, 30))) {
       for (const t of page.texts) {
         expect(t.x).toBeGreaterThanOrEqual(MARGE - 1)
-        expect(t.x).toBeLessThanOrEqual(A4_WIDTH_PT - MARGE)
+        expect(t.x + largeurApprox(t.text, t.size)).toBeLessThanOrEqual(
+          A4_PAYSAGE_WIDTH_PT - MARGE + 1,
+        )
         expect(t.y).toBeGreaterThanOrEqual(25)
-        expect(t.y).toBeLessThanOrEqual(A4_HEIGHT_PT - MARGE)
+        expect(t.y).toBeLessThanOrEqual(A4_PAYSAGE_HEIGHT_PT - 12)
+        if (t.y > A4_PAYSAGE_HEIGHT_PT - MARGE) {
+          expect(t.y).toBeGreaterThanOrEqual(HAUT_BANDEAU)
+        }
       }
       for (const l of page.lines) {
         expect(Math.min(l.x1, l.x2)).toBeGreaterThanOrEqual(MARGE - 1)
-        expect(Math.max(l.x1, l.x2)).toBeLessThanOrEqual(A4_WIDTH_PT - MARGE)
+        expect(Math.max(l.x1, l.x2)).toBeLessThanOrEqual(A4_PAYSAGE_WIDTH_PT - MARGE + 1)
+      }
+      for (const r of page.rects ?? []) {
+        expect(r.y).toBeGreaterThanOrEqual(0)
+        expect(r.y + r.h).toBeLessThanOrEqual(A4_PAYSAGE_HEIGHT_PT)
       }
     }
   })
 
-  it('aligne les quantités à droite de leur colonne', () => {
+  it('centre la quantité dans sa case, et cale le total du mois à droite', () => {
     const page = layoutCraDocument(document(1, 1))[0]!
-    const cellule = page.texts.find((t) => t.text === formatJours(100))
-    const enTete = page.texts.find((t) => t.text === 'Prestation 1')
-    expect(cellule).toBeDefined()
-    expect(enTete).toBeDefined()
-    expect(cellule!.x).toBeGreaterThan(enTete!.x)
+    const libelle = page.texts.find((t) => t.text === 'Prestation 1')!
+    // Quatre « 1,00 » sur cette page, de gauche à droite : le total de tête,
+    // le total de la ligne, l'unique case servie, et le consommé de la
+    // mission dans la colonne de droite.
+    const quantites = page.texts
+      .filter((t) => t.text === formatJours(100))
+      .sort((a, b) => a.x - b.x)
+    expect(quantites).toHaveLength(4)
+
+    const [total, totalLigne, cellule, cumul] = quantites as [
+      (typeof quantites)[number],
+      (typeof quantites)[number],
+      (typeof quantites)[number],
+      (typeof quantites)[number],
+    ]
+    expect(cumul.x).toBe(600)
+    expect(total.x).toBe(MARGE)
+    // Le total de la ligne s'arrête sur le bord droit de sa colonne.
+    expect(totalLigne.x + largeurApprox(totalLigne.text, totalLigne.size)).toBeCloseTo(165, 1)
+    expect(totalLigne.x).toBeGreaterThan(libelle.x)
+    // La case, elle, est plus à droite encore : la bande commence après.
+    expect(cellule.x).toBeGreaterThan(172)
   })
 
   it('tronque un libellé de prestation trop long plutôt que de déborder', () => {
@@ -215,15 +270,19 @@ describe('layoutCraDocument', () => {
     doc.lignes[0]!.label = long
     const page = layoutCraDocument(doc)[0]!
 
-    const enTete = page.texts.find((t) => t.text.startsWith('Consultant ITS'))
-    expect(enTete).toBeDefined()
-    expect(enTete!.text).not.toBe(long)
-    expect(enTete!.text.endsWith('…')).toBe(true)
-    // Ce qui reste est bien un début du libellé, pas un résumé inventé.
-    expect(long.startsWith(enTete!.text.slice(0, -1))).toBe(true)
-    // Et il s'arrête avant la colonne suivante — c'est tout l'objet de la
-    // troncature.
-    const suivante = page.texts.find((t) => t.text === 'Prestation 2')!
-    expect(enTete!.x + largeurApprox(enTete!.text, enTete!.size)).toBeLessThanOrEqual(suivante.x)
+    const tronques = page.texts.filter((t) => t.text.startsWith('Consultant ITS'))
+    // Le libellé paraît deux fois : dans la bande, et dans le bloc
+    // d'engagement. Les deux sont tronqués, chacun à sa colonne.
+    expect(tronques).toHaveLength(2)
+
+    for (const enTete of tronques) {
+      expect(enTete.text).not.toBe(long)
+      expect(enTete.text.endsWith('…')).toBe(true)
+      // Ce qui reste est bien un début du libellé, pas un résumé inventé.
+      expect(long.startsWith(enTete.text.slice(0, -1))).toBe(true)
+      // Et il s'arrête avant ce qui suit sur sa ligne — c'est tout l'objet de
+      // la troncature.
+      expect(enTete.x + largeurApprox(enTete.text, enTete.size)).toBeLessThanOrEqual(172)
+    }
   })
 })

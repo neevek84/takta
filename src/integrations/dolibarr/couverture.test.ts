@@ -20,6 +20,9 @@ async function exercerTout(): Promise<string[]> {
   const api = createHttpDolibarrApi({
     baseUrl: BASE_FACTICE,
     apiKey: 'cle-factice',
+    // Sans lui, les affectations ne partent pas et le catalogue les
+    // déclarerait sans que rien ne les exerce.
+    dolibarrUserId: 7,
     fetchImpl: faux.fetchImpl,
   })
 
@@ -31,13 +34,33 @@ async function exercerTout(): Promise<string[]> {
     lines: [{ label: 'Conseil', qty: 10, subpriceEuros: 800 }],
   })
   faux.seedSetup('TIMESHEET_DAY_DURATION', '7')
+  const auteur = faux.seedUser({ nom: 'Dupont', prenom: 'Camille', email: 'camille@exemple.test' })
+  const commande = faux.seedOrder({
+    ref: 'CO-EXEMPLE',
+    socid: tiers.id,
+    refClient: 'BDC-EXEMPLE',
+    label: 'Libellé de la commande',
+    lines: [{ label: 'Conseil', qty: 10, subpriceEuros: 800 }],
+  })
 
   await api.listThirdparties()
   await api.createThirdparty('Autre Client Exemple')
   await api.listProjects()
   await api.listTasks(projet.id)
-  const tache = await api.createTask({ projectId: projet.id, label: 'Conseil' })
+  const tache = await api.createTask({ projectId: projet.id, label: 'Conseil', plannedWorkloadSeconds: null })
   await api.getProposal(propale.id)
+  await api.listOrders()
+  await api.getOrder(commande.id)
+  const projetCree = await api.createProject({
+    socid: tiers.id,
+    ref: 'CO-EXEMPLE',
+    title: 'BDC-EXEMPLE — Libellé de la commande',
+    refExt: 'BDC-EXEMPLE',
+    description: 'Projet ouvert depuis la commande CO-EXEMPLE.',
+    dateStart: null,
+  })
+  await api.assignerAuProjet(projetCree.id)
+  await api.linkOrderToProject({ orderId: commande.id, projectId: projetCree.id })
   const { timespentId } = await api.addTimeSpent({
     taskId: tache.id,
     dolibarrUserId: 42,
@@ -52,6 +75,12 @@ async function exercerTout(): Promise<string[]> {
     durationSeconds: 25200,
     note: 'Atelier de cadrage',
   })
+  // Lectures de la reprise : la tâche par son identifiant, ses temps, et
+  // l'auteur de ces temps.
+  await api.getTask(tache.id)
+  await api.listTimeSpent(tache.id)
+  await api.getUser(auteur.id)
+
   await api.deleteTimeSpent({ taskId: tache.id, timespentId })
   await api.getSetupValue('TIMESHEET_DAY_DURATION')
 

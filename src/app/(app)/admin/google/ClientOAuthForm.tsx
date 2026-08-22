@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useActionState } from 'react'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
@@ -45,6 +46,28 @@ export function ClientOAuthForm({
           Enregistré le{' '}
           <time dateTime={configuredAt.toISOString()}>{configuredAt.toISOString().slice(0, 10)}</time>
           .
+        </p>
+      )}
+
+      {/*
+        Le panneau qui manquait. Cet écran enregistre le client OAuth de
+        l'instance ; **connecter un compte** se fait ailleurs, dans Synchro. La
+        séparation a sa raison — l'un appartient à l'instance, l'autre à une
+        personne — mais rien ne la disait, et le porteur a cherché sur cet
+        écran un bouton qui n'y est pas.
+      */}
+      {configure && (
+        // Une consigne permanente, pas une notification : elle ne prend donc
+        // pas `role="status"`. Une seconde zone « live » sur cet écran ferait
+        // annoncer un texte figé à chaque rendu, et rivaliserait avec le retour
+        // du formulaire — que deux tests lisaient par ce rôle.
+        <p className="mb-3 rounded-md border border-info-edge bg-info px-3 py-2 text-sm text-info-ink">
+          Le client est enregistré ; il reste à <strong>connecter un compte</strong>. Cet écran ne
+          porte que le client OAuth de l’instance — la connexion de votre agenda se fait dans{' '}
+          <Link href="/admin/sync" className="underline">
+            Réglages · Synchro
+          </Link>
+          , par le bouton « Connecter Google Calendar ».
         </p>
       )}
 

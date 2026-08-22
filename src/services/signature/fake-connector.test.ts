@@ -12,6 +12,19 @@ describe('createFakeSignatureConnector — sévérité', () => {
     fileName: 'CRA-ACME-2026-06.pdf',
     pdf: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
     destinataire: { nom: 'Claire Martin', email: 'claire@acme.test' },
+    champs: [
+      {
+        nature: 'SIGNATURE' as const,
+        ancre: '[[cra:signature]]',
+        page: 1,
+        x: 600,
+        y: 120,
+        largeur: 148,
+        hauteur: 34,
+        pageLargeur: 842,
+        pageHauteur: 595,
+      },
+    ],
   }
 
   it('GARDE-FOU INVERSE : un envoi complet passe et rend une référence', async () => {

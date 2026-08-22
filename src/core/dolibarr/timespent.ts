@@ -128,3 +128,64 @@ export function compareDayLength(args: {
     ),
   }
 }
+
+/**
+ * La charge de travail prévue d'une tâche Dolibarr, **en secondes**, à partir
+ * de ce que la prestation vend.
+ *
+ * **L'unité n'est pas négociable.** `llx_projet_task.planned_workload` est en
+ * secondes : `projet/tasks/task.php` la compose en `heures × 3600 + minutes ×
+ * 60` et la relit par `convertSecondToTime`. Y écrire des heures produirait une
+ * charge 3 600 fois trop petite, que rien ne signalerait — la tâche afficherait
+ * simplement « 0 h 00 » sur cinq jours vendus.
+ *
+ * **`null` n'est pas zéro.** Une prestation qui ne vend rien de chiffré a une
+ * charge *inconnue*, pas une charge nulle ; Dolibarr distingue les deux et
+ * laisse la colonne vide. Écrire `0` afficherait un avancement de 100 % dès la
+ * première heure consommée.
+ *
+ * Le facteur est celui de la prestation, jamais une constante : une journée ne
+ * vaut pas sept heures partout, et c'est déjà ce que respecte le push des
+ * temps.
+ */
+export function chargePrevueEnSecondes(args: {
+  /** jours vendus, en centièmes de jour */
+  soldCentiemes: number
+  /** durée d'une journée, en minutes */
+  minutesParJour: number
+}): number | null {
+  if (args.soldCentiemes <= 0) return null
+  if (!Number.isFinite(args.minutesParJour) || args.minutesParJour <= 0) return null
+
+  return Math.round((args.soldCentiemes / 100) * args.minutesParJour * 60)
+}
+
+/**
+ * Les jours vendus qu'une tâche Dolibarr laisse deviner, **en centièmes de
+ * jour**, à partir de sa charge prévue.
+ *
+ * C'est l'inverse exact de `chargePrevueEnSecondes`, et il sert la reprise :
+ * une mission qu'on rattache à un projet déjà en cours n'a pas de commande d'où
+ * tirer ses engagements, et `planned_workload` est la seule chose que Dolibarr
+ * sache dire de ce qui a été vendu.
+ *
+ * **Zéro quand la charge est inconnue**, et c'est assumé : une prestation sans
+ * engagement se saisit quand même, elle affiche simplement un reste à consommer
+ * qui ne veut rien dire tant que le porteur ne l'a pas renseigné. L'écran de
+ * reprise le signale — ne rien dire ferait passer un trou pour une mesure.
+ */
+export function joursVendusDepuisCharge(args: {
+  /** `planned_workload` de la tâche, en secondes, `null` quand elle n'en porte pas */
+  plannedWorkloadSeconds: number | null
+  /** durée d'une journée, en minutes */
+  minutesParJour: number
+}): number {
+  const { plannedWorkloadSeconds: charge, minutesParJour } = args
+  // `Number.isFinite` n'est pas décoratif : la charge vient d'un `Number()` sur
+  // un champ que Dolibarr omet quand la tâche n'en porte pas, et `Number(undefined)`
+  // vaut `NaN`. Sans cette garde, `NaN` traverserait jusqu'aux jours vendus.
+  if (charge === null || !Number.isFinite(charge)) return 0
+  if (!Number.isFinite(minutesParJour) || minutesParJour <= 0) return 0
+
+  return Math.round((charge / 60 / minutesParJour) * 100)
+}

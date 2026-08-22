@@ -4,19 +4,26 @@ import { render, screen, cleanup } from '@testing-library/react'
 import type { OpenConflict } from '@/services/sync/conflicts'
 import type { FailedSyncRow } from '@/services/sync/queue'
 
-const { requireUser, getConnectionState, listOpenConflicts, listFailedSyncRows } = vi.hoisted(
+const {
+  requireUser,
+  getConnectionState,
+  listOpenConflicts,
+  listFailedSyncRows,
+  listPendingSyncRows,
+} = vi.hoisted(
   () => ({
     requireUser: vi.fn(),
     getConnectionState: vi.fn(),
     listOpenConflicts: vi.fn(),
     listFailedSyncRows: vi.fn(),
+    listPendingSyncRows: vi.fn(),
   }),
 )
 
 vi.mock('@/auth', () => ({ requireUser }))
 vi.mock('@/services/google/connect', () => ({ getConnectionState }))
 vi.mock('@/services/sync/conflicts', () => ({ listOpenConflicts }))
-vi.mock('@/services/sync/queue', () => ({ listFailedSyncRows }))
+vi.mock('@/services/sync/queue', () => ({ listFailedSyncRows, listPendingSyncRows }))
 
 // Le client est remplacé par un témoin : ce test porte sur le **câblage** de la
 // page, pas sur le rendu du client, qui a ses propres tests.
@@ -63,6 +70,7 @@ beforeEach(() => {
   getConnectionState.mockReset().mockResolvedValue(CONNEXION)
   listOpenConflicts.mockReset().mockResolvedValue([conflit])
   listFailedSyncRows.mockReset().mockResolvedValue([echec])
+  listPendingSyncRows.mockReset().mockResolvedValue([])
 })
 afterEach(cleanup)
 
@@ -75,6 +83,10 @@ describe('page Administration · Synchronisation', () => {
     expect(getConnectionState).toHaveBeenCalledWith('u1')
     expect(listOpenConflicts).toHaveBeenCalledWith('u1')
     expect(listFailedSyncRows).toHaveBeenCalledWith('u1')
+    // La file en attente est lue pour **toute l'instance** : un CRA appartient
+    // à une mission, et le pousser est un acte d'instance. Arbitrage du
+    // porteur, 20 août 2026 ; les rôles poseront la restriction.
+    expect(listPendingSyncRows).toHaveBeenCalledWith()
 
     // Et elle les transmet : un écran câblé sur des tableaux vides afficherait
     // « aucune divergence » pendant qu'une divergence attend en base.
@@ -82,6 +94,7 @@ describe('page Administration · Synchronisation', () => {
       connection: CONNEXION,
       conflicts: [conflit],
       failures: [echec],
+      pending: [],
     })
     expect(screen.getByTestId('client')).toBeTruthy()
   })

@@ -182,7 +182,7 @@ describe('push des temps', () => {
   })
 
   it('adopte une tâche existante portant le même libellé', async () => {
-    await api.createTask({ projectId, label: 'Développement' })
+    await api.createTask({ projectId, label: 'Développement', plannedWorkloadSeconds: null })
     api.appels.createTask = 0
 
     await saveEntry({ userId, lineId, date: '2026-05-04', minutes: 480, kind: 'REALISE' })
@@ -197,7 +197,7 @@ describe('push des temps', () => {
   // un projet Dolibarr organisé à la main en porte plusieurs, et imputer le
   // développement sur la tâche de pilotage passerait totalement inaperçu.
   it('n adopte pas une tâche dont le libellé diffère', async () => {
-    const pilotage = await api.createTask({ projectId, label: 'Pilotage' })
+    const pilotage = await api.createTask({ projectId, label: 'Pilotage', plannedWorkloadSeconds: null })
     api.appels.createTask = 0
 
     await saveEntry({ userId, lineId, date: '2026-05-04', minutes: 480, kind: 'REALISE' })
@@ -778,6 +778,7 @@ describe('repointage de la mission vers un autre projet', () => {
     const tacheAilleurs = await api.createTask({
       projectId: ailleurs.id,
       label: 'Développement',
+      plannedWorkloadSeconds: null,
     })
     await prisma.externalLink.create({
       data: {

@@ -61,9 +61,104 @@ function unCra(
     signataireNom: 'Claire Martin',
     signataireEmail: 'claire@acme.test',
     signature: null,
+    previsionnelAAnnuler: 0,
+    iraDansDolibarr: false,
+    synthese: { totalCentiemes: 0, joursServis: 0, lignes: [] },
     ...extra,
   }
 }
+
+describe('page CRA — ce qui partira, et ce qui ne partira pas', () => {
+  afterEach(cleanup)
+
+  it('avertit qu’un CRA sans projet Dolibarr n’enverra rien', async () => {
+    // Le défaut vécu : deux missions aux noms presque identiques, une seule
+    // rattachée. Le CRA validé n'a rien mis en file, et rien ne le disait.
+    await rendre({ cras: [unCra('BROUILLON', 'cra-1', { iraDansDolibarr: false })] })
+    const texte = document.body.textContent ?? ''
+
+    expect(texte).toContain('Ce CRA n’ira pas dans Dolibarr')
+    expect(texte).toContain('rien n’arrivera chez le client')
+  })
+
+  it('n’avertit pas quand la mission est rattachée', async () => {
+    await rendre({ cras: [unCra('BROUILLON', 'cra-1', { iraDansDolibarr: true })] })
+    expect(document.body.textContent ?? '').not.toContain('n’ira pas dans Dolibarr')
+  })
+
+  it('se tait sur un CRA déjà validé : l’avertissement arriverait trop tard', async () => {
+    await rendre({ cras: [unCra('VALIDE', 'cra-1', { iraDansDolibarr: false })] })
+    expect(document.body.textContent ?? '').not.toContain('n’ira pas dans Dolibarr')
+  })
+
+  it('affiche la période sur la carte, pas seulement en tête de page', async () => {
+    // Deux missions voisines et un mois implicite : on ne sait plus quel CRA
+    // on vient d'engendrer.
+    await rendre({ cras: [unCra('BROUILLON')] })
+    expect(document.body.textContent ?? '').toContain('mars 2026')
+  })
+})
+
+describe('page CRA — la synthèse', () => {
+  afterEach(cleanup)
+
+  it('dit combien de jours et sur quelles prestations', async () => {
+    // Sans elle, il fallait ouvrir le PDF pour savoir ce qu'on s'apprêtait à
+    // faire signer.
+    await rendre({
+      cras: [
+        unCra('BROUILLON', 'cra-1', {
+          synthese: {
+            totalCentiemes: 1750,
+            joursServis: 18,
+            lignes: [
+              { label: 'Consultant', centiemes: 1500 },
+              { label: 'Astreinte', centiemes: 250 },
+            ],
+          },
+        }),
+      ],
+    })
+    const texte = document.body.textContent ?? ''
+
+    expect(texte).toContain('17,50 j')
+    expect(texte).toContain('18 jours')
+    expect(texte).toContain('Consultant')
+    expect(texte).toContain('15,00 j')
+    expect(texte).toContain('Astreinte')
+  })
+
+  it('annonce un CRA vide au lieu d’un tableau muet', async () => {
+    await rendre({ cras: [unCra('BROUILLON')] })
+    expect(document.body.textContent ?? '').toContain('Le CRA serait vide')
+  })
+})
+
+describe('page CRA — le prévisionnel emporté par la validation', () => {
+  // Chaque describe de ce fichier pose son propre nettoyage : sans lui, les
+  // rendus s'empilent dans le même document et les tests se lisent entre eux.
+  afterEach(cleanup)
+
+  it('annonce ce qui sera annulé, avant la validation', async () => {
+    // Un jour prévu emporté sans préavis est une donnée perdue dont personne
+    // ne saura qu'elle a existé.
+    await rendre({ cras: [unCra('BROUILLON', 'cra-1', { previsionnelAAnnuler: 3 })] })
+    const texte = document.body.textContent ?? ''
+
+    expect(texte).toContain('3 jours en prévisionnel')
+    expect(texte).toContain('seront annulées')
+  })
+
+  it('accorde le singulier sur un seul jour', async () => {
+    await rendre({ cras: [unCra('BROUILLON', 'cra-1', { previsionnelAAnnuler: 1 })] })
+    expect(document.body.textContent ?? '').toContain('1 jour en prévisionnel')
+  })
+
+  it('ne dit rien quand le mois n’a rien de prévu', async () => {
+    await rendre({ cras: [unCra('BROUILLON')] })
+    expect(document.body.textContent ?? '').not.toContain('prévisionnel')
+  })
+})
 
 function uneSignature(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {

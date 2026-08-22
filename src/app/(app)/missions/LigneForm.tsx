@@ -1,11 +1,12 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 import { modifierLigne, type UpdateLineState } from './actions'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Field } from '@/components/ui/Field'
 import { Select } from '@/components/ui/Select'
+import { engagementVerrouille, libelleEngagement } from '@/core/dolibarr/engagement'
 import type { DisplayUnit, EngagementSource } from '@/core/types'
 
 /**
@@ -42,8 +43,22 @@ export function LigneForm({
   )
 
   // Sans `name`, le champ n'entre pas dans la soumission — c'est ce qui
-  // distingue « affiché » de « envoyé ».
-  const reprise = line.engagementSource === 'DOLIBARR_PROPALE'
+  // distingue « affiché » de « envoyé ». La question posée n'est plus « est-ce
+  // une propale ? » mais « Dolibarr en est-il maître ? » : la première laissait
+  // un engagement repris d'une commande modifiable ici.
+  const reprise = engagementVerrouille(line.engagementSource)
+
+  // Replié par défaut : le volet de détail portait autant de formulaires
+  // ouverts que la mission a de prestations, alors qu'on n'en modifie qu'une à
+  // la fois — et rarement.
+  const [ouvert, setOuvert] = useState(false)
+  if (!ouvert) {
+    return (
+      <Button type="button" className="mt-2" onClick={() => setOuvert(true)}>
+        Modifier « {line.label} »
+      </Button>
+    )
+  }
 
   return (
     <form action={formAction} className="mt-3 flex flex-col gap-2">
@@ -78,15 +93,19 @@ export function LigneForm({
         </Select>
         {/* `loading` et non `disabled` : l'attente se lit dans le texte du
             bouton, pas seulement dans une teinte atténuée. */}
-        <Button type="submit" loading={pending}>
-          Enregistrer la prestation
+        <Button type="submit" variant="primary" loading={pending}>
+          Enregistrer
+        </Button>
+        <Button type="button" onClick={() => setOuvert(false)}>
+          Fermer
         </Button>
       </div>
 
       {reprise && (
         <p className="text-xs text-muted">
-          Jours vendus et TJM repris de la propale Dolibarr : ils se modifient dans Dolibarr, qui
-          en reste maître. L’application ne modifie jamais une propale.
+          Jours vendus et TJM repris de la {libelleEngagement(line.engagementSource)} : ils se
+          modifient dans Dolibarr, qui en reste maître. L’application ne modifie jamais un document
+          commercial.
         </p>
       )}
 

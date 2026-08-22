@@ -2,6 +2,8 @@ import { prisma } from '@/db/client'
 import { renderPdf } from '@/core/pdf/writer'
 import { buildCraDocument, type CraDocument } from '@/core/cra/document'
 import { layoutCraDocument } from '@/core/cra/layout'
+import { zonesSignature } from '@/core/cra/signature-zones'
+import type { SignatureChamp } from '@/core/signature/connector'
 import type { TimeEntryKind } from '@/core/types'
 import { readSettingsRow } from './settings'
 
@@ -10,6 +12,15 @@ export interface CraPdf {
   bytes: Uint8Array
   /** le modèle qui a servi à composer le fichier, utile aux appelants et aux tests */
   document: CraDocument
+  /**
+   * Où signer, dans **ce** fichier.
+   *
+   * Rendu ici et pas recalculé par l'appelant : les zones viennent de la
+   * position réellement occupée par les ancres dans les pages composées, et
+   * une seconde géométrie finirait par désigner un autre endroit que le cadre
+   * dessiné.
+   */
+  champs: ReadonlyArray<SignatureChamp>
 }
 
 export interface CraPdfTelechargement {
@@ -65,14 +76,6 @@ function moisDuCra(month: Date): string {
   return mois
 }
 
-function bornesDuMois(mois: string): { start: Date; end: Date } {
-  const [annee, numero] = mois.split('-').map(Number) as [number, number]
-  return {
-    start: new Date(Date.UTC(annee, numero - 1, 1)),
-    end: new Date(Date.UTC(annee, numero, 1)),
-  }
-}
-
 interface ContexteCra {
   craId: string
   missionId: string
@@ -125,15 +128,30 @@ export async function buildCraPdf(userId: string, craId: string): Promise<CraPdf
   const lignes = await prisma.missionLine.findMany({
     where: { missionId: contexte.missionId, assignments: { some: { userId } } },
     orderBy: [{ position: 'asc' }, { id: 'asc' }],
-    select: { id: true, label: true },
+    select: { id: true, label: true, soldCentiemes: true },
   })
 
-  const { start, end } = bornesDuMois(contexte.mois)
+  // **Toutes les périodes**, et non le seul mois du document : le bloc
+  // d'engagement compare le consommé aux jours vendus du contrat entier, et le
+  // borner au mois affiché donnerait un reste faux dès le deuxième mois de la
+  // mission. `buildCraDocument` se charge de n'imprimer dans le tableau que le
+  // réalisé du mois.
   const saisies = await prisma.timeEntry.findMany({
-    where: { userId, lineId: { in: lignes.map((l) => l.id) }, date: { gte: start, lt: end } },
+    where: { userId, lineId: { in: lignes.map((l) => l.id) } },
     orderBy: { date: 'asc' },
     select: { lineId: true, date: true, minutes: true, minutesParJour: true, kind: true },
   })
+
+  // Les mois que le client a déjà validés. Tout le reste du réalisé est « en
+  // validation », le mois de ce document compris — son propre CRA n'est pas
+  // encore validé au moment où on le compose.
+  const cras = await prisma.cra.findMany({
+    where: { missionId: contexte.missionId, userId, status: 'VALIDE' },
+    select: { month: true },
+  })
+  const moisValides = cras
+    .filter((c) => !Number.isNaN(c.month.getTime()))
+    .map((c) => c.month.toISOString().slice(0, 7))
 
   const document = buildCraDocument({
     emetteur: {
@@ -148,6 +166,7 @@ export async function buildCraPdf(userId: string, craId: string): Promise<CraPdf
     signataireNom: contexte.signataireNom,
     signataireEmail: contexte.signataireEmail,
     lignes,
+    moisValides,
     // Chaque saisie part avec **son** facteur figé à l'écriture. Reconvertir
     // ici depuis le réglage courant ferait changer un CRA validé sans qu'aucune
     // donnée n'ait bougé : le gel se casse en lecture, jamais en écriture.
@@ -160,10 +179,19 @@ export async function buildCraPdf(userId: string, craId: string): Promise<CraPdf
     })),
   })
 
+  const pages = layoutCraDocument(document)
+  // Les zones se lisent dans les pages composées, jamais recalculées : c'est
+  // la même vérité qui dessine le cadre et qui dit où signer.
+  const zones = zonesSignature(pages)
+
   return {
     fileName: contexte.fileName,
-    bytes: renderPdf(layoutCraDocument(document)),
+    bytes: renderPdf(pages),
     document,
+    champs: [
+      { nature: 'SIGNATURE' as const, ...zones.signature },
+      { nature: 'DATE' as const, ...zones.date },
+    ],
   }
 }
 

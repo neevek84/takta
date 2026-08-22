@@ -88,6 +88,26 @@ async function saisir(lineId: string, date: string, minutes: number): Promise<vo
 }
 
 describe('buildCraPdf', () => {
+  it('rend les deux champs à signer, situés dans le fichier livré', async () => {
+    // Sans eux le prestataire de signature reçoit un PDF muet, et il faut
+    // poser les champs à la main sur chaque CRA, tous les mois.
+    await saisir(ligneJour, '2026-06-01', 480)
+    const { champs, bytes } = await buildCraPdf(userId, craId)
+
+    expect(champs.map((c) => c.nature).sort()).toEqual(['DATE', 'SIGNATURE'])
+    for (const champ of champs) {
+      expect(champ.page).toBeGreaterThanOrEqual(1)
+      expect(champ.largeur).toBeGreaterThan(0)
+      expect(champ.hauteur).toBeGreaterThan(0)
+      // Le champ tient dans sa page — une zone qui déborde fait signer dans le vide.
+      expect(champ.x + champ.largeur).toBeLessThanOrEqual(champ.pageLargeur)
+      expect(champ.y + champ.hauteur).toBeLessThanOrEqual(champ.pageHauteur)
+      // Et son ancre est réellement dans le fichier : c'est ce que cherchent
+      // les outils qui placent leurs champs par le texte.
+      expect(Buffer.from(bytes).toString('latin1')).toContain(champ.ancre)
+    }
+  })
+
   it('produit un fichier PDF', async () => {
     await saisir(ligneJour, '2026-06-01', 480)
     const { bytes } = await buildCraPdf(userId, craId)
@@ -137,9 +157,12 @@ describe('buildCraPdf', () => {
     const imprime = extraireTextes((await buildCraPdf(userId, craId)).bytes)
     expect(imprime).toContain('Jour')
     expect(imprime).toContain('Nuit')
-    expect(imprime).toContain('lun. 01')
+    // La bande paysage écrit le quantième seul, surmonté de l'initiale du
+    // jour : « lun. 01 » ne tient pas dans une case de vingt points.
+    expect(imprime).toContain('1')
+    expect(imprime).toContain('30')
     expect(imprime).toContain(formatJours(50))
-    expect(imprime.join(' | ')).toContain('Total du mois')
+    expect(imprime.join(' | ')).toContain('TOTAL DU MOIS')
   })
 
   it('n emprunte rien à une autre mission', async () => {

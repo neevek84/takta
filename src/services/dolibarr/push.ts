@@ -14,6 +14,7 @@ import {
   type DolibarrTask,
 } from './api'
 import { LIEN_LIGNE, LIEN_MISSION, LIEN_TEMPS, SEPARATEUR } from './liens'
+import { chargePrevueDeLaPrestation } from './taches'
 
 export interface PushResult {
   poussees: number
@@ -83,6 +84,32 @@ export async function isDolibarrPushArmed(missionId: string): Promise<boolean> {
     select: { id: true },
   })
   return lienMission !== null
+}
+
+/**
+ * Parmi ces missions, celles pour lesquelles la validation d'un CRA mettra
+ * réellement quelque chose en file.
+ *
+ * Même règle qu'`isDolibarrPushArmed`, en une seule lecture : l'écran des CRA
+ * en affiche autant que de missions, et une requête par ligne ferait payer la
+ * page au nombre de missions.
+ */
+export async function missionsArmeesPourDolibarr(
+  missionIds: ReadonlyArray<string>,
+): Promise<Set<string>> {
+  if (missionIds.length === 0) return new Set()
+  const credential = await getInstanceCredential(DOLIBARR)
+  if (credential === null) return new Set()
+
+  const liens = await prisma.externalLink.findMany({
+    where: {
+      entityType: LIEN_MISSION,
+      provider: DOLIBARR,
+      entityId: { in: [...missionIds] },
+    },
+    select: { entityId: true },
+  })
+  return new Set(liens.map((l) => l.entityId))
 }
 
 /**
@@ -250,7 +277,15 @@ export async function pushCraTimes(args: {
     const label = labelParLigne.get(lineId) ?? lineId
     const existantes = await tachesProjet()
     const deja = existantes.find((t) => t.label === label)
-    const tache = deja ?? (await args.api.createTask({ projectId, label }))
+    const tache =
+      deja ??
+      (await args.api.createTask({
+        projectId,
+        label,
+        // Même charge qu'à l'ouverture d'une prestation : les deux chemins
+        // créent la même tâche, ils ne doivent pas la décrire différemment.
+        plannedWorkloadSeconds: await chargePrevueDeLaPrestation(lineId),
+      }))
     if (deja === undefined) {
       resultat.tachesCreees += 1
       existantes.push(tache)

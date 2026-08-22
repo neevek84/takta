@@ -10,7 +10,15 @@ dist/
 !.env.example
 
 *.db
+# Les fichiers d'accompagnement de SQLite. `*.db-journal` seul ne suffisait
+# pas : l'application tourne en **WAL**, et ce sont `-wal` et `-shm` qui
+# portent alors les écritures pas encore repliées dans le fichier principal.
+# Non ignorés, ils apparaissaient en « non suivis » — et un simple
+# `git clean -fd`, qui épargne pourtant les fichiers ignorés, les emportait :
+# la base restait, les dernières heures de saisie disparaissaient sans un mot.
 *.db-journal
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 

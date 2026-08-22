@@ -1,6 +1,9 @@
 # État du projet CRA
 
-**Dernière mise à jour :** 2026-08-16
+**Dernière mise à jour :** 2026-08-16 — **périmée**.
+**Point d'avancement à jour : [AVANCEMENT-2026-08-22.md](AVANCEMENT-2026-08-22.md)**, confronté au code.
+Les sections 1 à 3 et 6 à 7 ci-dessous restent valables ; les sections 4 et 5
+(état du code, ce qui reste) ne le sont plus.
 **À lire en premier** par quiconque reprend ce projet — humain ou agent.
 
 ---
@@ -178,6 +181,13 @@ Chaque lot suit : **spec → plan → implémentation par vagues d'agents parall
 - **`manifest.webmanifest` et `icon.svg` portent les couleurs KreativPM en dur.** Ce sont des fichiers statiques servis tels quels, hors de portée du système de jetons : quelqu'un qui change le thème garde l'icône d'origine sur son écran d'accueil. Le `themeColor` du document, lui, suit bien le thème enregistré.
 
 ---
+
+- **`dolibarrUserId` est de portée instance alors qu'il désigne une personne.**
+  Tous les temps poussés partent sous le même utilisateur Dolibarr, quel que
+  soit le propriétaire du CRA. Invisible à un seul consultant, faux à deux.
+  Le rôle `User.role` existe et n'est lu par aucun écran. Cadré dans
+  `docs/superpowers/specs/2026-08-19-roles-et-portees-design.md` ; le porteur a
+  demandé de valider d'abord le fonctionnement, puis de faire l'évolution.
 
 ## 9. Environnement du porteur
 

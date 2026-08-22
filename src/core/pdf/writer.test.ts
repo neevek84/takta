@@ -4,9 +4,13 @@ import {
   extraireTextes,
   toWinAnsi,
   largeurApprox,
+  composantes,
   A4_WIDTH_PT,
   A4_HEIGHT_PT,
+  A4_PAYSAGE_WIDTH_PT,
+  A4_PAYSAGE_HEIGHT_PT,
   type PdfPage,
+  type PdfRect,
 } from './writer'
 
 function texte(text: string): PdfPage {
@@ -163,5 +167,133 @@ describe('largeurApprox', () => {
 
   it('rend zéro pour une chaîne vide', () => {
     expect(largeurApprox('', 10)).toBe(0)
+  })
+})
+
+describe('les aplats', () => {
+  function avecRects(rects: PdfRect[]): string {
+    return enLatin1(renderPdf([{ texts: [], lines: [], rects }]))
+  }
+
+  it('remplit un rectangle à coins vifs en une seule opération', () => {
+    const brut = avecRects([{ x: 10, y: 20, w: 30, h: 40, fill: '#0e9480' }])
+    expect(brut).toContain('10 20 30 40 re')
+    expect(brut).toContain('re\nf\n')
+  })
+
+  it('convertit la couleur hexadécimale en composantes PDF', () => {
+    expect(composantes('#000000')).toEqual([0, 0, 0])
+    expect(composantes('#ffffff')).toEqual([1, 1, 1])
+    // 0x0e = 14 ; 14/255 = 0,0549… arrondi au millième.
+    expect(composantes('#0e9480')).toEqual([0.055, 0.58, 0.502])
+  })
+
+  it('rend du noir plutôt que d échouer sur une couleur illisible', () => {
+    expect(composantes('turquoise')).toEqual([0, 0, 0])
+    expect(composantes('#abc')).toEqual([0, 0, 0])
+  })
+
+  it('remplit et trace en une passe quand le rectangle fait les deux', () => {
+    const brut = avecRects([{ x: 0, y: 0, w: 10, h: 10, fill: '#ffffff', stroke: '#aec5bd' }])
+    expect(brut).toContain('re\nB\n')
+    expect(brut).not.toContain('re\nf\n')
+    expect(brut).not.toContain('re\nS\n')
+  })
+
+  it('ignore un rectangle sans couleur, ou sans surface', () => {
+    expect(avecRects([{ x: 0, y: 0, w: 10, h: 10 }])).not.toContain(' re')
+    expect(avecRects([{ x: 0, y: 0, w: 0, h: 10, fill: '#000000' }])).not.toContain(' re')
+    expect(avecRects([{ x: 0, y: 0, w: 10, h: -1, fill: '#000000' }])).not.toContain(' re')
+  })
+
+  it('trace un coin arrondi en courbes plutôt qu en rectangle', () => {
+    const brut = avecRects([{ x: 0, y: 0, w: 20, h: 20, fill: '#000000', radius: 3 }])
+    expect(brut).not.toContain(' re')
+    expect([...brut.matchAll(/ c\n/g)]).toHaveLength(4)
+    expect(brut).toContain('h\n')
+  })
+
+  it('borne le rayon à la moitié du plus petit côté', () => {
+    // Un rayon plus grand replierait le contour sur lui-même.
+    const brut = avecRects([{ x: 0, y: 0, w: 10, h: 4, fill: '#000000', radius: 50 }])
+    expect(brut).toContain('2 0 m')
+  })
+
+  it('pose le motif de tiret puis le retire', () => {
+    const brut = avecRects([{ x: 0, y: 0, w: 10, h: 10, stroke: '#7c5500', dash: [2.4, 1.8] }])
+    expect(brut.indexOf('[2.4 1.8] 0 d')).toBeGreaterThan(-1)
+    expect(brut.indexOf('[] 0 d')).toBeGreaterThan(brut.indexOf('[2.4 1.8] 0 d'))
+  })
+
+  it('dessine les aplats avant les traits et les textes', () => {
+    // Un fond posé après ce qu'il porte l'efface.
+    const brut = enLatin1(
+      renderPdf([
+        {
+          rects: [{ x: 0, y: 0, w: 10, h: 10, fill: '#51c9b2' }],
+          lines: [{ x1: 0, y1: 0, x2: 10, y2: 0 }],
+          texts: [{ x: 0, y: 0, size: 8, text: 'dessus' }],
+        },
+      ]),
+    )
+    expect(brut.indexOf('0.318 0.788 0.698 rg')).toBeLessThan(brut.indexOf(' l S'))
+    expect(brut.indexOf(' l S')).toBeLessThan(brut.indexOf('(dessus)'))
+  })
+})
+
+describe('la couleur du texte et des traits', () => {
+  it('encre le texte de la couleur demandée, en noir par défaut', () => {
+    const brut = enLatin1(
+      renderPdf([
+        {
+          texts: [
+            { x: 0, y: 0, size: 8, text: 'rouille', color: '#7f2c17' },
+            { x: 0, y: 20, size: 8, text: 'defaut' },
+          ],
+          lines: [],
+        },
+      ]),
+    )
+    expect(brut).toContain('0.498 0.173 0.09 rg')
+    expect(brut).toContain('0 0 0 rg\nBT /F1 8 Tf 0 20 Td (defaut)')
+  })
+
+  it('accepte un trait tireté et coloré', () => {
+    const brut = enLatin1(
+      renderPdf([
+        { texts: [], lines: [{ x1: 0, y1: 0, x2: 10, y2: 0, color: '#aec5bd', dash: [2, 2] }] },
+      ]),
+    )
+    expect(brut).toContain('0.682 0.773 0.741 RG')
+    expect(brut).toContain('[2 2] 0 d')
+  })
+})
+
+describe('le format de page', () => {
+  it('reste en A4 portrait quand la page ne dit rien', () => {
+    expect(enLatin1(renderPdf([texte('a')]))).toContain(
+      `/MediaBox [0 0 ${A4_WIDTH_PT} ${A4_HEIGHT_PT}]`,
+    )
+  })
+
+  it('couche la page quand elle le demande', () => {
+    const paysage: PdfPage = {
+      texts: [],
+      lines: [],
+      width: A4_PAYSAGE_WIDTH_PT,
+      height: A4_PAYSAGE_HEIGHT_PT,
+    }
+    expect(enLatin1(renderPdf([paysage]))).toContain('/MediaBox [0 0 842 595]')
+  })
+
+  it('donne à chaque page son propre format', () => {
+    const brut = enLatin1(
+      renderPdf([
+        texte('portrait'),
+        { texts: [], lines: [], width: A4_PAYSAGE_WIDTH_PT, height: A4_PAYSAGE_HEIGHT_PT },
+      ]),
+    )
+    expect(brut).toContain('/MediaBox [0 0 595 842]')
+    expect(brut).toContain('/MediaBox [0 0 842 595]')
   })
 })

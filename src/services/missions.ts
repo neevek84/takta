@@ -1,5 +1,12 @@
 import { z } from 'zod'
 import { prisma } from '@/db/client'
+import { engagementVerrouille, libelleEngagement } from '@/core/dolibarr/engagement'
+// Trois chaînes, pas un import du service Dolibarr : `services/missions` ne
+// dépend pas du connecteur, et ne doit pas commencer à le faire pour afficher
+// une étiquette.
+const PROVIDER_DOLIBARR = 'DOLIBARR'
+const ENTITE_MISSION = 'Mission'
+const ENTITE_LIGNE = 'MissionLine'
 import { getSettings } from './settings'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import type { DisplayUnit, EngagementSource } from '@/core/types'
@@ -28,6 +35,12 @@ export async function createMission(args: {
   minutesParJour?: number | null
   signataireNom?: string
   signataireEmail?: string
+  /**
+   * Début de la mission, `'YYYY-MM-DD'`. Reprise de la période vendue quand la
+   * commande en porte une, saisie à l'écran sinon. C'est elle qui alimente
+   * `date_start` du projet Dolibarr.
+   */
+  startDate?: string | null
   userId?: string
 }): Promise<{ id: string }> {
   const m = await prisma.mission.create({
@@ -37,6 +50,13 @@ export async function createMission(args: {
       minutesParJour: args.minutesParJour ?? null,
       signataireNom: args.signataireNom ?? '',
       signataireEmail: args.signataireEmail ?? '',
+      // Minuit UTC : la mission commence un **jour**, pas à un instant. Sans le
+      // `Z`, le fuseau du serveur déciderait, et la date reculerait d'un jour
+      // sur toute machine en avance sur GMT.
+      startDate:
+        args.startDate === undefined || args.startDate === null || args.startDate === ''
+          ? null
+          : new Date(`${args.startDate}T00:00:00Z`),
     },
   })
 
@@ -117,7 +137,16 @@ export async function createLine(args: {
 export interface MissionForUser {
   id: string
   label: string
+  clientId: string
   clientName: string
+  /**
+   * Le projet Dolibarr rattaché, `null` quand la mission est purement locale.
+   *
+   * L'écran le dit en toutes lettres : sans cette distinction, rien ne
+   * permettait de voir qu'une mission ne pousserait jamais rien — et on ne
+   * s'en apercevait qu'au premier CRA validé qui n'arrivait pas.
+   */
+  dolibarrProjectId: number | null
   /** durée d'une journée réellement appliquée, après cascade */
   minutesParJourEffectif: number
   /** surcharge portée par la mission elle-même, null si héritée */
@@ -136,6 +165,8 @@ export interface MissionForUser {
      * proposer de modifier des chiffres dont la source de vérité est ailleurs.
      */
     engagementSource: EngagementSource
+    /** La tâche Dolibarr de cette prestation, `null` quand elle n'en a pas. */
+    dolibarrTaskId: number | null
   }>
 }
 
@@ -153,6 +184,10 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
     prisma.mission.findMany({
       where: {
         archived: false,
+        // Ranger un client range ses missions avec lui : sans cette condition,
+        // elles resteraient dans la liste sous un client qui n'y est plus, et
+        // l'archivage ne rangerait rien.
+        client: { archived: false },
         OR: [{ lines: { none: {} } }, { lines: { some: { assignments: { some: { userId } } } } }],
       },
       include: {
@@ -164,10 +199,27 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
     getSettings(),
   ])
 
+  // Les correspondances Dolibarr, en une requête pour toute la liste. Sans
+  // filtre sur `userId` : une correspondance appartient à l'instance, pas à
+  // celui qui l'a posée — c'est déjà la lecture que fait l'écran d'import.
+  const liens = await prisma.externalLink.findMany({
+    where: {
+      provider: PROVIDER_DOLIBARR,
+      entityType: { in: [ENTITE_MISSION, ENTITE_LIGNE] },
+      entityId: {
+        in: [...missions.map((m) => m.id), ...missions.flatMap((m) => m.lines.map((l) => l.id))],
+      },
+    },
+    select: { entityType: true, entityId: true, externalId: true },
+  })
+  const externeDe = new Map(liens.map((l) => [`${l.entityType}|${l.entityId}`, Number(l.externalId)]))
+
   return missions.map((m) => ({
     id: m.id,
     label: m.label,
+    clientId: m.client.id,
     clientName: m.client.name,
+    dolibarrProjectId: externeDe.get(`${ENTITE_MISSION}|${m.id}`) ?? null,
     minutesParJourEffectif: resolveMinutesParJour({
       mission: m.minutesParJour,
       client: m.client.minutesParJour,
@@ -183,6 +235,7 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
       tjmCents: l.tjmCents,
       displayUnit: l.displayUnit as DisplayUnit,
       engagementSource: l.engagementSource as EngagementSource,
+      dolibarrTaskId: externeDe.get(`${ENTITE_LIGNE}|${l.id}`) ?? null,
     })),
   }))
 }
@@ -230,14 +283,17 @@ export async function updateLine(args: {
     (args.soldCentiemes !== undefined && args.soldCentiemes !== ligne.soldCentiemes) ||
     (args.tjmCents !== undefined && args.tjmCents !== ligne.tjmCents)
 
-  if (ligne.engagementSource === 'DOLIBARR_PROPALE' && toucheEngagement) {
+  const source = ligne.engagementSource as EngagementSource
+  if (engagementVerrouille(source) && toucheEngagement) {
     return {
       ok: false,
       reason: 'ENGAGEMENT_EXTERNE',
+      // Le document est **nommé** : « la propale » sur un engagement repris
+      // d'une commande enverrait chercher au mauvais endroit.
       message:
-        'Les jours vendus et le TJM de cette prestation proviennent de la propale Dolibarr ' +
-        'à laquelle elle est rattachée. Modifiez-les dans Dolibarr : l’application ne ' +
-        'modifie jamais une propale.',
+        `Les jours vendus et le TJM de cette prestation proviennent de la ${libelleEngagement(source)} ` +
+        'à laquelle elle est rattachée. Modifiez-les dans Dolibarr, qui en reste maître : ' +
+        'l’application ne modifie jamais un document commercial.',
     }
   }
 

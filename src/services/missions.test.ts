@@ -54,6 +54,24 @@ afterAll(async () => {
 })
 
 describe('clients et missions', () => {
+  // `Mission.startDate` existait au schéma sans que rien ne l'écrive jamais.
+  // C'est elle qui alimente `date_start` du projet Dolibarr.
+  it('enregistre la date de démarrage saisie à la création', async () => {
+    const c = await createClient('Avec date')
+    const m = await createMission({ clientId: c.id, label: 'M', startDate: '2026-09-01' })
+
+    const relue = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect(relue.startDate?.toISOString().slice(0, 10)).toBe('2026-09-01')
+  })
+
+  it('accepte une mission sans date de démarrage', async () => {
+    const c = await createClient('Sans date')
+    const m = await createMission({ clientId: c.id, label: 'M' })
+
+    const relue = await prisma.mission.findUniqueOrThrow({ where: { id: m.id } })
+    expect(relue.startDate).toBeNull()
+  })
+
   it('crée un client et le retrouve', async () => {
     const c = await createClient('ACME 38')
     expect(c.id).toBeTruthy()
@@ -142,6 +160,63 @@ describe('clients et missions', () => {
     const lines = await listActiveLines(autre.id)
     expect(lines).toHaveLength(0)
     await prisma.user.delete({ where: { id: autre.id } })
+  })
+
+  it('dit d où viennent la mission et chacune de ses prestations', async () => {
+    // Sans cette distinction, rien ne permettait de voir qu'une mission ou une
+    // prestation ne pousserait jamais rien — on s'en apercevait au premier CRA
+    // validé qui n'arrivait pas.
+    const c = await createClient('ACME origine')
+    const m = await createMission({ clientId: c.id, label: 'Origine' })
+    const rattachee = await createLine({
+      missionId: m.id,
+      userId,
+      label: 'Avec tâche',
+      soldCentiemes: 100,
+      tjmCents: 0,
+    })
+    const locale = await createLine({
+      missionId: m.id,
+      userId,
+      label: 'Sans tâche',
+      soldCentiemes: 100,
+      tjmCents: 0,
+    })
+
+    const avant = (await listMissionsForUser(userId)).find((x) => x.id === m.id)
+    expect(avant?.dolibarrProjectId).toBeNull()
+    expect(avant?.lines.every((l) => l.dolibarrTaskId === null)).toBe(true)
+
+    await prisma.externalLink.createMany({
+      data: [
+        {
+          userId,
+          entityType: 'Mission',
+          entityId: m.id,
+          provider: DOLIBARR,
+          externalId: '46',
+          syncState: 'SYNCED',
+        },
+        {
+          userId,
+          entityType: 'MissionLine',
+          entityId: rattachee.id,
+          provider: DOLIBARR,
+          externalId: '51',
+          syncState: 'SYNCED',
+        },
+      ],
+    })
+
+    const apres = (await listMissionsForUser(userId)).find((x) => x.id === m.id)
+    expect(apres?.dolibarrProjectId).toBe(46)
+    expect(apres?.lines.find((l) => l.id === rattachee.id)?.dolibarrTaskId).toBe(51)
+    expect(apres?.lines.find((l) => l.id === locale.id)?.dolibarrTaskId).toBeNull()
+
+    await prisma.externalLink.deleteMany({ where: { provider: DOLIBARR, entityId: m.id } })
+    await prisma.externalLink.deleteMany({
+      where: { provider: DOLIBARR, entityId: rattachee.id },
+    })
   })
 
   it('ne montre une mission revendiquée qu à l utilisateur affecté, jamais à un autre', async () => {

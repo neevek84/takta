@@ -30,6 +30,9 @@ model Client {
   createdAt DateTime  @default(now())
   /// surcharge de la durée d'une journée, en minutes. null = hérite du global.
   minutesParJour Int?
+  /// Rangé, pas détruit : il disparaît des listes et ses missions avec lui,
+  /// mais son histoire — CRA signés, temps poussés — reste lisible.
+  archived  Boolean   @default(false)
   missions  Mission[]
 }
 

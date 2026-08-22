@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeEngagement } from './compute'
+import { computeEngagement, cumulerEngagements, detaillerEngagement } from './compute'
 
 const J8 = 480
 const vendu30j = 3000 // 30 jours en centièmes
@@ -105,5 +105,58 @@ describe('facteur porté par chaque saisie', () => {
     })
     // 120/420 = 29 (arrondi) ; 60/480 = 13 (arrondi) ; total 42.
     expect(r.realiseCentiemes).toBe(42)
+  })
+})
+
+describe('detaillerEngagement', () => {
+  it('coupe le réalisé en validé et en validation, et en tire le reste', () => {
+    const e = detaillerEngagement({
+      venduCentiemes: 2000,
+      valideCentiemes: 1200,
+      enValidationCentiemes: 350,
+      planifieCentiemes: 300,
+    })
+    expect(e.consommeCentiemes).toBe(1850)
+    expect(e.resteCentiemes).toBe(150)
+    expect(e.depassementCentiemes).toBe(0)
+  })
+
+  it('rend un dépassement plutôt qu un reste négatif', () => {
+    const e = detaillerEngagement({
+      venduCentiemes: 1000,
+      valideCentiemes: 500,
+      enValidationCentiemes: 300,
+      planifieCentiemes: 400,
+    })
+    expect(e.resteCentiemes).toBe(0)
+    expect(e.depassementCentiemes).toBe(200)
+  })
+})
+
+describe('cumulerEngagements', () => {
+  it('somme les valeurs brutes, jamais les restes déjà bornés', () => {
+    // Une ligne à 2,00 j de dépassement, une autre à 6,00 j de reste : la
+    // somme des restes dirait 6,00, la vérité est 4,00.
+    const enDepassement = detaillerEngagement({
+      venduCentiemes: 1000, valideCentiemes: 500,
+      enValidationCentiemes: 300, planifieCentiemes: 400,
+    })
+    const avecMarge = detaillerEngagement({
+      venduCentiemes: 1000, valideCentiemes: 200,
+      enValidationCentiemes: 100, planifieCentiemes: 100,
+    })
+    expect(enDepassement.resteCentiemes + avecMarge.resteCentiemes).toBe(600)
+
+    const cumul = cumulerEngagements([enDepassement, avecMarge])
+    expect(cumul.venduCentiemes).toBe(2000)
+    expect(cumul.consommeCentiemes).toBe(1600)
+    expect(cumul.resteCentiemes).toBe(400)
+    expect(cumul.depassementCentiemes).toBe(0)
+  })
+
+  it('rend un cumul vide sans lever', () => {
+    const cumul = cumulerEngagements([])
+    expect(cumul.venduCentiemes).toBe(0)
+    expect(cumul.resteCentiemes).toBe(0)
   })
 })

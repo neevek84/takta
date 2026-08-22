@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { buildTimeSpentPayloads, compareDayLength, type PushableEntry } from './timespent'
+import {
+  chargePrevueEnSecondes,
+  joursVendusDepuisCharge,
+  buildTimeSpentPayloads,
+  compareDayLength,
+  type PushableEntry,
+} from './timespent'
 
 function saisie(over: Partial<PushableEntry> = {}): PushableEntry {
   return {
@@ -145,5 +151,69 @@ describe('compareDayLength', () => {
     expect(() =>
       compareDayLength({ minutesParJourLocal: 480, heuresParJourDolibarr: 0 }),
     ).toThrow(/inexploitable/)
+  })
+})
+
+describe('chargePrevueEnSecondes', () => {
+  // `planned_workload` est en secondes chez Dolibarr : `projet/tasks/task.php`
+  // le compose en `heures × 3600 + minutes × 60`.
+  it('convertit des jours vendus en secondes, au facteur de la prestation', () => {
+    // 5 jours sur une journée de 7 h : 5 × 420 × 60
+    expect(chargePrevueEnSecondes({ soldCentiemes: 500, minutesParJour: 420 })).toBe(126_000)
+  })
+
+  it("suit le facteur, qui n'est pas toujours sept heures", () => {
+    // La même vente sur une journée de 8 h pèse plus lourd.
+    expect(chargePrevueEnSecondes({ soldCentiemes: 500, minutesParJour: 480 })).toBe(144_000)
+  })
+
+  it('rend un entier sur une demi-journée', () => {
+    expect(chargePrevueEnSecondes({ soldCentiemes: 50, minutesParJour: 420 })).toBe(12_600)
+  })
+
+  // Rien de vendu n'est pas zéro heure de charge : c'est une charge inconnue,
+  // et Dolibarr distingue les deux — `null` laisse la colonne vide.
+  it("rend null quand rien n'est vendu", () => {
+    expect(chargePrevueEnSecondes({ soldCentiemes: 0, minutesParJour: 420 })).toBeNull()
+  })
+
+  it("rend null sur un facteur inexploitable plutôt qu'une charge fausse", () => {
+    expect(chargePrevueEnSecondes({ soldCentiemes: 500, minutesParJour: 0 })).toBeNull()
+  })
+})
+
+describe('joursVendusDepuisCharge', () => {
+  it("rend l'inverse exact de la charge prévue", () => {
+    // 5 jours vendus sur une journée de 7 h : 5 × 7 × 3600 = 126 000 s.
+    const charge = chargePrevueEnSecondes({ soldCentiemes: 500, minutesParJour: 420 })
+    expect(charge).toBe(126_000)
+    expect(joursVendusDepuisCharge({ plannedWorkloadSeconds: charge, minutesParJour: 420 })).toBe(
+      500,
+    )
+  })
+
+  it('suit le facteur, qui ne vaut pas sept heures partout', () => {
+    // 126 000 s valent 5 jours à 7 h, mais 4,375 jours à 8 h.
+    expect(joursVendusDepuisCharge({ plannedWorkloadSeconds: 126_000, minutesParJour: 480 })).toBe(
+      438,
+    )
+  })
+
+  it("rend zéro quand la tâche ne porte aucune charge, sans l'inventer", () => {
+    expect(joursVendusDepuisCharge({ plannedWorkloadSeconds: null, minutesParJour: 420 })).toBe(0)
+    expect(joursVendusDepuisCharge({ plannedWorkloadSeconds: 0, minutesParJour: 420 })).toBe(0)
+  })
+
+  it('rend zéro sur un facteur inexploitable plutôt que de diviser par lui', () => {
+    expect(joursVendusDepuisCharge({ plannedWorkloadSeconds: 126_000, minutesParJour: 0 })).toBe(0)
+  })
+
+  // Dolibarr omet `planned_workload` sur une tâche qui n'en porte pas, et le
+  // `Number()` du transport en fait un `NaN`. Sans garde, il traverserait
+  // jusqu'aux jours vendus de la prestation créée.
+  it("rend zéro sur une charge illisible, jamais un NaN", () => {
+    expect(
+      joursVendusDepuisCharge({ plannedWorkloadSeconds: Number.NaN, minutesParJour: 420 }),
+    ).toBe(0)
   })
 })

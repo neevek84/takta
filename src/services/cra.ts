@@ -1,4 +1,10 @@
 import { prisma } from '@/db/client'
+import {
+  annulerPrevisionnelDuMois,
+  compterPrevisionnelParMission,
+} from './cra-previsionnel'
+import { missionsArmeesPourDolibarr } from './dolibarr/push'
+import { syntheseParMission, SYNTHESE_VIDE, type SyntheseCra } from './cra-synthese'
 import { applyTransition, type CraTransition } from '@/core/cra/state-machine'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import type { SignatureStatus } from '@/core/signature/connector'
@@ -54,6 +60,40 @@ export interface CraView {
   signataireEmail: string
   /** null tant qu'aucune demande de signature n'a été ouverte */
   signature: CraSignatureView | null
+  /**
+   * Les jours **prévisionnels** que ce mois porte encore, et que la validation
+   * annulera.
+   *
+   * Annoncé ici pour être dit **avant** la validation : un jour prévu emporté
+   * sans préavis est une donnée perdue dont personne ne saura qu'elle a
+   * existé. Vaut 0 sur un CRA déjà validé — il n'y a plus rien à annoncer.
+   */
+  previsionnelAAnnuler: number
+  /**
+   * Ce CRA partira-t-il chez Dolibarr à sa validation ?
+   *
+   * `false` n'est pas une anomalie — l'immense majorité des installations n'a
+   * pas de Dolibarr. Mais quand il est connecté et que la mission n'y est pas
+   * rattachée, un CRA validé ne met **rien** en file : rien n'arrive chez le
+   * client, l'écran de synchronisation reste muet, et on ne s'en aperçoit
+   * qu'à la facture manquante. C'est exactement ce qui est arrivé le
+   * 20 août 2026, sur deux missions aux noms presque identiques.
+   */
+  iraDansDolibarr: boolean
+  /**
+   * Ce que ce CRA porte, en un coup d'œil : le réalisé du mois, prestation par
+   * prestation.
+   *
+   * C'est ce que le client signera. Sans lui, la carte ne disait ni combien de
+   * jours, ni sur quoi — il fallait ouvrir le PDF pour savoir ce qu'on
+   * s'apprêtait à envoyer.
+   */
+  synthese: {
+    totalCentiemes: number
+    /** nombre de journées servies, quelle que soit leur quantité */
+    joursServis: number
+    lignes: Array<{ label: string; centiemes: number }>
+  }
 }
 
 const WITH_MISSION = {
@@ -104,7 +144,13 @@ async function craAvecArchive(craIds: string[]): Promise<Set<string>> {
   return new Set(lignes.map((l) => l.craId))
 }
 
-function toView(row: Row, archives: Set<string>): CraView {
+function toView(
+  row: Row,
+  archives: Set<string>,
+  previsionnel = 0,
+  iraDansDolibarr = false,
+  synthese: SyntheseCra = SYNTHESE_VIDE,
+): CraView {
   return {
     id: row.id,
     missionId: row.missionId,
@@ -117,6 +163,9 @@ function toView(row: Row, archives: Set<string>): CraView {
     paidAt: row.paidAt,
     signataireNom: row.mission.signataireNom,
     signataireEmail: row.mission.signataireEmail,
+    previsionnelAAnnuler: previsionnel,
+    iraDansDolibarr,
+    synthese,
     signature:
       row.signatureRequest === null
         ? null
@@ -212,6 +261,7 @@ export async function transitionCra(
   // qui ait à tenir le verrou d'écriture.
   const arme = next === 'VALIDE' && (await isDolibarrPushArmed(current.missionId))
 
+  let previsionnelAnnule = 0
   const row = await prisma.$transaction(async (tx) => {
     const updated = await tx.cra.update({
       where: { id: craId },
@@ -239,6 +289,19 @@ export async function transitionCra(
       })
     }
 
+    // Un mois validé est un mois clos : un jour qui y était **prévu** et qui
+    // n'a pas eu lieu n'aura plus lieu. Le laisser vivre le figerait pour
+    // toujours — ni réalisable, ni annulable — tout en le comptant comme
+    // consommé sur l'engagement de la mission. L'annulation tombe donc dans la
+    // même transaction que la validation.
+    if (next === 'VALIDE') {
+      previsionnelAnnule = await annulerPrevisionnelDuMois(tx, {
+        userId,
+        missionId: updated.missionId,
+        month: updated.month.toISOString().slice(0, 7),
+      })
+    }
+
     return updated
   })
 
@@ -256,6 +319,9 @@ export async function transitionCra(
       month: row.month.toISOString().slice(0, 7),
       statutAvant: current.status,
       statutApres: next,
+      // Ce qui a été emporté par la validation. Zéro est une information : il
+      // dit que le mois n'avait rien de prévu, pas qu'on n'a pas regardé.
+      ...(next === 'VALIDE' ? { previsionnelAnnule } : {}),
     },
   })
 
@@ -314,7 +380,33 @@ export async function listCras(userId: string, month: string): Promise<CraView[]
     orderBy: { mission: { label: 'asc' } },
   })
   const archives = await craAvecArchive(rows.map((r) => r.id))
-  return rows.map((row) => toView(row, archives))
+  // Une seule requête pour toute la liste : une par CRA ferait payer l'écran
+  // au nombre de missions.
+  const previsionnel = await compterPrevisionnelParMission({
+    userId,
+    missionIds: rows.map((r) => r.missionId),
+    month,
+  })
+  // Une seule lecture des correspondances pour toute la liste : `isDolibarrPushArmed`
+  // en ferait une par CRA, et l'écran en affiche autant que de missions.
+  const armees = await missionsArmeesPourDolibarr(rows.map((r) => r.missionId))
+  const syntheses = await syntheseParMission({
+    userId,
+    missionIds: rows.map((r) => r.missionId),
+    month,
+  })
+
+  return rows.map((row) =>
+    // Un CRA déjà validé n'a plus rien à annoncer : son prévisionnel a été
+    // emporté au moment où il l'a été.
+    toView(
+      row,
+      archives,
+      row.status === 'VALIDE' ? 0 : (previsionnel.get(row.missionId) ?? 0),
+      armees.has(row.missionId),
+      syntheses.get(row.missionId) ?? SYNTHESE_VIDE,
+    ),
+  )
 }
 
 export interface CraNonCloture {

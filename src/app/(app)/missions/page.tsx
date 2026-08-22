@@ -2,129 +2,73 @@ import { requireUser } from '@/auth'
 import { listClients } from '@/services/clients'
 import { listMissionsForUser } from '@/services/missions'
 import { getSettings } from '@/services/settings'
-import { addClient, addMission, addLine } from './actions'
-import { LigneForm } from './LigneForm'
-import { SignataireForm } from './SignataireForm'
+import { getDolibarrApi } from '@/services/dolibarr/resolve'
+import {
+  listerCommandesRattachables,
+  listerProjetsCandidats,
+  tiersParClient,
+  type ProjetCandidat,
+} from '@/services/dolibarr/commande'
+import { Banner } from '@/components/ui/Banner'
 import { PageShell } from '@/components/ui/PageShell'
-import { Card } from '@/components/ui/Card'
-import { Field } from '@/components/ui/Field'
-import { Select } from '@/components/ui/Select'
-import { Button } from '@/components/ui/Button'
+import { MissionsExplorer, type CommandeOuverte } from './MissionsExplorer'
 
-export default async function MissionsPage() {
+export default async function MissionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ message?: string; tone?: string }>
+}) {
   const user = await requireUser()
-  const clients = await listClients(user.id)
-  const missions = await listMissionsForUser(user.id)
-  const settings = await getSettings()
+  const { message, tone } = await searchParams
+  // Une tonalité forgée ou absente retombe sur « success », comme sur l'écran
+  // d'administration : ce canal ne porte pas toujours de tonalité explicite.
+  const toneMessage = tone === 'danger' ? 'danger' : 'success'
+  const [clients, missions, settings, api] = await Promise.all([
+    listClients(user.id),
+    listMissionsForUser(user.id),
+    getSettings(),
+    getDolibarrApi(),
+  ])
+
+  // Dolibarr est facultatif, et une instance en panne ne doit pas emporter la
+  // page : la création manuelle des missions n'en dépend pas.
+  let commandes: CommandeOuverte[] = []
+  let projets: ProjetCandidat[] = []
+  let tiers: Array<{ clientId: string; socid: number }> = []
+  let panneDolibarr: string | null = null
+  if (api !== null) {
+    try {
+      commandes = await listerCommandesRattachables({ userId: user.id, api })
+      projets = await listerProjetsCandidats(api)
+      // Lu pour lui-même : déduire le tiers d'un client de ses commandes
+      // rendait invisibles les projets des clients qui n'en ont aucune.
+      tiers = [...(await tiersParClient()).entries()].map(([clientId, socid]) => ({
+        clientId,
+        socid,
+      }))
+    } catch (err) {
+      panneDolibarr = err instanceof Error ? err.message : String(err)
+    }
+  }
 
   return (
     <PageShell title="Missions">
-      <section className="mb-8 flex flex-wrap gap-8">
-        <Card>
-          <form action={addClient} className="flex flex-wrap items-end gap-2">
-            <Field label="Nouveau client" name="name" required />
-            <Field
-              label="Durée d’une journée (h)"
-              name="heuresParJour"
-              type="number"
-              step="0.25"
-              min="0.25"
-              max="24"
-              placeholder={String(settings.minutesParJour / 60)}
-              hint={`Vide = hérité (${settings.minutesParJour / 60} h)`}
-            />
-            <Button type="submit" variant="primary">
-              Créer
-            </Button>
-          </form>
-        </Card>
+      {message !== undefined && (
+        <div className="mb-6">
+          <Banner tone={toneMessage}>{message}</Banner>
+        </div>
+      )}
 
-        <Card>
-          <form action={addMission} className="flex flex-wrap items-end gap-2">
-            <Field label="Nouvelle mission" name="label" required />
-            <Select label="Client" name="clientId" required>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-            <Field
-              label="Durée d’une journée (h)"
-              name="heuresParJour"
-              type="number"
-              step="0.25"
-              min="0.25"
-              max="24"
-              placeholder={String(settings.minutesParJour / 60)}
-              hint={`Vide = hérité (${settings.minutesParJour / 60} h)`}
-            />
-            <Field label="Signataire du CRA" name="signataireNom" placeholder="Nom du contact" />
-            <Field
-              label="Adresse électronique du signataire"
-              name="signataireEmail"
-              type="email"
-              hint="Facultatif, et modifiable ensuite."
-            />
-            <Button type="submit" variant="primary">
-              Créer
-            </Button>
-          </form>
-        </Card>
-      </section>
-
-      {missions.map((m) => (
-        <Card key={m.id} className="mb-8">
-          <h2 className="mb-3 font-medium">
-            {m.clientName} · {m.label}{' '}
-            <span className="text-xs font-normal text-muted">
-              {m.minutesParJourEffectif / 60} h{m.minutesParJourSurcharge === null ? ' (hérité)' : ''}
-            </span>
-          </h2>
-
-          <ul className="mb-4 text-sm">
-            {m.lines.map((l) => (
-              <li key={l.id} className="border-b border-rule py-2 last:border-0">
-                <div className="flex gap-4">
-                  <span className="flex-1">{l.label}</span>
-                  <span>{l.soldCentiemes / 100} j</span>
-                  <span>{l.tjmCents / 100} €</span>
-                  <span className="text-muted">{l.displayUnit}</span>
-                  {/* La source est écrite, jamais seulement teintée. */}
-                  <span className="text-muted">
-                    {l.engagementSource === 'DOLIBARR_PROPALE'
-                      ? 'Engagement : propale Dolibarr'
-                      : 'Engagement : saisi ici'}
-                  </span>
-                </div>
-                <LigneForm line={l} />
-              </li>
-            ))}
-            {m.lines.length === 0 && <li className="text-muted">Aucune ligne</li>}
-          </ul>
-
-          <form action={addLine} className="flex flex-wrap items-end gap-2">
-            <input type="hidden" name="missionId" value={m.id} />
-            <Field label="Ligne" name="label" required />
-            <Field label="Jours vendus" name="joursVendus" type="number" step="0.5" required className="w-28" />
-            <Field label="TJM (€)" name="tjm" type="number" step="1" defaultValue={0} className="w-28" />
-            <Select label="Unité d’affichage" name="displayUnit">
-              <option value="JOUR">Jour</option>
-              <option value="DEMI_JOUR">Demi-journée</option>
-              <option value="HEURE">Heure</option>
-            </Select>
-            <Button type="submit" variant="primary">
-              Ajouter
-            </Button>
-          </form>
-
-          <SignataireForm
-            missionId={m.id}
-            signataireNom={m.signataireNom}
-            signataireEmail={m.signataireEmail}
-          />
-        </Card>
-      ))}
+      <MissionsExplorer
+        missions={missions}
+        clients={clients}
+        heuresParJourDefaut={settings.minutesParJour / 60}
+        commandes={commandes}
+        projets={projets}
+        tiersParClient={tiers}
+        dolibarrActif={api !== null}
+        panneDolibarr={panneDolibarr}
+      />
     </PageShell>
   )
 }

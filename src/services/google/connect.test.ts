@@ -71,6 +71,20 @@ describe('URL de consentement', () => {
     expect(url.searchParams.get('prompt')).toBe('consent')
   })
 
+  // Avec `include_granted_scopes`, le jeton rendu couvre **tout ce que
+  // l'utilisateur a déjà accordé à l'application** — et l'application, pour
+  // Google, c'est le projet entier, pas ce client. Mesuré le 22 août 2026 sur
+  // l'instance du porteur : le jeton portait `gmail.send`, `gmail.readonly`,
+  // `gmail.compose` et `tasks`, hérités d'un autre usage du même projet. Une
+  // application de CRA n'a aucune raison de détenir de quoi lire ni envoyer du
+  // courrier.
+  it("ne demande que le calendrier, et n hérite d aucun autre droit", () => {
+    const url = new URL(buildConsentUrl({ client: CLIENT_OAUTH, state: 'etat-aleatoire' }))
+
+    expect(url.searchParams.get('include_granted_scopes')).toBeNull()
+    expect(url.searchParams.get('scope')).toBe('https://www.googleapis.com/auth/calendar')
+  })
+
   it('porte l état anti-rejeu et l URI de retour', () => {
     const url = new URL(buildConsentUrl({ client: CLIENT_OAUTH, state: 'etat-aleatoire' }))
     expect(url.searchParams.get('state')).toBe('etat-aleatoire')

@@ -30,6 +30,13 @@ export interface DolibarrTask {
   ref: string
   label: string
   projectId: number
+  /**
+   * `planned_workload` de la tâche, **en secondes**, ou `null` quand elle n'en
+   * porte pas. C'est la seule chose que Dolibarr sache dire de ce qui a été
+   * vendu sur une tâche, et la reprise en tire les jours vendus de la
+   * prestation qu'elle crée.
+   */
+  plannedWorkloadSeconds: number | null
 }
 
 export interface DolibarrPropalLine {
@@ -39,6 +46,19 @@ export interface DolibarrPropalLine {
   qty: number
   /** prix unitaire, en centimes */
   subpriceCents: number
+  /**
+   * `product_type = 1` chez Dolibarr : la ligne vend du **service**, donc du
+   * temps. Une ligne de produit vend des objets — la reprendre en prestation
+   * ferait « 5 jours vendus » d'une commande de cinq t-shirts.
+   */
+  service: boolean
+  /**
+   * Début de la période vendue (`date_start` de la ligne), `'YYYY-MM-DD'`, ou
+   * `null` — le cas le plus courant : sur l'instance du porteur, 9 lignes de
+   * commande sur 75 en portent une. C'est d'elle que le projet tire sa date de
+   * démarrage quand elle existe.
+   */
+  dateStart: string | null
 }
 
 export interface DolibarrProposal {
@@ -46,6 +66,82 @@ export interface DolibarrProposal {
   ref: string
   socid: number
   lines: DolibarrPropalLine[]
+}
+
+/** Une ligne de commande client. Même forme qu'une ligne de propale, à dessein. */
+export type DolibarrOrderLine = DolibarrPropalLine
+
+/**
+ * Une commande client — le document ferme du flux du porteur, et le seul qui
+ * porte la référence du bon de commande du client (`ref_client`).
+ */
+export interface DolibarrOrder {
+  id: number
+  /** référence Dolibarr, du genre `CO2608-0042` */
+  ref: string
+  /** `ref_client` : la référence du BDC du client, `''` quand elle manque */
+  refClient: string
+  socid: number
+  /** libellé ou objet de la commande, `''` quand il manque */
+  label: string
+  /** projet déjà rattaché à la commande, `null` sinon */
+  projectId: number | null
+  lines: DolibarrOrderLine[]
+}
+
+/** Un utilisateur Dolibarr, tel que la reprise a besoin de le connaître. */
+export interface DolibarrUser {
+  id: number
+  login: string
+  /** `''` quand Dolibarr ne le porte pas */
+  nom: string
+  email: string
+}
+
+/**
+ * Un temps déjà consommé chez Dolibarr, lu pour être repris.
+ *
+ * Forme mesurée sur l'instance 23.0.4 du porteur le 21 août 2026 :
+ * `timespent_line_date` est un horodatage Unix à minuit GMT,
+ * `timespent_line_datehour` porte l'instant réel, et
+ * `timespent_line_withhour` dit si cette heure a un sens.
+ */
+export interface DolibarrTimeSpent {
+  id: number
+  taskId: number
+  dolibarrUserId: number
+  /** jour du temps, `'YYYY-MM-DD'` */
+  date: string
+  durationSeconds: number
+  note: string
+  /**
+   * Instant de début, en secondes depuis l'époque, **ou `null` quand Dolibarr
+   * n'a pas d'heure** (`withhour = 0`). La distinction est celle que le porteur
+   * a arbitrée : l'heure d'un autre fait foi, l'absence vaut 9 h.
+   */
+  debutUnix: number | null
+}
+
+/** Ce qu'il faut à Dolibarr pour créer un projet facturable au temps. */
+export interface DolibarrProjectCreation {
+  socid: number
+  /**
+   * `ref` du projet. **Obligatoire** : l'interface de Dolibarr la fabrique par
+   * son module de numérotation, son API non — elle refuse la création par
+   * « Bad Request: ref field missing ». Mesuré sur l'instance 23.0.1 du
+   * porteur le 19 août 2026.
+   */
+  ref: string
+  title: string
+  /** `ref_ext` : la référence client reportée, `''` quand la commande n'en porte pas */
+  refExt: string
+  description: string
+  /**
+   * Date de démarrage du projet, `'YYYY-MM-DD'`, ou `null` quand elle est
+   * inconnue. Reprise des lignes de service de la commande quand elles en
+   * portent une, saisie à la création de la mission sinon.
+   */
+  dateStart: string | null
 }
 
 /**
@@ -66,7 +162,55 @@ export interface DolibarrApi {
   /** déjà filtrés sur `usage_bill_time = 1` */
   listProjects(): Promise<DolibarrProject[]>
   listTasks(projectId: number): Promise<DolibarrTask[]>
-  createTask(args: { projectId: number; label: string }): Promise<DolibarrTask>
+  /**
+   * Relit une tâche par son identifiant, ou rend `null` si elle n'existe plus.
+   *
+   * **Pourquoi une lecture directe en plus de la liste.** `GET /projects/{id}/tasks`
+   * ne rend que les tâches **auxquelles l'utilisateur de la clé est affecté** :
+   * mesuré sur l'instance 23.0.1 du porteur, où la liste du projet 178 rendait
+   * `[]` — même pour un administrateur — tant que personne n'était affecté à la
+   * tâche 34, puis les deux tâches dès l'affectation posée. Une correspondance
+   * mémorisée ne doit donc pas être jetée sur la foi d'une liste : on interroge
+   * la tâche elle-même.
+   */
+  getTask(taskId: number): Promise<DolibarrTask | null>
+  createTask(args: {
+    projectId: number
+    label: string
+    /**
+     * Charge de travail prévue, **en secondes** — c'est l'unité de
+     * `llx_projet_task.planned_workload`, vérifiée dans `projet/tasks/task.php`
+     * qui compose `heures × 3600 + minutes × 60`. `null` quand la prestation
+     * ne vend rien de chiffré.
+     */
+    plannedWorkloadSeconds: number | null
+  }): Promise<DolibarrTask>
+  /**
+   * Crée un projet **facturable au temps**, et rien d'autre.
+   *
+   * `usage_task` et `usage_bill_time` ne sont pas des paramètres : un projet
+   * créé sans eux n'a aucune tâche où pousser un temps, et l'application
+   * viendrait de fabriquer elle-même le cas qu'elle refuse de rattacher.
+   */
+  createProject(args: DolibarrProjectCreation): Promise<DolibarrProject>
+  /**
+   * Affecte l'utilisateur de la clé au projet, comme chef de projet.
+   *
+   * Sur un projet **privé**, Dolibarr ne rend ses tâches qu'aux utilisateurs
+   * qui y ont un rôle : sans affectation, `listTasks` revient vide même sur un
+   * projet qui en porte. Sans identifiant d'utilisateur configuré, l'appel ne
+   * fait rien — il n'y a personne à affecter.
+   */
+  assignerAuProjet(projectId: number): Promise<void>
+  /** déjà filtrées : ni brouillon, ni annulée */
+  listOrders(): Promise<DolibarrOrder[]>
+  getOrder(id: number): Promise<DolibarrOrder>
+  /**
+   * Pose `fk_project` sur la commande. C'est ce rattachement, et lui seul, qui
+   * fait apparaître la commande sous le projet dans Dolibarr et permet à la
+   * facturation des temps consommés de retrouver le bon de commande.
+   */
+  linkOrderToProject(args: { orderId: number; projectId: number }): Promise<void>
   getProposal(id: number): Promise<DolibarrProposal>
   addTimeSpent(args: {
     taskId: number
@@ -84,6 +228,16 @@ export interface DolibarrApi {
     note: string
   }): Promise<void>
   deleteTimeSpent(args: { taskId: number; timespentId: number }): Promise<void>
+  /**
+   * Les temps déjà consommés sur une tâche. Liste vide quand il n'y en a
+   * aucun — Dolibarr répond alors 404, qui n'est pas une panne.
+   */
+  listTimeSpent(taskId: number): Promise<DolibarrTimeSpent[]>
+  /**
+   * Un utilisateur Dolibarr, `null` s'il n'existe plus. La reprise s'en sert
+   * pour créer l'utilisateur local auquel elle attribuera ses temps.
+   */
+  getUser(id: number): Promise<DolibarrUser | null>
   getSetupValue(constant: string): Promise<string | null>
 }
 

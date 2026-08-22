@@ -550,7 +550,7 @@ describe('rupture des correspondances', () => {
   // Les trois natures que la rupture ne savait pas nommer. Sans elles, la
   // promesse « toute référence externe est nullable à tout moment » était
   // fausse pour la majorité des correspondances posées.
-  it('sait rompre les cinq natures, une par une', async () => {
+  it('sait rompre chaque nature, une par une', async () => {
     for (const nature of LIENS_DOLIBARR) {
       const d = await decor()
       const entityId =
@@ -560,7 +560,9 @@ describe('rupture des correspondances', () => {
             ? d.mission.id
             : nature === 'CraTimeSpent'
               ? `${d.cra.id}|${d.ligne.id}|2026-05-04|`
-              : d.ligne.id
+              : nature === 'User'
+                ? userId
+                : d.ligne.id
 
       await detachEntity({ userId, entityType: nature, entityId })
 

@@ -1,5 +1,11 @@
 import type { TimeEntryKind } from '../types'
 import { centiemesParFacteur, type MinutesAuFacteur } from '../time/units'
+import { frenchHolidays } from '../calendar/holidays-fr'
+import {
+  cumulerEngagements,
+  detaillerEngagement,
+  type EngagementDetaille,
+} from '../engagement/compute'
 
 export interface CraEmetteur {
   nom: string
@@ -20,6 +26,12 @@ export interface CraLigne {
   jours: CraJour[]
   /** somme exacte des cellules ci-dessus */
   totalCentiemes: number
+  /**
+   * Où en est la prestation de son enveloppe vendue, **toutes périodes
+   * confondues** — pas seulement le mois de ce document. C'est ce qui donne au
+   * client la visibilité qu'un relevé mensuel ne peut pas donner.
+   */
+  engagement: EngagementDetaille
 }
 
 /**
@@ -45,6 +57,15 @@ export interface CraDocument {
   totalCentiemes: number
   /** toutes les dates du mois, servies ou non — c'est l'axe du tableau */
   joursDuMois: string[]
+  /** les fériés français tombant dans le mois, en 'YYYY-MM-DD' */
+  feries: string[]
+  /**
+   * L'engagement cumulé de la mission, sur **toutes** ses prestations — y
+   * compris celles qui n'ont rien servi ce mois-ci et qui n'apparaissent donc
+   * pas dans `lignes`. C'est bien l'état de la mission, pas celui de ce seul
+   * document, et son titre doit le dire.
+   */
+  engagementMission: EngagementDetaille
 }
 
 export interface CraDocumentInput {
@@ -56,7 +77,14 @@ export interface CraDocumentInput {
   signataireNom: string
   signataireEmail: string
   /** les prestations de la mission, dans l'ordre d'affichage voulu */
-  lignes: ReadonlyArray<{ id: string; label: string }>
+  lignes: ReadonlyArray<{ id: string; label: string; soldCentiemes: number }>
+  /**
+   * Les mois dont le CRA est **validé** par le client, en 'YYYY-MM'. Tout le
+   * réalisé qui n'y tombe pas est « en validation » — le mois du présent
+   * document compris, puisque son CRA n'est pas encore validé quand on le
+   * compose.
+   */
+  moisValides: ReadonlyArray<string>
   /**
    * Les saisies, chacune portant **son** facteur de conversion. Il n'y a
    * volontairement pas de facteur global dans cette entrée : le gel du facteur
@@ -73,6 +101,17 @@ export interface CraDocumentInput {
     minutesParJour: number
     kind: TimeEntryKind
   }>
+}
+
+/**
+ * Les fériés d'un mois. Deux millésimes ne sont jamais interrogés : un mois
+ * appartient à une seule année.
+ */
+export function feriesDuMois(mois: string): string[] {
+  const annee = Number(mois.slice(0, 4))
+  return frenchHolidays(annee)
+    .filter((f) => f.date.slice(0, 7) === mois)
+    .map((f) => f.date)
 }
 
 const MOIS = [
@@ -116,22 +155,61 @@ export function formatJours(centiemes: number): string {
   return (centiemes / 100).toFixed(2).replace('.', ',')
 }
 
+/** Les trois seaux d'engagement d'une prestation, avant conversion. */
+interface SeauxDEngagement {
+  valide: MinutesAuFacteur[]
+  enValidation: MinutesAuFacteur[]
+  planifie: MinutesAuFacteur[]
+}
+
 export function buildCraDocument(input: CraDocumentInput): CraDocument {
   const idsConnus = new Set(input.lignes.map((l) => l.id))
+  const moisValides = new Set(input.moisValides)
 
   // (ligne, jour) -> les saisies de la cellule, chacune avec son facteur
   const cellules = new Map<string, MinutesAuFacteur[]>()
+  // ligne -> ses saisies de toutes les périodes, rangées par état
+  const seaux = new Map<string, SeauxDEngagement>()
+  for (const ligne of input.lignes) {
+    seaux.set(ligne.id, { valide: [], enValidation: [], planifie: [] })
+  }
 
   for (const saisie of input.entries) {
-    if (saisie.kind !== 'REALISE') continue
     if (!idsConnus.has(saisie.lineId)) continue
+    const quantite = { minutes: saisie.minutes, minutesParJour: saisie.minutesParJour }
+    const seau = seaux.get(saisie.lineId) as SeauxDEngagement
+
+    // L'engagement porte sur **toute** la durée de la prestation : le borner
+    // au mois affiché donnerait un reste à consommer faux dès le deuxième
+    // mois de la mission.
+    if (saisie.kind === 'PREVISIONNEL') seau.planifie.push(quantite)
+    else if (moisValides.has(saisie.date.slice(0, 7))) seau.valide.push(quantite)
+    else seau.enValidation.push(quantite)
+
+    // Le tableau du mois, lui, n'imprime que le réalisé de ce mois-ci.
+    if (saisie.kind !== 'REALISE') continue
     if (saisie.date.slice(0, 7) !== input.mois) continue
 
     const cle = `${saisie.lineId}|${saisie.date}`
     const deLaCellule = cellules.get(cle) ?? []
-    deLaCellule.push({ minutes: saisie.minutes, minutesParJour: saisie.minutesParJour })
+    deLaCellule.push(quantite)
     cellules.set(cle, deLaCellule)
   }
+
+  const engagements = new Map<string, EngagementDetaille>(
+    input.lignes.map((ligne) => {
+      const seau = seaux.get(ligne.id) as SeauxDEngagement
+      return [
+        ligne.id,
+        detaillerEngagement({
+          venduCentiemes: ligne.soldCentiemes,
+          valideCentiemes: centiemesParFacteur(seau.valide),
+          enValidationCentiemes: centiemesParFacteur(seau.enValidation),
+          planifieCentiemes: centiemesParFacteur(seau.planifie),
+        }),
+      ]
+    }),
+  )
 
   const dates = joursDuMois(input.mois)
   const lignes: CraLigne[] = []
@@ -157,7 +235,12 @@ export function buildCraDocument(input: CraDocumentInput): CraDocument {
     }
 
     if (jours.length === 0) continue
-    lignes.push({ label: ligne.label, jours, totalCentiemes: total })
+    lignes.push({
+      label: ligne.label,
+      jours,
+      totalCentiemes: total,
+      engagement: engagements.get(ligne.id) as EngagementDetaille,
+    })
   }
 
   return {
@@ -171,5 +254,9 @@ export function buildCraDocument(input: CraDocumentInput): CraDocument {
     lignes,
     totalCentiemes: lignes.reduce((somme, l) => somme + l.totalCentiemes, 0),
     joursDuMois: dates,
+    feries: feriesDuMois(input.mois),
+    // Sur **toutes** les prestations, servies ce mois-ci ou non : une mission
+    // dont une ligne a dormi ce mois-ci n'en a pas moins vendu ses jours.
+    engagementMission: cumulerEngagements([...engagements.values()]),
   }
 }

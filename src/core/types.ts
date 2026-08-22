@@ -2,7 +2,11 @@ export type TimeEntryKind = 'REALISE' | 'PREVISIONNEL'
 export type CraStatus = 'BROUILLON' | 'ENVOYE' | 'VALIDE' | 'REFUSE'
 export type DisplayUnit = 'JOUR' | 'DEMI_JOUR' | 'HEURE'
 export type Role = 'ADMIN' | 'MANAGER' | 'CONSULTANT'
-export type EngagementSource = 'MANUEL' | 'DOLIBARR_PROPALE' | 'DOLIBARR_PROJET'
+export type EngagementSource =
+  | 'MANUEL'
+  | 'DOLIBARR_PROPALE'
+  | 'DOLIBARR_COMMANDE'
+  | 'DOLIBARR_PROJET'
 export type CapacityMode = 'DESACTIVE' | 'AVERTISSEMENT' | 'BLOCAGE'
 
 export const TIME_ENTRY_KINDS: readonly TimeEntryKind[] = ['REALISE', 'PREVISIONNEL']
@@ -16,5 +20,6 @@ export const CAPACITY_MODES: readonly CapacityMode[] = ['DESACTIVE', 'AVERTISSEM
 export const ENGAGEMENT_SOURCES: readonly EngagementSource[] = [
   'MANUEL',
   'DOLIBARR_PROPALE',
+  'DOLIBARR_COMMANDE',
   'DOLIBARR_PROJET',
 ]

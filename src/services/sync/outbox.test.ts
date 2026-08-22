@@ -5,7 +5,7 @@ import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
 import { saveEntry, convertPastForecast } from '@/services/time-entries'
 import { enqueueSync, enqueueTimeEntry, flushOutbox, RETENTION_JOURS } from './outbox'
-import { listFailedSyncRows, retrySyncRow } from './queue'
+import { listFailedSyncRows, listPendingSyncRows, retrySyncRow } from './queue'
 import type { SyncHandler, SyncJob, SyncOutcome } from './types'
 
 // Un interrupteur pour faire échouer la mise en file à la demande. C'est le
@@ -459,7 +459,7 @@ describe('les échecs remontent au lieu de disparaître', () => {
   it('rejoue une ligne en la remettant immédiatement en attente', async () => {
     const id = await echouer()
 
-    expect(await retrySyncRow(userId, id)).toBe(true)
+    expect(await retrySyncRow(id)).toBe(true)
 
     const ligne = await prisma.syncOutbox.findUniqueOrThrow({ where: { id } })
     expect({ state: ligne.state, attempts: ligne.attempts, lastError: ligne.lastError }).toEqual({
@@ -470,10 +470,16 @@ describe('les échecs remontent au lieu de disparaître', () => {
     expect(ligne.nextAttemptAt.getTime()).toBeLessThanOrEqual(Date.now())
   })
 
-  it('refuse de rejouer la ligne d un autre utilisateur', async () => {
+  it('rejoue la ligne de n importe quel compte : la file est d instance', async () => {
+    // Arbitrage du porteur, 20 août 2026. La restriction viendra des rôles ;
+    // d'ici là une session authentifiée suffit, et c'est assumé.
     const id = await echouer()
-    expect(await retrySyncRow(autreId, id)).toBe(false)
-    expect((await prisma.syncOutbox.findUniqueOrThrow({ where: { id } })).state).toBe('FAILED')
+    expect(await retrySyncRow(id)).toBe(true)
+    expect((await prisma.syncOutbox.findUniqueOrThrow({ where: { id } })).state).toBe('PENDING')
+  })
+
+  it('rend false sur une ligne qui n existe pas', async () => {
+    expect(await retrySyncRow('ligne-inexistante')).toBe(false)
   })
 })
 
@@ -907,5 +913,77 @@ describe('journal de preuve — ce que le drainage générique consigne', () => 
     expect(entrees, 'aucune entrée `synchro.echec`').toHaveLength(1)
     expect(entrees[0]!.entityId).toBe('cra-recul')
     expect(JSON.parse(entrees[0]!.payloadJson)).toMatchObject({ erreur: 'projet inconnu' })
+  })
+})
+
+describe('la file en attente, telle que la supervision la montre', () => {
+  it('montre la file de toute l instance, et dit à qui chaque ligne est', async () => {
+    // Arbitrage du porteur, 20 août 2026 : un CRA appartient à une mission, et
+    // le pousser est un acte d'instance — la clé d'API l'est, la
+    // correspondance mission → projet l'est. Filtrer sur « qui a créé la
+    // ligne » était le mauvais axe. La restriction viendra des rôles.
+    await prisma.syncOutbox.deleteMany({ where: { userId: { in: [userId, autreId] } } })
+    await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'Cra',
+        entityId: 'cra-a-moi',
+        provider: 'DOLIBARR',
+        operation: 'UPSERT',
+        state: 'PENDING',
+      },
+    })
+    await prisma.syncOutbox.create({
+      data: {
+        userId: autreId,
+        entityType: 'Cra',
+        entityId: 'cra-de-l-autre',
+        provider: 'DOLIBARR',
+        operation: 'UPSERT',
+        state: 'PENDING',
+      },
+    })
+
+    const toutes = await listPendingSyncRows()
+    expect(toutes.map((r) => r.entityId).sort()).toEqual(['cra-a-moi', 'cra-de-l-autre'])
+    // Le propriétaire est nommé : c'est ce que les rôles exploiteront demain,
+    // et ce qui rend la liste lisible dès qu'il y a deux comptes.
+    expect(new Set(toutes.map((r) => r.proprietaire)).size).toBe(2)
+  })
+
+  it('écarte ce qui a échoué : les échecs ont leur propre écran', async () => {
+    await prisma.syncOutbox.deleteMany({ where: { userId } })
+    await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'Cra',
+        entityId: 'cra-echoue',
+        provider: 'DOLIBARR',
+        operation: 'UPSERT',
+        state: 'FAILED',
+        lastError: 'refus',
+      },
+    })
+
+    expect(await listPendingSyncRows()).toEqual([])
+  })
+
+  it('dit depuis combien de temps la plus ancienne attend', async () => {
+    // C'est ce chiffre, et lui seul, qui revele qu'aucun drainage ne tourne.
+    await prisma.syncOutbox.deleteMany({ where: { userId } })
+    await prisma.syncOutbox.create({
+      data: {
+        userId,
+        entityType: 'Cra',
+        entityId: 'cra-vieux',
+        provider: 'DOLIBARR',
+        operation: 'UPSERT',
+        state: 'PENDING',
+        updatedAt: new Date(Date.now() - 30 * 3_600_000),
+      },
+    })
+
+    const [ligne] = await listPendingSyncRows()
+    expect(ligne?.attenteHeures).toBe(30)
   })
 })

@@ -26,8 +26,8 @@ import { CATALOGUE_DOLIBARR } from './catalogue'
 /** Base du double : `.test` est réservé par l'IANA et ne se résout nulle part. */
 export const BASE_FACTICE = 'https://erp.invalide.test/api/index.php'
 
-/** Le format de date de l'API Dolibarr, et le seul qu'elle interprète. */
-const DATE_ISO = /^\d{4}-\d{2}-\d{2}$/
+/** Le format de date des temps passés, tel que l'API le documente : GMT, avec heure. */
+const DATE_HORODATEE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
 
 export interface FakeDolibarrHttp {
   fetchImpl: typeof fetch
@@ -35,7 +35,8 @@ export interface FakeDolibarrHttp {
   appels: Array<{ methode: string; url: string; entetes: Headers; corps: unknown }>
   /** gabarits du catalogue réellement frappés, dans l'ordre */
   gabaritsObserves: string[]
-  seedThirdparty(name: string): { id: number; name: string }
+  /** `client` : 1 client, 2 prospect, 3 les deux, 0 ni l'un ni l'autre. */
+  seedThirdparty(name: string, client?: number): { id: number; name: string }
   seedProject(a: {
     ref: string
     title: string
@@ -48,7 +49,22 @@ export interface FakeDolibarrHttp {
     socid: number
     lines: Array<{ label: string; qty: number; subpriceEuros: number }>
   }): { id: number }
+  seedOrder(a: {
+    ref: string
+    socid: number
+    refClient?: string
+    label?: string
+    statut?: number
+    facturee?: boolean
+    projectId?: number | null
+    lines?: Array<{ label: string; qty: number; subpriceEuros: number; service?: boolean }>
+  }): { id: number }
+  /** projets créés par l'API, pour vérifier ce que le client a réellement envoyé */
+  projets: Array<{ id: number; ref: string; title: string; refExt: string; usageBillTime: boolean }>
+  commandes: Array<{ id: number; ref: string; projectId: number | null }>
   seedSetup(constante: string, valeur: string): void
+  /** Un utilisateur Dolibarr, tel que la reprise des temps a besoin de le lire. */
+  seedUser(args: { nom: string; prenom?: string; email: string }): { id: number }
   timespents: Array<{
     id: number
     taskId: number
@@ -56,6 +72,8 @@ export interface FakeDolibarrHttp {
     duration: number
     userId: number
     note: string
+    /** instant de début, `null` quand le temps n'en porte pas */
+    debutUnix: number | null
   }>
 }
 
@@ -65,6 +83,19 @@ interface FauxProjet {
   title: string
   socid: number | null
   usageBillTime: boolean
+  refExt: string
+}
+
+interface FauxCommande {
+  id: number
+  ref: string
+  refClient: string
+  label: string
+  socid: number
+  statut: number
+  facturee: boolean
+  projectId: number | null
+  lines: Array<{ id: number; label: string; qty: number; subpriceEuros: number; service?: boolean }>
 }
 
 interface FauxTache {
@@ -72,13 +103,15 @@ interface FauxTache {
   ref: string
   label: string
   projectId: number
+  /** `planned_workload`, en secondes, `null` quand la tâche n'en porte pas */
+  plannedWorkload: number | null
 }
 
 interface FauxPropale {
   id: number
   ref: string
   socid: number
-  lines: Array<{ id: number; label: string; qty: number; subpriceEuros: number }>
+  lines: Array<{ id: number; label: string; qty: number; subpriceEuros: number; service?: boolean }>
 }
 
 function estObjet(valeur: unknown): valeur is Record<string, unknown> {
@@ -112,11 +145,13 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
   const appels: FakeDolibarrHttp['appels'] = []
   const gabaritsObserves: string[] = []
 
-  const thirdparties: Array<{ id: number; name: string }> = []
+  const thirdparties: Array<{ id: number; name: string; client: number }> = []
   const projects: FauxProjet[] = []
   const tasks: FauxTache[] = []
   const proposals: FauxPropale[] = []
+  const orders: FauxCommande[] = []
   const timespents: FakeDolibarrHttp['timespents'] = []
+  const users: Array<{ id: number; nom: string; prenom: string; email: string }> = []
   const setup: Record<string, string> = {}
 
   let sequence = 0
@@ -177,14 +212,19 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
     switch (cleAppel(declare)) {
       case 'GET /thirdparties': {
         if (thirdparties.length === 0) return absent('No thirdparty found')
-        return json(thirdparties)
+        // Dolibarr rend **tous** les tiers avec leur drapeau ; le filtre sur
+        // les clients est appliqué par le client HTTP, et c'est ce que ce
+        // double permet d'exercer.
+        return json(
+          thirdparties.map((t) => ({ id: String(t.id), name: t.name, client: String(t.client) })),
+        )
       }
 
       case 'POST /thirdparties': {
         if (!estObjet(corps) || String(corps.name ?? '').trim() === '') {
           return refus('Name is mandatory')
         }
-        const tiers = { id: suivant(), name: String(corps.name) }
+        const tiers = { id: suivant(), name: String(corps.name), client: Number(corps.client ?? 0) }
         thirdparties.push(tiers)
         // Dolibarr rend un entier nu, pas un objet.
         return json(tiers.id)
@@ -224,6 +264,11 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
           ref: String(corps.ref ?? corps.label),
           label: String(corps.label),
           projectId: projet.id,
+          // Relue telle qu'elle a été posée : c'est d'elle que la reprise tire
+          // les jours vendus, et un double qui l'oublierait laisserait passer
+          // un aller-retour qui perd l'engagement.
+          plannedWorkload:
+            corps.planned_workload === undefined ? null : Number(corps.planned_workload),
         })
         return json(id)
       }
@@ -242,6 +287,7 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
             desc: l.label,
             qty: l.qty,
             subprice: l.subpriceEuros,
+            product_type: '1',
           })),
         })
       }
@@ -262,8 +308,89 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
           duration: Number(corps.duration),
           userId: Number(corps.user_id),
           note: String(corps.note ?? ''),
+          // Dolibarr pose `withhour = 1` sur ce qu'il reçoit horodaté, et notre
+          // charge l'est toujours — mais à minuit, ce qui ne situe rien.
+          debutUnix: Math.trunc(Date.parse(String(corps.date).replace(' ', 'T') + 'Z') / 1000),
         })
-        return json(id)
+        // Ce que Dolibarr rend **réellement** : un accusé, sans l'identifiant
+        // de la ligne créée. Rendre `id` ici ferait passer au vert un client
+        // qui, en face d'une vraie instance, n'obtiendrait que `NaN`.
+        return json({ success: { code: 200, message: 'Time spent added' } })
+      }
+
+      case 'GET /projects/{projectId}/contacts': {
+        const projet = projects.find((p) => p.id === Number(params.projectId))
+        if (projet === undefined) return refus('Project not found')
+        return json([])
+      }
+
+      case 'GET /tasks/{taskId}': {
+        const tache = tasks.find((t) => t.id === Number(params.taskId))
+        // 404 et non refus : une tâche supprimée chez Dolibarr n'est pas une
+        // panne, et le client doit pouvoir abandonner la correspondance.
+        if (tache === undefined) return new Response('{}', { status: 404 })
+        return json({
+          id: tache.id,
+          ref: tache.ref,
+          label: tache.label,
+          fk_project: String(tache.projectId),
+          planned_workload: tache.plannedWorkload === null ? null : String(tache.plannedWorkload),
+        })
+      }
+
+      case 'GET /users/{userId}': {
+        const u = users.find((x) => x.id === Number(params.userId))
+        if (u === undefined) return new Response('{}', { status: 404 })
+        return json({
+          id: String(u.id),
+          login: u.email,
+          firstname: u.prenom,
+          lastname: u.nom,
+          email: u.email,
+        })
+      }
+
+      case 'GET /tasks/{taskId}/contacts': {
+        const tache = tasks.find((t) => t.id === Number(params.taskId))
+        if (tache === undefined) return refus('Task not found')
+        return json([])
+      }
+
+      case 'POST /projects/{projectId}/contacts': {
+        const projet = projects.find((p) => p.id === Number(params.projectId))
+        if (projet === undefined) return refus('Project not found')
+        if (!estObjet(corps)) return refus('Body is mandatory')
+        return json({ success: { code: 200, message: 'Contact added' } })
+      }
+
+      case 'POST /tasks/{taskId}/contacts': {
+        const tache = tasks.find((t) => t.id === Number(params.taskId))
+        if (tache === undefined) return refus('Task not found')
+        if (!estObjet(corps)) return refus('Body is mandatory')
+        return json({ success: { code: 200, message: 'Contact added' } })
+      }
+
+      case 'GET /tasks/{taskId}/timespent': {
+        const tache = tasks.find((t) => t.id === Number(params.taskId))
+        if (tache === undefined) return refus('Task not found')
+        return json(
+          timespents
+            .filter((t) => t.taskId === tache.id)
+            .map((t) => ({
+              timespent_line_id: String(t.id),
+              // **Un horodatage Unix, pas une chaîne.** C'est ce que rend
+              // l'instance : `timespent_line_date` vaut minuit GMT du jour.
+              // Rendre ici la chaîne envoyée laisserait passer un client qui,
+              // en face d'une vraie instance, lirait `NaN` puis rien du tout.
+              timespent_line_date: Math.trunc(Date.parse(`${t.date.slice(0, 10)}T00:00:00Z`) / 1000),
+              timespent_line_datehour: t.debutUnix,
+              timespent_line_withhour: t.debutUnix === null ? '0' : '1',
+              timespent_line_duration: String(t.duration),
+              timespent_line_fk_user: String(t.userId),
+              timespent_line_note: t.note,
+              fk_task: String(t.taskId),
+            })),
+        )
       }
 
       case 'PUT /tasks/{taskId}/timespent/{timespentId}': {
@@ -295,6 +422,103 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
         return json({ success: { code: 200 } })
       }
 
+      case 'POST /projects': {
+        if (!estObjet(corps)) return refus('Body is mandatory')
+        if (String(corps.title ?? '').trim() === '') return refus('Title is mandatory')
+        // Le refus exact de l'instance du porteur, mesuré le 20 août 2026.
+        if (String(corps.ref ?? '').trim() === '') return refus('Bad Request: ref field missing')
+        // Un projet cree sans statut naît « brouillon » chez Dolibarr, et un
+        // brouillon n'accepte aucun temps consommé. Le double l'exige donc,
+        // comme l'instance le ferait sentir au premier push.
+        if (Number(corps.status) !== 1) {
+          return refus('A project created for time tracking must be open (status 1)')
+        }
+        if (projects.some((p) => p.ref === String(corps.ref))) {
+          return refus(`Project ${String(corps.ref)} already exists`)
+        }
+        if (thirdparties.find((t) => t.id === Number(corps.socid)) === undefined) {
+          return refus('Thirdparty not found')
+        }
+        const id = suivant()
+        projects.push({
+          id,
+          ref: String(corps.ref),
+          title: String(corps.title),
+          socid: Number(corps.socid),
+          // Le client impose les deux drapeaux ; le double refuse un projet qui
+          // n'en porterait pas, sans quoi il validerait un connecteur créant
+          // des projets où aucun temps ne peut aller.
+          usageBillTime: corps.usage_bill_time === 1 || corps.usage_bill_time === '1',
+          refExt: String(corps.ref_ext ?? ''),
+        })
+        if (corps.usage_task !== 1 && corps.usage_task !== '1') {
+          return refus('A project created for time tracking must set usage_task')
+        }
+        return json(id)
+      }
+
+      case 'GET /projects/{projectId}': {
+        const projet = projects.find((p) => p.id === Number(params.projectId))
+        if (projet === undefined) return absent('Project not found')
+        return json({
+          id: projet.id,
+          ref: projet.ref,
+          title: projet.title,
+          socid: projet.socid,
+          ref_ext: projet.refExt,
+          usage_bill_time: projet.usageBillTime ? '1' : '0',
+        })
+      }
+
+      case 'GET /orders': {
+        if (orders.length === 0) return absent('No order found')
+        return json(
+          orders.map((c) => ({
+            id: c.id,
+            ref: c.ref,
+            ref_client: c.refClient === '' ? null : c.refClient,
+            socid: String(c.socid),
+            label: c.label,
+            statut: String(c.statut),
+            billed: c.facturee ? '1' : '0',
+            fk_project: c.projectId === null ? null : String(c.projectId),
+          })),
+        )
+      }
+
+      case 'GET /orders/{orderId}': {
+        const commande = orders.find((c) => c.id === Number(params.orderId))
+        if (commande === undefined) return absent('Order not found')
+        return json({
+          id: commande.id,
+          ref: commande.ref,
+          ref_client: commande.refClient === '' ? null : commande.refClient,
+          socid: String(commande.socid),
+          label: commande.label,
+          statut: String(commande.statut),
+          fk_project: commande.projectId === null ? null : String(commande.projectId),
+          lines: commande.lines.map((l) => ({
+            id: l.id,
+            desc: l.label,
+            qty: l.qty,
+            subprice: l.subpriceEuros,
+            product_type: l.service === false ? '0' : '1',
+          })),
+        })
+      }
+
+      case 'PUT /orders/{orderId}': {
+        const commande = orders.find((c) => c.id === Number(params.orderId))
+        if (commande === undefined) return absent('Order not found')
+        if (!estObjet(corps)) return refus('Body is mandatory')
+        // Dolibarr refuse une clé étrangère qui ne désigne aucun projet.
+        if (projects.find((p) => p.id === Number(corps.fk_project)) === undefined) {
+          return refus('Project not found')
+        }
+        commande.projectId = Number(corps.fk_project)
+        return json(commande.id)
+      }
+
       case 'GET /setup/conf/{constante}': {
         const valeur = setup[params.constante ?? '']
         if (valeur === undefined) return absent('Constant not found')
@@ -314,8 +538,11 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
     corps: Record<string, unknown>,
     options: { avecUtilisateur: boolean },
   ): string | null {
-    if (typeof corps.date !== 'string' || !DATE_ISO.test(corps.date)) {
-      return "Date must be 'YYYY-MM-DD'"
+    // Le format que l'API documente : « YYYY-MM-DD HH:MI:SS in GMT ». La date
+    // nue était acceptée ici, et c'est pour ça que l'écart n'a été vu que sur
+    // l'instance réelle.
+    if (typeof corps.date !== 'string' || !DATE_HORODATEE.test(corps.date)) {
+      return "Date must be 'YYYY-MM-DD HH:MI:SS'"
     }
     if (!entierPositif(corps.duration)) return 'Duration must be a positive integer of seconds'
     if (options.avecUtilisateur && !entierPositif(corps.user_id)) return 'User id is mandatory'
@@ -327,9 +554,11 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
     appels,
     gabaritsObserves,
     timespents,
+    projets: projects,
+    commandes: orders,
 
-    seedThirdparty(name) {
-      const tiers = { id: suivant(), name }
+    seedThirdparty(name, client = 1) {
+      const tiers = { id: suivant(), name, client }
       thirdparties.push(tiers)
       return tiers
     },
@@ -341,6 +570,7 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
         title: a.title,
         socid: a.socid,
         usageBillTime: a.usageBillTime ?? true,
+        refExt: '',
       }
       projects.push(projet)
       return { id: projet.id }
@@ -348,7 +578,13 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
 
     seedTask(a) {
       const id = suivant()
-      tasks.push({ id, ref: `TK${String(id).padStart(4, '0')}`, label: a.label, projectId: a.projectId })
+      tasks.push({
+        id,
+        ref: `TK${String(id).padStart(4, '0')}`,
+        label: a.label,
+        projectId: a.projectId,
+        plannedWorkload: null,
+      })
       return { id }
     },
 
@@ -363,8 +599,29 @@ export function createFakeDolibarrHttp(): FakeDolibarrHttp {
       return { id: propale.id }
     },
 
+    seedOrder(a) {
+      const commande: FauxCommande = {
+        id: suivant(),
+        ref: a.ref,
+        refClient: a.refClient ?? '',
+        label: a.label ?? '',
+        socid: a.socid,
+        statut: a.statut ?? 1,
+        facturee: a.facturee ?? false,
+        projectId: a.projectId ?? null,
+        lines: (a.lines ?? []).map((l) => ({ id: suivant(), ...l })),
+      }
+      orders.push(commande)
+      return { id: commande.id }
+    },
+
     seedSetup(constante, valeur) {
       setup[constante] = valeur
+    },
+    seedUser(args) {
+      const u = { id: suivant(), nom: args.nom, prenom: args.prenom ?? '', email: args.email }
+      users.push(u)
+      return u
     },
   }
 }

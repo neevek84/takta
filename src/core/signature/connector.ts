@@ -24,11 +24,50 @@ export interface SignatureContact {
   email: string
 }
 
+/**
+ * Un champ à faire remplir par le signataire, situé dans le document.
+ *
+ * Les coordonnées sont en **points PDF, origine en bas à gauche** — la
+ * convention du format. Un connecteur qui parle en pourcentages de page les
+ * convertit lui-même : c'est sa traduction, pas celle du cœur.
+ *
+ * `ancre` porte la chaîne posée invisible au même endroit dans le document,
+ * pour les prestataires qui placent leurs champs en cherchant du texte plutôt
+ * qu'en recevant des coordonnées.
+ */
+export interface SignatureChamp {
+  nature: 'SIGNATURE' | 'DATE'
+  ancre: string
+  /** numéro de page, à partir de 1 */
+  page: number
+  x: number
+  y: number
+  largeur: number
+  hauteur: number
+  /**
+   * Les dimensions de la page qui le porte, en points.
+   *
+   * Elles voyagent avec le champ parce que plusieurs prestataires attendent
+   * des **pourcentages** de page : sans elles, le connecteur devrait rouvrir
+   * le PDF pour les retrouver, ou les supposer — et un CRA est en paysage.
+   */
+  pageLargeur: number
+  pageHauteur: number
+}
+
 export interface SignatureEnvoi {
   titre: string
   fileName: string
   pdf: Uint8Array
   destinataire: SignatureContact
+  /**
+   * Où signer, dans le document.
+   *
+   * Sans eux, le prestataire reçoit un PDF muet : le pavé « Bon pour accord »
+   * n'est qu'un dessin, et il faut poser les champs à la main dans son
+   * interface, sur chaque CRA, tous les mois.
+   */
+  champs: ReadonlyArray<SignatureChamp>
 }
 
 export interface SignatureConnector {

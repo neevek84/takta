@@ -4,8 +4,9 @@ import { useActionState, useState } from 'react'
 import { saveSettings, lancerReetalonnage, type SaveSettingsState } from './actions'
 import type { AppSettings } from '@/services/settings'
 import { ENGAGEMENT_SOURCES } from '@/core/types'
+import { libelleChoixEngagement } from '@/core/dolibarr/engagement'
 import { crossesMidnight, slotDurationMinutes, type Slot } from '@/core/time/slots'
-import { DISPLAY_UNITS } from '@/core/types'
+import { DISPLAY_UNITS, type DisplayUnit } from '@/core/types'
 import { Card } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
 import { Select } from '@/components/ui/Select'
@@ -24,16 +25,13 @@ const JOURS = [
   { value: 7, label: 'Dimanche' },
 ]
 
-const DISPLAY_UNIT_LABELS: Record<string, string> = {
+// `Record<DisplayUnit, …>` et non `Record<string, …>` : c'est la différence
+// entre une unité ajoutée qui casse la compilation et une unité ajoutée qui
+// s'affiche vide dans le menu, comme la source d'engagement l'a fait.
+const DISPLAY_UNIT_LABELS: Record<DisplayUnit, string> = {
   JOUR: 'Jour',
   DEMI_JOUR: 'Demi-journée',
   HEURE: 'Heure',
-}
-
-const ENGAGEMENT_SOURCE_LABELS: Record<string, string> = {
-  MANUEL: 'Manuel',
-  DOLIBARR_PROPALE: 'Propale Dolibarr',
-  DOLIBARR_PROJET: 'Projet Dolibarr',
 }
 
 interface SlotRow {
@@ -342,7 +340,7 @@ export function SettingsForm({
           >
             {ENGAGEMENT_SOURCES.map((s) => (
               <option key={s} value={s}>
-                {ENGAGEMENT_SOURCE_LABELS[s]}
+                {libelleChoixEngagement(s)}
               </option>
             ))}
           </Select>

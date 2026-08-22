@@ -47,6 +47,7 @@ const REGLAGES = [
   { href: '/admin/sync', label: 'Synchro' },
   { href: '/admin/webhooks', label: 'Abonnements' },
   { href: '/admin/supervision', label: 'Supervision' },
+  { href: '/admin/donnees', label: 'Données' },
 ] as const
 
 /**
