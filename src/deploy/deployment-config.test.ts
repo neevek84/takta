@@ -358,11 +358,29 @@ describe('docker-compose.prod.yml — la composition qui sera déployée', () =>
     expect(lignesActives(COMPOSE_PROD).some((l) => l.startsWith('build:'))).toBe(false)
   })
 
-  // Un volume anonyme serait recréé vide à chaque recréation du conteneur —
+  // Un montage anonyme serait recréé vide à chaque recréation du conteneur —
   // c'est-à-dire à chaque mise à jour. Les données doivent survivre au clic.
-  it('range les données dans un volume nommé, qui survit à la mise à jour', () => {
-    expect(COMPOSE_PROD).toMatch(/db-data:\/var\/lib\/postgresql\/data/)
-    expect(COMPOSE_PROD).toMatch(/^volumes:\s*$/m)
+  //
+  // Un **dossier**, et non un volume nommé : les deux persistent également, mais
+  // un dossier se voit et se supprime depuis File Station. Le porteur s'est
+  // retrouvé bloqué sur un volume nommé qu'aucune interface DSM ne sait
+  // détruire, sans terminal pour le faire.
+  it('range les données dans un dossier visible depuis le NAS', () => {
+    expect(COMPOSE_PROD).toMatch(/^\s*-\s*\.\/donnees\/postgres:\/var\/lib\/postgresql\/data\s*$/m)
+  })
+
+  // Postgres exige que son dossier de données lui appartienne et soit en 0700.
+  // Sur un dossier partagé Synology, avec ses ACL, il ne peut pas toujours en
+  // changer le propriétaire : l'initialisation échoue par « initdb: could not
+  // change permissions ». Un sous-dossier est créé par Postgres lui-même, donc
+  // avec le bon propriétaire, quoi que porte le parent.
+  it('pose PGDATA dans un sous-dossier du montage, sans quoi initdb échoue', () => {
+    const pgdata = /PGDATA:\s*(\S+)/.exec(COMPOSE_PROD)?.[1] ?? ''
+    expect(pgdata, 'PGDATA doit être déclaré').not.toBe('')
+    expect(
+      pgdata.startsWith('/var/lib/postgresql/data/') && pgdata !== '/var/lib/postgresql/data',
+      'PGDATA doit être un sous-dossier du point de montage, pas le montage lui-même',
+    ).toBe(true)
   })
 
   // Une migration s'applique au démarrage : une mise à jour qui la rate laisse

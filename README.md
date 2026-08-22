@@ -299,6 +299,29 @@ ce `pg_dump` **quotidiennement** vers `./sauvegardes`, avec 90 jours de
 rétention — pointez ce dossier vers un partage du NAS, hors du conteneur : une
 sauvegarde qui vit dans ce qu'elle protège ne protège rien.
 
+### Où vivent les données, et comment les reprendre en main
+
+La composition de production range la base dans **`./donnees/postgres`**, à côté
+du fichier `docker-compose.prod.yml` — un dossier ordinaire, visible dans File
+Station. Les sauvegardes vont dans `./sauvegardes` : les données et ce qui les
+protège sont du même côté.
+
+Ce n'est pas une question de persistance — un volume nommé Docker persiste tout
+aussi bien. C'est une question de **reprise en main** : un dossier se voit, se
+sauvegarde et se supprime depuis DSM ; un volume nommé demande un terminal, et
+un NAS n'en offre pas toujours.
+
+**`PGDATA` pointe volontairement sur un sous-dossier** du montage
+(`/var/lib/postgresql/data/pgdata`). Postgres exige que son dossier de données
+lui appartienne et soit en `0700` ; sur un dossier partagé Synology, avec ses
+ACL, il ne peut pas toujours en changer le propriétaire, et l'initialisation
+échoue par `initdb: could not change permissions`. Un sous-dossier, lui, est
+créé par Postgres : il naît avec le bon propriétaire quoi que porte le parent.
+
+**Repartir d'une base vierge**, sans terminal : arrêter le projet, supprimer
+`donnees/postgres` dans File Station, relancer. C'est tout — et c'est ce qu'un
+volume nommé ne permettait pas.
+
 ### Changer `POSTGRES_PASSWORD` après le premier démarrage
 
 Ça ne suffit **jamais** à soi seul. Postgres ne fixe le mot de passe de son

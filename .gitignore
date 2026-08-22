@@ -43,3 +43,8 @@ prisma/.schema-portable.prisma
 # Propositions de logo : fichiers de travail, pas des sources.
 # La version retenue vivra dans public/ quand elle sera vectorisée.
 /logo/
+
+# Donnees d'une installation en conteneur : la base Postgres et ses
+# sauvegardes vivent a cote de la composition, jamais dans le depot.
+/donnees/
+/sauvegardes/

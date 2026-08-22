@@ -13,10 +13,26 @@ services:
       POSTGRES_USER: takta
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD}
       POSTGRES_DB: takta
+      # **`PGDATA` dans un SOUS-DOSSIER du montage, et c'est indispensable.**
+      #
+      # Postgres exige que son dossier de données lui appartienne et soit en
+      # 0700. Sur un point de montage — un dossier partagé Synology, en
+      # particulier, avec ses ACL — il ne peut pas toujours en changer le
+      # propriétaire ni les droits, et l'initialisation echoue par
+      # « initdb: could not change permissions ». Un sous-dossier, lui, est
+      # créé par Postgres lui-même : il naît avec le bon propriétaire et les
+      # bons droits, quoi que porte le dossier parent.
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      # Volume nommé : il survit à la recréation du conteneur, qui est
-      # exactement ce que fait une mise à jour.
-      - db-data:/var/lib/postgresql/data
+      # **Un dossier, pas un volume nommé.** Les deux persistent également —
+      # un volume nommé survit aussi bien aux redémarrages et aux mises à jour.
+      # La différence est ailleurs : un dossier se voit et se supprime depuis
+      # File Station, un volume nommé demande un terminal que le porteur d'un
+      # NAS n'a pas toujours. Il s'est retrouvé bloqué sur exactement ça.
+      #
+      # Les sauvegardes écrivent déjà dans `./sauvegardes` : les données et ce
+      # qui les protège vivent désormais du même côté.
+      - ./donnees/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U takta']
       interval: 5s
@@ -81,6 +97,3 @@ services:
           sleep 86400
         done
     restart: unless-stopped
-
-volumes:
-  db-data:
