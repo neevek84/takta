@@ -69,7 +69,20 @@ export function buildConsentUrl(args: { client: GoogleOAuthClient; state: string
     // Google ne renvoie ce jeton qu'au premier consentement, sauf si on le
     // redemande explicitement : sans cela, une reconnexion serait inutilisable.
     prompt: 'consent',
-    include_granted_scopes: 'true',
+    // **`include_granted_scopes` est délibérément absent.**
+    //
+    // Avec lui, « the new access token will also cover any scopes to which the
+    // user previously granted the application access » — et l'application, aux
+    // yeux de Google, c'est le **projet**, pas le client : tous les clients
+    // d'un même projet partagent le même écran de consentement et la même
+    // entrée dans « Applications ayant accès à votre compte ».
+    //
+    // Mesuré le 22 août 2026 sur l'instance du porteur : le jeton rendu
+    // portait `gmail.send`, `gmail.readonly`, `gmail.compose` et `tasks`,
+    // hérités d'un autre usage du même projet. L'application n'a jamais
+    // demandé le courrier, et n'a aucune raison de détenir de quoi le lire ni
+    // l'envoyer. Elle ne pratique d'ailleurs aucune autorisation incrémentale :
+    // elle demande le calendrier, une fois, et rien d'autre.
     state: args.state,
   })
   return `${CONSENT_URL}?${params.toString()}`

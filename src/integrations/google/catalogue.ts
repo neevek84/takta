@@ -378,12 +378,6 @@ export const CATALOGUE_GOOGLE: CatalogueSysteme = {
           exemple: 'consent',
         },
         {
-          nom: 'include_granted_scopes',
-          source: 'CONSTANTE',
-          origine: 'src/integrations/google/oauth.ts',
-          exemple: 'true',
-        },
-        {
           nom: 'state',
           source: 'CALCUL',
           origine: 'jeton anti-rejeu posé par la route de connexion',
