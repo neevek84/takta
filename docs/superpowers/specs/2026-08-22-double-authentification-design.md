@@ -48,6 +48,8 @@ Poser le bon rôle maintenant évite d'avoir à rattraper des comptes plus tard.
 | Rôle d'un compte créé automatiquement | **`CONSULTANT`**, jamais `ADMIN`. |
 | La reprise des temps crée des `ADMIN` | **Corrigé dans ce lot** : même règle, `CONSULTANT`. |
 | Durée d'un lien de réinitialisation | **10 minutes**, usage unique. |
+| Création automatique alors que les rôles ne mordent pas | **Assumée**, et le lot des rôles — spécifié le 19 août — est **enchaîné immédiatement après** celui-ci. La fenêtre d'exposition dure le temps des deux lots, pendant lesquels le porteur est seul sur l'instance. |
+| Désactiver un compte sans le détruire | **Avec le lot des rôles**, pas ici : c'est une question de droits. |
 
 ## L'architecture, et les deux voies écartées
 
@@ -223,10 +225,18 @@ oblige donc à détruire l'historique qu'elle protégeait.
 corresponde plus à l'identité Google, et vider son empreinte de mot de passe.
 C'est une manipulation directe, sans écran.
 
-**Ce que ça appelle.** Un drapeau `disabled` sur `User`, refusé par
-`requireUser()` — qui relit déjà l'utilisateur en base à chaque requête, donc la
-révocation serait immédiate et sur les deux portes à la fois. C'est un petit lot,
-et il devrait suivre celui-ci de près.
+**Où le porteur l'a placé : avec le lot des rôles.** Couper un accès est une
+question de droits, et le lot des rôles est de toute façon enchaîné juste après.
+
+**Ce que ça y demandera, et c'est peu.** Un drapeau `disabled` sur `User`, refusé
+par `requireUser()` — qui relit déjà l'utilisateur en base à chaque requête. La
+révocation serait donc immédiate, et sur **les deux portes à la fois** : ni le
+mot de passe ni Google ne rouvriraient. Un bouton dans Réglages · Données, à côté
+de ceux des clients et des missions, suffirait à l'exposer.
+
+**D'ici là**, couper un accès passe par une manipulation en base — changer
+l'adresse pour qu'elle ne corresponde plus à l'identité Google, et vider
+l'empreinte de mot de passe.
 
 ### L'adresse ne peut pas changer
 
@@ -288,10 +298,14 @@ le type Interne comme « un contrôle d'accès gratuit ». C'est vrai du périm�
 seul le domaine entre — et faux des **droits** : qui entre peut tout faire. La
 formule est corrigée plus haut.
 
-**Le remède provisoire.** Deux options, et c'est un arbitrage du porteur :
-enchaîner le lot des rôles immédiatement après celui-ci, ou différer la
-**création automatique** — la connexion Google resterait réservée aux comptes
-déjà créés — jusqu'à ce que les rôles mordent.
+**Ce que le porteur a tranché.** La création automatique est **assumée**, et le
+lot des rôles est **enchaîné immédiatement après** celui-ci. La fenêtre
+d'exposition ne dure donc que le temps des deux lots, pendant lesquels il est
+seul sur l'instance — personne d'autre n'a de raison de se connecter.
+
+**Ce que cela impose au lot suivant.** Il ne s'agit plus d'une évolution
+souhaitable mais d'une **dette datée** : ce lot-ci ouvre une porte que seul le
+lot des rôles referme. Le plan d'implémentation doit se terminer en le nommant.
 
 ### Pas de flux iCal ni de Microsoft 365
 
