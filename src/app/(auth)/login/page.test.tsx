@@ -2,12 +2,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 
-vi.mock('./actions', () => ({ login: vi.fn(), creerPremierAdmin: vi.fn() }))
+vi.mock('./actions', () => ({
+  login: vi.fn(),
+  creerPremierAdmin: vi.fn(),
+  connexionGoogle: vi.fn(),
+}))
 
 // La page interroge la base pour savoir si l'instance est neuve. Le double le
 // dit sans base : le rendu est ce qu'on teste ici, pas le comptage.
-const { aucunUtilisateur } = vi.hoisted(() => ({ aucunUtilisateur: vi.fn() }))
+const { aucunUtilisateur, getGoogleOAuthClientView } = vi.hoisted(() => ({
+  aucunUtilisateur: vi.fn(),
+  getGoogleOAuthClientView: vi.fn(),
+}))
 vi.mock('@/services/auth/comptes', () => ({ aucunUtilisateur }))
+vi.mock('@/services/google/oauth-client', () => ({ getGoogleOAuthClientView }))
 
 // `vi.mock` est hissé au-dessus des imports : l'action serveur (et donc
 // `@/auth`, Prisma, argon2) n'est jamais chargée, seul le rendu l'est.
@@ -16,6 +24,8 @@ import LoginPage from './page'
 beforeEach(() => {
   // Par défaut, une instance déjà peuplée : c'est le cas courant.
   aucunUtilisateur.mockReset().mockResolvedValue(false)
+  // Et un client Google enregistré : la seconde porte existe.
+  getGoogleOAuthClientView.mockReset().mockResolvedValue({ clientId: '123', redirectUri: 'x' })
 })
 
 afterEach(cleanup)
@@ -139,5 +149,34 @@ describe('la version affichée avant la connexion', () => {
     expect(container.querySelector('footer')).toBeNull()
 
     if (avant !== undefined) process.env.TAKTA_VERSION = avant
+  })
+})
+
+describe('la seconde porte', () => {
+  it('propose les deux quand un client Google est enregistré', async () => {
+    render(await LoginPage({ searchParams: Promise.resolve({}) }))
+
+    expect(screen.getByRole('button', { name: 'Se connecter' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Google/ })).toBeTruthy()
+  })
+
+  // Une porte qui ne mène nulle part ne s'affiche pas grisée : elle ne
+  // s'affiche pas du tout. Sans client enregistré, `signIn('google')`
+  // échouerait sur un `invalid_client` que personne ne sait lire.
+  it("s'efface quand aucun client Google n'est enregistré", async () => {
+    getGoogleOAuthClientView.mockResolvedValue(null)
+    render(await LoginPage({ searchParams: Promise.resolve({}) }))
+
+    expect(screen.queryByRole('button', { name: /Google/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Se connecter' })).toBeTruthy()
+  })
+
+  // Au premier démarrage il n'existe aucun compte : entrer par Google en
+  // créerait un, `CONSULTANT`, et l'instance n'aurait jamais d'administrateur.
+  it('ne paraît pas au premier démarrage', async () => {
+    aucunUtilisateur.mockResolvedValue(true)
+    render(await LoginPage({ searchParams: Promise.resolve({}) }))
+
+    expect(screen.queryByRole('button', { name: /Google/ })).toBeNull()
   })
 })

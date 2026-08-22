@@ -61,3 +61,15 @@ export async function creerPremierAdmin(
   return { ok: true, message: 'Compte créé. Connectez-vous avec ces identifiants.' }
 }
 
+
+/**
+ * La seconde porte.
+ *
+ * `signIn('google')` redirige, et la redirection de Next passe par une
+ * exception qu'il ne faut surtout pas avaler : aucun `try/catch` ici. Un
+ * refus, lui, ne remonte pas jusqu'ici — la règle de liaison rend `null` et
+ * Auth.js ramène sur l'écran de connexion.
+ */
+export async function connexionGoogle(): Promise<void> {
+  await signIn('google', { redirectTo: '/saisie' })
+}

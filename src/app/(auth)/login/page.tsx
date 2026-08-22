@@ -3,10 +3,11 @@ import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
-import { login } from './actions'
+import { connexionGoogle, login } from './actions'
 import { aucunUtilisateur } from '@/services/auth/comptes'
 import { PremierAdminForm } from './PremierAdminForm'
 import { version } from '@/core/identite'
+import { getGoogleOAuthClientView } from '@/services/google/oauth-client'
 
 const MESSAGE_ECHEC = 'Adresse e-mail ou mot de passe incorrect.'
 
@@ -19,6 +20,11 @@ export default async function LoginPage({
   // Une instance neuve est murée : sans cet écran, il n'existe aucun moyen de
   // créer le premier compte sans terminal.
   const premierDemarrage = await aucunUtilisateur()
+  // La seconde porte n'existe que si quelqu'un l'a installée. Un bouton sans
+  // client enregistré mènerait à un `invalid_client` que personne ne sait
+  // lire — et au premier démarrage, il créerait un compte `CONSULTANT` dans
+  // une instance qui n'aurait alors jamais d'administrateur.
+  const clientGoogle = premierDemarrage ? null : await getGoogleOAuthClientView()
 
   return (
     <main className="mx-auto mt-24 w-full max-w-sm px-4">
@@ -51,6 +57,11 @@ export default async function LoginPage({
           </Button>
         </form>
       </Card>
+      )}
+      {clientGoogle !== null && (
+        <form action={connexionGoogle} className="mt-3">
+          <Button type="submit">Se connecter avec Google</Button>
+        </form>
       )}
       {/* Hors du pied de page, qui ne porte que la version et disparaît avec
           elle. Absent au premier démarrage : sans aucun compte en base, ce
