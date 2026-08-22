@@ -65,6 +65,17 @@ services:
       AUTH_SECRET: ${AUTH_SECRET:?definir AUTH_SECRET (openssl rand -base64 32)}
       CREDENTIALS_KEY: ${CREDENTIALS_KEY:?definir CREDENTIALS_KEY (openssl rand -base64 32)}
       AUTH_TRUST_HOST: 'true'
+      # **L'adresse publique, telle que les gens la tapent.**
+      #
+      # Sans elle, l'application déduit son adresse des en-têtes — et tous les
+      # proxys ne posent pas `x-forwarded-host` : certains réécrivent `Host`
+      # avec l'adresse interne de l'amont. Le retour d'un consentement Google
+      # réussi renvoyait alors vers `https://<identifiant du conteneur>:3000`,
+      # une adresse qui n'existe nulle part hors de sa machine.
+      #
+      # C'est la variable qu'Auth.js lit déjà pour la même raison : une seule
+      # source de vérité, qui sert aussi le retour de la connexion Google.
+      AUTH_URL: ${AUTH_URL:-}
       SYNC_FLUSH_TOKEN: ${SYNC_FLUSH_TOKEN:-}
       CRA_API_TOKEN: ${CRA_API_TOKEN:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}

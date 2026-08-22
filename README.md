@@ -256,6 +256,16 @@ par route, paramètre par paramètre — est dans
    lancer le consentement. Le scope demandé est celui du calendrier ; un
    calendrier dédié est créé au consentement et ne se mélange jamais au reste.
 
+**Derrière un proxy, renseigne `AUTH_URL`** — l'adresse publique telle que les
+gens la tapent, par exemple `https://takta.mondomaine.fr`, sans barre finale.
+Sans elle, l'application déduit son adresse des en-têtes de la requête, et tous
+les proxys ne posent pas `x-forwarded-host` : certains réécrivent `Host` avec
+l'adresse interne de l'amont. Le retour d'un consentement Google **réussi**
+renvoie alors vers `https://<identifiant du conteneur>:3000`, une adresse qui
+n'existe nulle part — « site inaccessible », alors que la connexion a abouti.
+La même variable sert le retour de la connexion Google et les liens de mot de
+passe envoyés par courriel.
+
 **Le même client sert aussi à se connecter**, et cela demande une **seconde**
 URI de redirection. Déclare les deux, au caractère près — le **port en fait
 partie** :

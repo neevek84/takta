@@ -4,6 +4,7 @@ import { requireUser } from '@/auth'
 import { buildConsentUrl } from '@/integrations/google/oauth'
 import { readGoogleOAuthClient } from '@/services/google/oauth-client'
 import { journalAvertissement } from '@/services/log'
+import { originePublique } from '@/core/http/origine'
 
 export async function GET(request: Request): Promise<Response> {
   await requireUser()
@@ -45,7 +46,10 @@ export async function GET(request: Request): Promise<Response> {
 
 /** Retour vers l'écran qui porte la configuration, avec le motif du renvoi. */
 function versAdmin(request: Request, message: string): Response {
-  const url = new URL('/admin/google', request.url)
+  // Même raison qu'au retour : derrière un proxy, `request.url` porte
+  // l'adresse interne du conteneur.
+  const origine = originePublique(process.env.AUTH_URL, (nom) => request.headers.get(nom))
+  const url = new URL('/admin/google', origine !== '' ? origine : request.url)
   url.searchParams.set('message', message)
   url.searchParams.set('tone', 'warning')
   return Response.redirect(url.toString(), 302)

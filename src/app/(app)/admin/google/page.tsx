@@ -7,6 +7,7 @@ import { Banner } from '@/components/ui/Banner'
 import { Card } from '@/components/ui/Card'
 import { PageShell } from '@/components/ui/PageShell'
 import { ClientOAuthForm } from './ClientOAuthForm'
+import { originePublique } from '@/core/http/origine'
 
 /**
  * L'écran par lequel le client OAuth Google se configure, et par lequel il se
@@ -125,11 +126,6 @@ export default async function AdminGooglePage({
  */
 async function adresseDeLaRequete(): Promise<string> {
   const h = await headers()
-  const hote = (h.get('x-forwarded-host') ?? h.get('host') ?? '').split(',')[0]?.trim() ?? ''
-  if (hote === '') return ''
-
-  const declare = (h.get('x-forwarded-proto') ?? '').split(',')[0]?.trim() ?? ''
-  const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(hote)
-  const protocole = declare !== '' ? declare : local ? 'http' : 'https'
-  return `${protocole}://${hote}`
+  return originePublique(process.env.AUTH_URL, (nom) => h.get(nom))
 }
+

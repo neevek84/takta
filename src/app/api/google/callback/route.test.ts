@@ -247,3 +247,26 @@ describe('retours dégradés', () => {
     expect(connectGoogle).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * **Le retour doit atterrir sur l'adresse que le visiteur a tapée.**
+ *
+ * Derrière un proxy — Cloudflare, le reverse proxy d'un NAS — l'URL vue par le
+ * conteneur porte une adresse interne. Bâtir la redirection dessus renvoie le
+ * visiteur vers un hôte qu'il ne peut pas atteindre, **au retour d'un
+ * consentement qui avait pourtant abouti** : il ne lui reste qu'à retaper
+ * l'adresse du site à la main, sans savoir si sa connexion a marché.
+ */
+describe("l'adresse de retour derrière un proxy", () => {
+  it('suit l en-tête du proxy, pas l hôte interne', async () => {
+    const requeteInterne = new Request('http://localhost:3000/api/google/callback?error=access_denied', {
+      headers: { 'x-forwarded-host': 'takta.exemple.fr', 'x-forwarded-proto': 'https' },
+    })
+
+    const reponse = await GET(requeteInterne)
+
+    const url = destination(reponse)
+    expect(url.origin).toBe('https://takta.exemple.fr')
+    expect(url.pathname).toBe('/profil')
+  })
+})

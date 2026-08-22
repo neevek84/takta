@@ -3,6 +3,7 @@ import { requireUser } from '@/auth'
 import { SecretBoxError } from '@/core/crypto/secret-box'
 import { connectGoogle, GoogleClientAbsentError } from '@/services/google/connect'
 import { journalErreur } from '@/services/log'
+import { originePublique } from '@/core/http/origine'
 
 /**
  * Une `SecretBoxError` sur ce chemin ne peut venir que de `CREDENTIALS_KEY` :
@@ -26,7 +27,12 @@ const MESSAGE_CLE_ABSENTE =
  * connexion refusée avait exactement l'air d'une connexion réussie.
  */
 function retour(request: Request, message: string, tone: 'success' | 'danger' = 'danger'): Response {
-  const url = new URL('/profil', request.url)
+  // **L'origine vient des en-têtes, pas de `request.url`.** Derrière un proxy,
+  // l'URL vue par le conteneur porte une adresse interne : le visiteur était
+  // renvoyé vers un hôte qu'il ne peut pas atteindre, au retour d'un
+  // consentement qui avait pourtant abouti.
+  const origine = originePublique(process.env.AUTH_URL, (nom) => request.headers.get(nom))
+  const url = new URL('/profil', origine !== '' ? origine : request.url)
   url.searchParams.set('message', message)
   url.searchParams.set('tone', tone)
   return Response.redirect(url.toString(), 302)

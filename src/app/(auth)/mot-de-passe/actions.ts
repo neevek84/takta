@@ -3,6 +3,7 @@
 import { headers } from 'next/headers'
 import { demanderReinitialisation, definirMotDePasse } from '@/services/auth/mot-de-passe'
 import { journalErreur } from '@/services/log'
+import { originePublique } from '@/core/http/origine'
 
 export type MotDePasseState = { ok: boolean; message: string } | null
 
@@ -57,18 +58,12 @@ export async function poserMotDePasse(
  * L'origine vient de la requête : l'application ne connaît pas sa propre URL
  * publique, et la coder en dur produirait des liens morts derrière un proxy.
  *
- * Même lecture que `adresseDeLaRequete` de l'écran Google — un jeton voyage
- * dans cette URL, donc hors machine locale le protocole non déclaré est
- * supposé `https` : le supposer en clair enverrait la clé en clair.
+ * Repli sur la machine locale quand aucun hôte n'est lisible : ici on
+ * **fabrique un lien**, et un lien sans hôte n'en est pas un.
  */
 async function origineDeLaRequete(): Promise<string> {
   const entetes = await headers()
-  const brut = entetes.get('x-forwarded-host') ?? entetes.get('host') ?? ''
-  const hote = brut.split(',')[0]?.trim() ?? ''
-  if (hote === '') return 'http://localhost:3000'
-
-  const declare = (entetes.get('x-forwarded-proto') ?? '').split(',')[0]?.trim() ?? ''
-  const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(hote)
-  const schema = declare !== '' ? declare : local ? 'http' : 'https'
-  return `${schema}://${hote}`
+  const origine = originePublique(process.env.AUTH_URL, (nom) => entetes.get(nom))
+  return origine !== '' ? origine : 'http://localhost:3000'
 }
+

@@ -41,6 +41,12 @@ export const VARIABLES_SECRETES = [
   'DOCUMENSO_API_KEY',
   'CRA_API_TOKEN',
   'SMTP_PASSWORD',
+  // Pas un secret : l'adresse publique du site, que tout le monde connaît.
+  // Elle est ici parce que le garde-fou dérivé de `.env.example` ne souffre
+  // **aucune exception** — ouvrir une liste de « noms qui ressemblent mais
+  // n'en sont pas » est exactement par où un vrai secret finirait par
+  // passer. Le coût est nul : cette valeur se lit dans la composition.
+  'AUTH_URL',
   // Le mot de passe de la base, ajouté le 22 août avec la composition de
   // production. `DATABASE_URL` figurait déjà ici et le contient en clair — mais
   // la composition le passe aussi seul au service `db`, et un message d'erreur

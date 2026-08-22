@@ -25,6 +25,10 @@ services:
       DATABASE_URL: postgresql://cra:cra@db:5432/cra
       AUTH_SECRET: ${AUTH_SECRET:?definir AUTH_SECRET (openssl rand -base64 32)}
       AUTH_TRUST_HOST: "true"
+      # Vide en local : l'application lit alors son adresse dans la requête,
+      # ce qui suffit sans proxy. Voir `docker-compose.prod.yml` pour le
+      # pourquoi derrière un proxy.
+      AUTH_URL: ${AUTH_URL:-}
       # Chiffre les jetons Google au repos. Exigée au démarrage, et non à la
       # première connexion Google : absente, elle ne se manifesterait qu'au
       # retour du consentement, très loin d'ici, sur un écran qui ne peut que
