@@ -427,17 +427,29 @@ function clausesDesEtats(etats: EtatSuivi[]): Prisma.CraWhereInput[] {
   const simples = etats.filter((e) => e !== 'VALIDE' && e !== 'FACTURE')
   if (simples.length > 0) clauses.push({ status: { in: simples } })
 
-  // Validé **et pas encore facturé** : l'absence des deux champs de suivi.
+  // Validé **et pas encore facturé** : ni numéro ni date de facturation — une
+  // chaîne vide vaut absence, exactement comme `estFacture`. Sans ce
+  // `OR`, un `invoiceNumber: ''` repris d'ailleurs (rien ne le normalise à
+  // l'écriture) tombait hors des deux clauses à la fois : ni VALIDE, ni
+  // FACTURE, disparu de l'écran.
   if (etats.includes('VALIDE')) {
-    clauses.push({ status: 'VALIDE', invoiceNumber: null, invoicedAt: null })
+    clauses.push({
+      status: 'VALIDE',
+      OR: [{ invoiceNumber: null }, { invoiceNumber: '' }],
+      invoicedAt: null,
+    })
   }
 
-  // Facturé : validé, plus au moins un des deux champs. Le miroir exact
-  // d'`estFacture`, écrit en SQL — les deux règles doivent bouger ensemble.
+  // Facturé : validé, plus un numéro non vide ou une date. Le miroir exact
+  // d'`estFacture`, écrit en SQL — les deux règles doivent bouger ensemble,
+  // chaîne vide comprise : elle ne compte pas comme un numéro ici non plus.
   if (etats.includes('FACTURE')) {
     clauses.push({
       status: 'VALIDE',
-      OR: [{ NOT: { invoiceNumber: null } }, { NOT: { invoicedAt: null } }],
+      OR: [
+        { AND: [{ NOT: { invoiceNumber: null } }, { NOT: { invoiceNumber: '' } }] },
+        { NOT: { invoicedAt: null } },
+      ],
     })
   }
 

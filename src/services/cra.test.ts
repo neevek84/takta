@@ -703,6 +703,26 @@ describe('listCrasSuivi', () => {
     expect(cras.map((c) => c.id).sort()).toEqual(['facture-par-date', 'facture-par-numero'])
   })
 
+  // Rien ne normalise `invoiceNumber` a l'ecriture : une chaine vide reprise
+  // d'ailleurs doit compter comme une absence ici aussi, exactement comme
+  // `estFacture`. Sans ce test, un CRA valide portant `invoiceNumber: ''`
+  // pouvait tomber hors des deux clauses a la fois — invisible sous VALIDE
+  // comme sous FACTURE.
+  it('une chaine vide ne facture pas : le CRA reste VALIDE, jamais FACTURE', async () => {
+    await semerCra({
+      id: 'valide-numero-vide',
+      month: '2026-03',
+      status: 'VALIDE',
+      invoiceNumber: '',
+    })
+
+    const valide = await listCrasSuivi('suivi-u1', { etats: ['VALIDE'] })
+    const facture = await listCrasSuivi('suivi-u1', { etats: ['FACTURE'] })
+
+    expect(valide.map((c) => c.id)).toEqual(['valide-numero-vide'])
+    expect(facture).toEqual([])
+  })
+
   it('groupe les statuts simples en une seule liste', async () => {
     await semerCra({ id: 'brouillon', month: '2026-03', status: 'BROUILLON' })
     await semerCra({ id: 'envoye', month: '2026-03', status: 'ENVOYE' })
