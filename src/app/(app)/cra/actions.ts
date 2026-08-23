@@ -12,19 +12,13 @@ export async function openCra(formData: FormData) {
   revalidatePath('/cra')
 }
 
-/**
- * `lancerRelances` ne rend rien : le résultat repasse par l'URL. Elle reste
- * ciblée sur la liste — c'est un bouton de lot, pas d'un CRA en particulier.
- */
-function retour(month: string): never {
-  redirect(`/cra?month=${encodeURIComponent(month)}`)
-}
-
-export async function lancerRelances(formData: FormData): Promise<void> {
+export async function lancerRelances(): Promise<void> {
   const user = await requireUser()
   // Scopé sur l'utilisateur : ce bouton n'est pas l'ordonnanceur, c'est le
   // moyen de s'en passer.
   await runSignatureReminders({ userId: user.id })
   revalidatePath('/cra')
-  retour(String(formData.get('month')))
+  // Le suivi couvre désormais toutes les périodes : il n'y a plus de mois à
+  // reporter dans l'adresse de retour.
+  redirect('/cra')
 }
