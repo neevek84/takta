@@ -598,22 +598,44 @@ désormais explicitement.
 Toutes les cinq minutes suffisent : chaque travail porte sa propre récurrence, et
 un réveil trop fréquent ne fait que constater qu'il n'y a rien à faire.
 
-**Sur un NAS Synology** — DSM → *Panneau de configuration* → *Planificateur de
-tâches* → *Créer* → *Tâche planifiée* → *Script défini par l'utilisateur*.
-Récurrence : toutes les 5 minutes. Script :
+**Avec `docker-compose.prod.yml`, c'est déjà fait** : la composition porte un
+service `reveil` qui appelle la route toutes les cinq minutes, par le réseau
+interne. Il te reste seulement à renseigner **`CRA_API_TOKEN`** dans le `.env` —
+sans jeton la route répond 503, et le service le dit dans ses journaux au lieu de
+marteler.
+
+```
+CRA_API_TOKEN="<openssl rand -hex 24>"
+```
+
+**Ailleurs** — installation depuis le dépôt, archive portable, ou toute
+composition qui ne porte pas ce service : une ligne de `crontab`, un timer
+`systemd`, une tâche planifiée DSM, un nœud *Schedule* de n8n. N'importe quoi qui
+sache faire un `POST` à l'heure dite :
 
 ```bash
 curl -fsS -X POST -H "Authorization: Bearer LE_JETON" http://localhost:3000/api/jobs/tick
 ```
 
-Remplace le port par celui que publie la composition, et `LE_JETON` par la valeur
-de `CRA_API_TOKEN` de ton `.env`. **Passe par `localhost`, pas par le domaine
-public** : le réveil n'a rien à faire sur Internet, et le faire sortir puis
-rentrer par le proxy ajoute une panne possible à un traitement qui doit être le
-plus fiable de l'installation.
+**Par `localhost` ou par le réseau interne, jamais par le domaine public** : le
+réveil n'a rien à faire sur Internet, et le faire sortir puis rentrer par le
+proxy ajoute une panne possible au traitement qui doit être le plus fiable de
+l'installation.
 
-**Ailleurs** : une ligne de `crontab`, un timer `systemd`, un nœud *Schedule* de
-n8n — n'importe quoi qui sache faire un `POST` à l'heure dite.
+### Le réveil ne suffit pas : la synchronisation sortante s'active
+
+**`Vidage de la file de sortie` est désactivé par défaut, délibérément.** C'est
+le travail qui écrit **chez autrui** — l'agenda Google, Dolibarr. Automatiser une
+écriture sortante se décide ; cela ne s'hérite pas d'une installation.
+
+Conséquence à connaître : tant qu'il est désactivé, une saisie **entre en file**
+mais n'atteint jamais l'agenda toute seule. Elle attend soit le bouton
+« Synchroniser maintenant » de *Réglages · Synchro*, soit l'activation du
+travail.
+
+Pour l'automatiser : *Supervision · Travaux* → ligne « Vidage de la file de
+sortie » → **Activer**. Une fois activé, et le réveil en place, les créneaux
+partent d'eux-mêmes dans les cinq minutes.
 
 ---
 
