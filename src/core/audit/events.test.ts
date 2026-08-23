@@ -33,6 +33,10 @@ describe('catalogue des événements', () => {
       'client.cree',
       'mission.creee',
       'prestation.creee',
+      'client.supprime',
+      'mission.renommee',
+      'mission.supprimee',
+      'prestation.supprimee',
       'temps.pousses',
       'agenda.bloc.pousse',
       'agenda.conflit.detecte',
@@ -48,8 +52,8 @@ describe('catalogue des événements', () => {
     ])
   })
 
-  it('en compte 25', () => {
-    expect(AUDIT_ACTIONS).toHaveLength(25)
+  it('en compte 29', () => {
+    expect(AUDIT_ACTIONS).toHaveLength(29)
   })
 
   it('ne porte plus la demande de facture, retirée du produit', () => {
@@ -115,5 +119,46 @@ describe('filtrage par abonnement', () => {
     expect(serializeSubscription(actions)).toBe('cra.valide,saisie.creee')
     expect(parseSubscription(serializeSubscription(actions))).toEqual([...actions])
     expect(serializeSubscription([])).toBe('')
+  })
+})
+
+/**
+ * **Ce qui disparaît doit laisser une trace.**
+ *
+ * Le référentiel ne consignait que les créations : un client, une mission, une
+ * prestation naissaient au journal et pouvaient en sortir sans un mot. Une
+ * prestation et ses saisies — jusqu'à des heures déjà poussées chez Dolibarr et
+ * figurant dans un CRA validé — pouvaient disparaître sans qu'aucun événement
+ * ne le dise. Le porteur a tranché le 23 août 2026 : ces gestes laissent une
+ * trace.
+ */
+describe('les actes destructeurs du référentiel', () => {
+  it('sont au catalogue, avec leur création en miroir', () => {
+    for (const paire of [
+      ['client.cree', 'client.supprime'],
+      ['mission.creee', 'mission.supprimee'],
+      ['prestation.creee', 'prestation.supprimee'],
+    ]) {
+      expect([...AUDIT_ACTIONS]).toContain(paire[0])
+      expect([...AUDIT_ACTIONS], `${paire[0]} n'a pas son miroir`).toContain(paire[1])
+    }
+  })
+
+  // Renommer n'est pas anodin : le libellé d'une mission part dans le PDF
+  // envoyé au client et nomme le projet chez Dolibarr.
+  it('comptent le renommage d une mission', () => {
+    expect([...AUDIT_ACTIONS]).toContain('mission.renommee')
+  })
+
+  /**
+   * **L'archivage n'y est pas, et c'est délibéré.** Il est réversible et ne
+   * détruit rien : l'objet, ses saisies et ses CRA restent entiers, et l'écran
+   * *Données* les montre. Un catalogue qui grossit sans discipline devient
+   * inutilisable pour celui qui doit choisir à quoi s'abonner.
+   */
+  it("n'ajoute pas d'événement pour l'archivage, qui ne détruit rien", () => {
+    for (const nom of ['client.archive', 'mission.archivee', 'prestation.archivee']) {
+      expect([...AUDIT_ACTIONS]).not.toContain(nom)
+    }
   })
 })

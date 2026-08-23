@@ -405,11 +405,26 @@ export async function updateMissionLabel(
 
   const mission = await prisma.mission.findFirst({
     where: { id: missionId, lines: { some: { assignments: { some: { userId } } } } },
-    select: { id: true },
+    select: { id: true, label: true },
   })
   if (mission === null) return { ok: false, erreur: 'Cette mission ne vous est pas affectée.' }
 
+  // Rien à consigner quand rien ne change : le formulaire repose le champ à
+  // chaque soumission, et une trace par ouverture d'écran noierait le journal.
+  if (mission.label === propre) return { ok: true }
+
   await prisma.mission.update({ where: { id: missionId }, data: { label: propre } })
+
+  // **Le libellé n'est pas décoratif** : il part dans le PDF envoyé au client
+  // et nomme le projet chez Dolibarr. Le journal porte donc l'avant et l'après
+  // — sans l'avant, on sait qu'un nom a changé sans savoir lequel.
+  await appendAudit({
+    ...(await actorOf(userId)),
+    action: 'mission.renommee',
+    entityType: 'Mission',
+    entityId: missionId,
+    payload: { avant: mission.label, apres: propre },
+  })
   return { ok: true }
 }
 

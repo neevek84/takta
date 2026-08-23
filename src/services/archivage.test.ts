@@ -4,6 +4,7 @@ import { createClient } from '@/services/clients'
 import { createMission, createLine, listActiveLines, listMissionsForUser } from '@/services/missions'
 import { listClients } from '@/services/clients'
 import { DOLIBARR } from './dolibarr/api'
+import { readAuditSince } from './audit'
 import {
   LIEN_COMMANDE,
   LIEN_LIGNE,
@@ -635,5 +636,76 @@ describe('supprimerPrestation', () => {
     expect(await prisma.timeEntry.count({ where: { id: d.saisie.id } })).toBe(1)
 
     await prisma.user.delete({ where: { id: autre.id } })
+  })
+})
+
+/**
+ * **Ce qui disparaît laisse une trace.**
+ *
+ * Le référentiel ne consignait que les créations. Une prestation et ses
+ * saisies — jusqu'à des heures déjà poussées chez Dolibarr et figurant dans un
+ * CRA validé — pouvaient s'effacer sans qu'aucun événement ne le dise. Le CRA,
+ * lui, reste : son contenu ne concorde alors plus avec le document envoyé au
+ * client, et c'est cette ligne de journal qui permettra un jour de l'expliquer.
+ */
+describe('le journal des suppressions', () => {
+  /** Le dernier `seq`. `readAuditSince` plafonne, et le plafond ment vite. */
+  async function derniereSeq(): Promise<number> {
+    const tete = await prisma.auditEvent.findFirst({
+      orderBy: { seq: 'desc' },
+      select: { seq: true },
+    })
+    return tete?.seq ?? 0
+  }
+
+  it('CONSIGNE LA SUPPRESSION D UNE PRESTATION, et ce qu elle emportait', async () => {
+    const d = await decor()
+    const avant = await derniereSeq()
+
+    await supprimerPrestation({ userId, lineId: d.ligne.id })
+
+    const traces = await readAuditSince({ since: avant, action: 'prestation.supprimee' })
+    expect(traces).toHaveLength(1)
+    expect(traces[0]!.entityId).toBe(d.ligne.id)
+    // Le libellé et la mission : après coup il ne reste qu'un identifiant, et
+    // un journal qui ne nomme pas ce qui a disparu n'apprend rien.
+    expect(traces[0]!.payload).toMatchObject({ libelle: 'Cadrage', mission: 'ARC Mission' })
+    // Et le décompte de ce qui est parti : c'est la seule occasion de le savoir.
+    expect((traces[0]!.payload as { saisies: number }).saisies).toBeGreaterThan(0)
+  })
+
+  it('CONSIGNE LA SUPPRESSION D UNE MISSION', async () => {
+    const d = await decor()
+    const avant = await derniereSeq()
+
+    await supprimerMission(d.mission.id, userId)
+
+    const traces = await readAuditSince({ since: avant, action: 'mission.supprimee' })
+    expect(traces).toHaveLength(1)
+    expect(traces[0]!.payload).toMatchObject({ libelle: 'ARC Mission', client: 'ARC ACME' })
+  })
+
+  it('CONSIGNE LA SUPPRESSION D UN CLIENT, et celle de chaque mission emportée', async () => {
+    const d = await decor()
+    const avant = await derniereSeq()
+
+    await supprimerClient(d.client.id, userId)
+
+    expect(await readAuditSince({ since: avant, action: 'client.supprime' })).toHaveLength(1)
+    // Sans les traces de chaque mission, le journal dirait qu'un client a
+    // disparu sans dire ce qu'il emportait.
+    expect(await readAuditSince({ since: avant, action: 'mission.supprimee' })).toHaveLength(1)
+  })
+
+  // L'archivage est réversible et ne détruit rien : lui donner un événement
+  // ferait grossir un catalogue que des intégrateurs doivent pouvoir lire.
+  it('ne consigne pas un archivage, qui ne détruit rien', async () => {
+    const d = await decor()
+    const avant = await derniereSeq()
+
+    await archiverMission(d.mission.id, true)
+    await archiverPrestation({ userId, lineId: d.ligne.id, archive: true })
+
+    expect(await readAuditSince({ since: avant })).toEqual([])
   })
 })

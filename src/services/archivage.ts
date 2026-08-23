@@ -32,6 +32,7 @@ import {
   LIEN_TEMPS_REPRIS,
   SEPARATEUR,
 } from './dolibarr/liens'
+import { appendAudit, actorOf } from './audit'
 
 /** Ce qu'une suppression emporte, compté avant de la proposer. */
 export interface ImpactSuppression {
@@ -134,9 +135,16 @@ export async function archiverMission(missionId: string, archive: boolean): Prom
  * prochaine mission à recevoir le même identifiant hériterait de la
  * correspondance d'une autre.
  */
-export async function supprimerMission(missionId: string): Promise<ImpactSuppression> {
+export async function supprimerMission(
+  missionId: string,
+  acteurId: string = '',
+): Promise<ImpactSuppression> {
   const impact = await impactSuppressionMission(missionId)
   const contenu = await contenuDeLaMission(missionId)
+  const mission = await prisma.mission.findUnique({
+    where: { id: missionId },
+    select: { label: true, client: { select: { name: true } } },
+  })
 
   await prisma.$transaction(async (tx) => {
     await tx.externalLink.deleteMany({
@@ -169,6 +177,22 @@ export async function supprimerMission(missionId: string): Promise<ImpactSuppres
       },
     })
     await tx.mission.delete({ where: { id: missionId } })
+  })
+
+  // **Après la destruction, jamais dedans.** La chaîne du journal est
+  // sérialisée sur sa propre file et ne peut pas rejoindre une transaction :
+  // l'y forcer bloquerait les deux. Le journal porte donc ce qui vient d'être
+  // détruit, compté avant de l'être — c'est la seule occasion de le savoir.
+  await appendAudit({
+    ...(await actorOf(acteurId)),
+    action: 'mission.supprimee',
+    entityType: 'Mission',
+    entityId: missionId,
+    payload: {
+      libelle: mission?.label ?? '',
+      client: mission?.client.name ?? '',
+      ...impact,
+    },
   })
 
   return impact
@@ -357,6 +381,13 @@ export async function supprimerPrestation(args: {
   const contenu = await contenuDeLaPrestation(args.lineId)
   if (contenu === null) return { ok: false, reason: 'NON_AFFECTE' }
 
+  // Lus **avant** la destruction : après, il ne reste qu'un identifiant, et un
+  // journal qui ne nomme pas ce qui a disparu n'apprend rien à qui le relit.
+  const ligne = await prisma.missionLine.findUnique({
+    where: { id: args.lineId },
+    select: { label: true, mission: { select: { id: true, label: true } } },
+  })
+
   await prisma.$transaction(async (tx) => {
     await tx.externalLink.deleteMany({
       where: {
@@ -389,6 +420,24 @@ export async function supprimerPrestation(args: {
     await tx.missionLine.delete({ where: { id: args.lineId } })
   })
 
+  // **Le geste qui a motivé tout ceci.** Une prestation et ses saisies — jusqu'à
+  // des heures déjà poussées chez Dolibarr et figurant dans un CRA validé —
+  // pouvaient s'effacer sans qu'aucun événement ne le dise. Le CRA, lui, reste :
+  // son contenu ne concordera plus avec le document envoyé, et c'est cette
+  // ligne-là qui permettra un jour de l'expliquer.
+  await appendAudit({
+    ...(await actorOf(args.userId)),
+    action: 'prestation.supprimee',
+    entityType: 'MissionLine',
+    entityId: args.lineId,
+    payload: {
+      libelle: ligne?.label ?? '',
+      missionId: ligne?.mission.id ?? '',
+      mission: ligne?.mission.label ?? '',
+      ...impact,
+    },
+  })
+
   return { ok: true, impact }
 }
 
@@ -418,12 +467,21 @@ export async function archiverClient(clientId: string, archive: boolean): Promis
  * Mission par mission, et non par une cascade de la base : c'est le seul moyen
  * d'emporter les correspondances, que la base ne relie à rien.
  */
-export async function supprimerClient(clientId: string): Promise<ImpactSuppression> {
+export async function supprimerClient(
+  clientId: string,
+  acteurId: string = '',
+): Promise<ImpactSuppression> {
   const missions = await prisma.mission.findMany({ where: { clientId }, select: { id: true } })
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: { name: true },
+  })
 
   const total = { ...VIDE }
   for (const m of missions) {
-    const impact = await supprimerMission(m.id)
+    // Chaque mission laisse **sa propre** trace au passage : sans elles, le
+    // journal dirait qu'un client a disparu sans dire ce qu'il emportait.
+    const impact = await supprimerMission(m.id, acteurId)
     total.prestations += impact.prestations
     total.saisies += impact.saisies
     total.cras += impact.cras
@@ -436,6 +494,14 @@ export async function supprimerClient(clientId: string): Promise<ImpactSuppressi
       where: { provider: DOLIBARR, entityType: 'Client', entityId: clientId },
     })
     await tx.client.delete({ where: { id: clientId } })
+  })
+
+  await appendAudit({
+    ...(await actorOf(acteurId)),
+    action: 'client.supprime',
+    entityType: 'Client',
+    entityId: clientId,
+    payload: { nom: client?.name ?? '', missions: missions.length, ...total },
   })
 
   return total

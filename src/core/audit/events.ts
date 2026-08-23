@@ -19,7 +19,7 @@
  * indéfiniment. Ce qui subsiste, en revanche, c'est le suivi **manuel** porté
  * par le CRA (numéro de facture, date de facturation, date de paiement) :
  * c'est un acte, il engage, et c'est lui que `facturation.renseignee`
- * consigne. Le catalogue compte donc toujours 25 entrées.
+ * consigne.
  */
 export const AUDIT_ACTIONS = [
   // Saisie
@@ -39,6 +39,22 @@ export const AUDIT_ACTIONS = [
   'client.cree',
   'mission.creee',
   'prestation.creee',
+  // **Ce qui disparaît laisse une trace**, décidé le 23 août 2026. Le
+  // référentiel ne consignait que les créations : une prestation et ses
+  // saisies — jusqu'à des heures déjà poussées chez Dolibarr et figurant dans
+  // un CRA validé — pouvaient s'effacer sans qu'aucun événement ne le dise.
+  //
+  // La charge utile porte ce qui a été détruit, compté avant de l'être : c'est
+  // la seule occasion de le savoir.
+  //
+  // **L'archivage n'y figure pas.** Il est réversible et ne détruit rien —
+  // l'objet, ses saisies et ses CRA restent entiers, et l'écran *Données* les
+  // montre. Un catalogue qui grossit sans discipline devient inutilisable pour
+  // celui qui doit choisir à quoi s'abonner.
+  'client.supprime',
+  'mission.renommee',
+  'mission.supprimee',
+  'prestation.supprimee',
   // Dolibarr — émis par le lot 2
   'temps.pousses',
   // Agenda — émis par le lot 1b

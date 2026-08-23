@@ -520,7 +520,9 @@ export async function detruireMission(
   missionId: string,
   confirmation: string,
 ): Promise<GestionMissionState> {
-  await requireUser()
+  // L'identité sert au journal : une suppression sans auteur n'apprend que la
+  // moitié de ce qu'il faut savoir.
+  const user = await requireUser()
 
   const mission = await prisma.mission.findUnique({
     where: { id: missionId },
@@ -535,7 +537,7 @@ export async function detruireMission(
   }
 
   try {
-    const impact = await supprimerMission(missionId)
+    const impact = await supprimerMission(missionId, user.id)
     revalidatePath('/missions')
     return {
       ok: true,

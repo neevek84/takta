@@ -1106,6 +1106,43 @@ describe('renommer une mission', () => {
     return m
   }
 
+  /**
+   * **Le libellé n'est pas décoratif** : il part dans le PDF envoyé au client
+   * et nomme le projet chez Dolibarr. Un nom qui change sans laisser de trace
+   * rend inexplicable, six mois plus tard, l'écart entre un CRA archivé et la
+   * mission qui le porte.
+   */
+  /** Le dernier `seq` du journal. `readAuditSince(0)` plafonne, et le plafond
+   *  ment dès que le fichier a produit plus d'entrées que la page. */
+  async function derniereSeq(): Promise<number> {
+    const tete = await prisma.auditEvent.findFirst({ orderBy: { seq: 'desc' }, select: { seq: true } })
+    return tete?.seq ?? 0
+  }
+
+  it('CONSIGNE LE RENOMMAGE, avec l avant et l apres', async () => {
+    const m = await decorRenommage('journal')
+    const avant = await derniereSeq()
+
+    await updateMissionLabel(userId, m.id, 'AMOA ITSM')
+
+    const trace = (await readAuditSince({ since: avant, action: 'mission.renommee' })).at(0)
+    expect(trace).toBeDefined()
+    expect(trace!.entityId).toBe(m.id)
+    // Sans l'avant, on sait qu'un nom a changé sans savoir lequel.
+    expect(trace!.payload).toMatchObject({ avant: 'Ancien libellé', apres: 'AMOA ITSM' })
+  })
+
+  // Le formulaire repose le champ à chaque soumission : consigner une
+  // « modification » identique noierait le journal sous des non-événements.
+  it('ne consigne rien quand le libellé ne change pas', async () => {
+    const m = await decorRenommage('idempotent')
+    const avant = await derniereSeq()
+
+    await updateMissionLabel(userId, m.id, 'Ancien libellé')
+
+    expect(await readAuditSince({ since: avant, action: 'mission.renommee' })).toEqual([])
+  })
+
   it('renomme, et le détail de la mission le montre', async () => {
     const m = await decorRenommage('simple')
 

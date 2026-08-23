@@ -53,7 +53,9 @@ export async function detruireClient(
   clientId: string,
   confirmation: string,
 ): Promise<DonneesState> {
-  await exigerAdministration()
+  // L'identité sert au journal : une suppression sans auteur n'apprend que la
+  // moitié de ce qu'il faut savoir.
+  const moi = await exigerAdministration()
 
   const client = await prisma.client.findUnique({
     where: { id: clientId },
@@ -68,7 +70,7 @@ export async function detruireClient(
   }
 
   try {
-    const impact = await supprimerClient(clientId)
+    const impact = await supprimerClient(clientId, moi.id)
     revalidatePath('/admin/donnees')
     revalidatePath('/missions')
     return {
