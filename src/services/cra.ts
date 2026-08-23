@@ -136,10 +136,20 @@ type Row = {
   } | null
 }
 
-/** Identifiants des CRA dont le PDF signé est archivé, sans charger les octets. */
-async function craAvecArchive(craIds: string[]): Promise<Set<string>> {
+/**
+ * Identifiants des CRA dont le PDF signé est archivé, sans charger les octets.
+ *
+ * `client` par défaut sur `prisma` : le seul appelant qui a besoin d'y
+ * substituer une transaction empruntée est `getOrCreateCra`, pour rester sur
+ * la même connexion qu'elle tient déjà — les autres continuent de lire sur le
+ * client du module, sans y penser.
+ */
+async function craAvecArchive(
+  craIds: string[],
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<Set<string>> {
   if (craIds.length === 0) return new Set()
-  const lignes = await prisma.signatureRequest.findMany({
+  const lignes = await client.signatureRequest.findMany({
     where: { craId: { in: craIds }, NOT: { signedPdf: null } },
     select: { craId: true },
   })
@@ -192,40 +202,78 @@ function monthStart(month: string): Date {
  * s'il a créé. Consigner une ouverture à chaque affichage de la page noierait
  * le journal sous un événement qui ne raconte rien — le CRA n'est ouvert
  * qu'une fois.
+ *
+ * `tx` : `prisma` par défaut, pour tout appelant hors transaction — c'est le
+ * cas de tous les appelants historiques (l'écran CRA). `genererCra`
+ * (`cra-generation.ts`) est seul à passer une transaction à lui, la sienne :
+ * elle doit tomber avec le sort du prévisionnel qu'elle traite dans la même
+ * transaction, faute de quoi un prévisionnel supprimé sans CRA créé serait
+ * une perte que rien ne rattrape.
+ *
+ * **Pourquoi la même fonction, et pas deux.** Une seconde implémentation de
+ * « créer ou retrouver, en capturant la course sur le conflit d'unicité »
+ * divergerait de celle-ci au premier défaut corrigé d'un seul côté — c'est
+ * exactement ce qui a commencé à se produire (relu le 23 août 2026) : l'autre
+ * variante retentait l'insertion à l'aveugle, sans la lecture optimiste
+ * d'abord.
+ *
+ * **`sortie`, et pourquoi le journal ne s'écrit pas toujours ici.** Hors
+ * transaction empruntée, la création **est** la transaction : elle est déjà
+ * retenue au moment où `tx.cra.create` réussit, et le journal peut la
+ * consigner dans la foulée — c'est le comportement historique, inchangé.
+ * Mais dans une transaction empruntée, cette création n'est qu'une étape
+ * parmi d'autres et peut encore être annulée par la suite ; `appendAudit`
+ * passe en outre par `prisma`, jamais par `tx` — l'appeler pendant qu'une
+ * transaction tient encore la connexion la ferait attendre indéfiniment
+ * (rejoué nulle part ailleurs dans ce dépôt, où le journal s'écrit toujours
+ * **après** la transaction qu'il rapporte). La fonction ne consigne donc rien
+ * elle-même dans ce cas ; `sortie.cree`, rempli si fourni, dit à l'appelant
+ * s'il doit le faire lui-même, une fois SA transaction validée.
  */
 export async function getOrCreateCra(
   userId: string,
   missionId: string,
   month: string,
+  tx: Prisma.TransactionClient | typeof prisma = prisma,
+  sortie?: { cree: boolean },
 ): Promise<CraView> {
   const cle = { missionId_userId_month: { missionId, userId, month: monthStart(month) } }
 
-  const existant = await prisma.cra.findUnique({ where: cle, include: WITH_MISSION })
-  if (existant !== null) return toView(existant, await craAvecArchive([existant.id]))
+  const existant = await tx.cra.findUnique({ where: cle, include: WITH_MISSION })
+  if (existant !== null) {
+    if (sortie) sortie.cree = false
+    return toView(existant, await craAvecArchive([existant.id], tx))
+  }
 
   let row
   try {
-    row = await prisma.cra.create({
+    row = await tx.cra.create({
       data: { missionId, userId, month: monthStart(month) },
       include: WITH_MISSION,
     })
   } catch {
-    // Course avec un autre rendu de la même page : le CRA existe désormais,
-    // et il n'a été « ouvert » qu'une fois — c'est l'autre rendu qui l'a
-    // consigné.
-    const relu = await prisma.cra.findUniqueOrThrow({ where: cle, include: WITH_MISSION })
-    return toView(relu, await craAvecArchive([relu.id]))
+    // Course avec un autre rendu de la même page — ou, dans une transaction
+    // empruntée, avec un autre appel qui aurait créé entre-temps : dans les
+    // deux cas, le CRA existe désormais, et il n'a été « ouvert » qu'une
+    // fois — ce n'est pas cet appel-ci qui l'a consigné.
+    const relu = await tx.cra.findUniqueOrThrow({ where: cle, include: WITH_MISSION })
+    if (sortie) sortie.cree = false
+    return toView(relu, await craAvecArchive([relu.id], tx))
   }
 
-  await appendAudit({
-    ...(await actorOf(userId)),
-    action: 'cra.ouvert',
-    entityType: 'Cra',
-    entityId: row.id,
-    payload: { missionId, month, status: row.status },
-  })
+  if (sortie) sortie.cree = true
 
-  return toView(row, await craAvecArchive([row.id]))
+  if (tx === prisma) {
+    await appendAudit({
+      ...(await actorOf(userId)),
+      action: 'cra.ouvert',
+      entityType: 'Cra',
+      entityId: row.id,
+      payload: { missionId, month, status: row.status },
+    })
+  }
+
+  return toView(row, await craAvecArchive([row.id], tx))
 }
 
 /**

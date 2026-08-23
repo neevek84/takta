@@ -14,20 +14,17 @@
  * **Les deux tombent ensemble, dans une seule transaction.** Un prévisionnel
  * supprimé sans CRA créé est une perte de données que rien ne rattrape ; un
  * CRA créé sur un prévisionnel non traité ment sur ce qu'il porte.
- *
- * `getOrCreateCra` (`@/services/cra`) ouvre sa propre écriture et n'accepte
- * pas de `tx` : l'appeler après la transaction du prévisionnel briserait
- * cette garantie si la création échouait — le prévisionnel serait déjà
- * converti ou supprimé pour rien. La création est donc réécrite ici,
- * **dans** la transaction du prévisionnel, en reproduisant la capture de
- * course de `getOrCreateCra` (`try`/`catch` + relecture) : sans elle, un CRA
- * déjà ouvert pour ce mois — par un rendu simultané, ou simplement par un
- * précédent passage laissé en brouillon — ferait lever `tx.cra.create` au
- * lieu de rendre l'existant.
+ * `getOrCreateCra` (`@/services/cra`) accepte pour cela une transaction en
+ * paramètre — la nôtre, ici, plutôt que sa propre écriture par défaut — afin
+ * que la création du CRA et le traitement du prévisionnel tombent ou tiennent
+ * ensemble. Sa propre capture de course (conflit d'unicité → relecture) et sa
+ * propre discipline d'écriture du journal sont réutilisées telles quelles :
+ * une seconde implémentation aurait divergé de la première au premier défaut
+ * corrigé d'un seul côté.
  */
 import { prisma } from '@/db/client'
-import type { Prisma } from '@prisma/client'
 import { annulerPrevisionnelDuMois, validerPrevisionnelDuMois } from './cra-previsionnel'
+import { getOrCreateCra } from './cra'
 import { appendAudit, actorOf } from './audit'
 import type { CraStatus } from '@/core/types'
 
@@ -42,65 +39,19 @@ function monthStart(month: string): Date {
   return new Date(`${month}-01T00:00:00.000Z`)
 }
 
-function estConflitUnicite(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2002'
-}
-
 /**
  * Un mois déjà validé, découvert **pendant** la transaction — la fenêtre
  * entre la lecture de garde et l'ouverture de la transaction, où un autre
- * appel aurait validé le mois entre-temps. Levée pour faire annuler la
- * transaction entière : sans elle, le prévisionnel serait déjà converti ou
- * supprimé au moment où la course se révèle.
+ * appel aurait validé le mois entre-temps. `getOrCreateCra` ignore ce
+ * verrou (il ne connaît pas la notion de « mois clos », propre à la
+ * génération) : c'est donc ici, et non dans `cra.ts`, que la course se
+ * détecte. Levée pour faire annuler la transaction entière : sans elle, le
+ * prévisionnel serait déjà converti ou supprimé au moment où la course se
+ * révèle.
  */
 class MoisDejaValideError extends Error {
   constructor(readonly craId: string) {
     super('Le CRA de ce mois est déjà validé.')
-  }
-}
-
-/**
- * Ouvre le CRA du mois **dans la transaction en cours**, ou rend celui qui
- * existe déjà — qu'il ait été créé juste avant par un rendu simultané, ou
- * qu'il existe simplement depuis un précédent passage sur ce mois. `cree`
- * distingue les deux cas : seule une création réelle mérite `cra.ouvert` au
- * journal.
- */
-async function ouvrirCraDansTransaction(
-  tx: Prisma.TransactionClient,
-  args: { userId: string; missionId: string; month: string },
-): Promise<{ id: string; cree: boolean }> {
-  try {
-    const row = await tx.cra.create({
-      data: { missionId: args.missionId, userId: args.userId, month: monthStart(args.month) },
-      select: { id: true },
-    })
-    return { id: row.id, cree: true }
-  } catch (err) {
-    if (!estConflitUnicite(err)) throw err
-
-    // Course avec un autre rendu de la même page, ou CRA déjà ouvert par un
-    // précédent passage sur ce mois : dans les deux cas, il n'a été « ouvert »
-    // qu'une fois, et ce n'est pas ce rendu-ci qui le consigne.
-    const relu = await tx.cra.findUniqueOrThrow({
-      where: {
-        missionId_userId_month: {
-          missionId: args.missionId,
-          userId: args.userId,
-          month: monthStart(args.month),
-        },
-      },
-      select: { id: true, status: true },
-    })
-
-    // La lecture de garde, avant la transaction, a laissé passer un mois qui
-    // n'était pas encore validé à cet instant-là. S'il l'est devenu entre
-    // cette lecture et l'ouverture de la transaction, mieux vaut annuler tout
-    // ce que la transaction a déjà fait — y compris le prévisionnel déjà
-    // traité — que de laisser croire qu'on a écrit sur un mois clos.
-    if ((relu.status as CraStatus) === 'VALIDE') throw new MoisDejaValideError(relu.id)
-
-    return { id: relu.id, cree: false }
   }
 }
 
@@ -151,13 +102,20 @@ export async function genererCra(
               month: args.month,
             })
 
-      const cra = await ouvrirCraDansTransaction(tx, {
-        userId,
-        missionId: line.missionId,
-        month: args.month,
-      })
+      const sortie = { cree: false }
+      const cra = await getOrCreateCra(userId, line.missionId, args.month, tx, sortie)
 
-      return { previsionnelTraite, craId: cra.id, craCree: cra.cree }
+      // La lecture de garde, plus haut, a laissé passer un mois qui n'était
+      // pas encore validé à cet instant-là. S'il l'est devenu entre cette
+      // lecture et l'ouverture de cette transaction — un autre appel a validé
+      // pendant que celui-ci traitait son prévisionnel —, mieux vaut annuler
+      // tout ce que la transaction a déjà fait, y compris le prévisionnel
+      // déjà traité, que de laisser croire qu'on a écrit sur un mois clos.
+      if (!sortie.cree && cra.status === 'VALIDE') {
+        throw new MoisDejaValideError(cra.id)
+      }
+
+      return { previsionnelTraite, craId: cra.id, craCree: sortie.cree }
     })
   } catch (err) {
     if (err instanceof MoisDejaValideError) {
@@ -168,7 +126,9 @@ export async function genererCra(
   const { previsionnelTraite, craId, craCree } = resultat
 
   // Consigné après la transaction : le journal atteste de ce qui a eu lieu,
-  // et une transaction annulée n'a rien fait avoir lieu.
+  // et une transaction annulée n'a rien fait avoir lieu. `getOrCreateCra`
+  // n'a rien consigné lui-même pour cette création — voir son commentaire
+  // dans `cra.ts` — c'est donc à faire ici.
   if (craCree) {
     await appendAudit({
       ...(await actorOf(userId)),

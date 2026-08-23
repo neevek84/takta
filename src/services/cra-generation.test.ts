@@ -6,21 +6,36 @@ import { genererCra } from './cra-generation'
 import { currentAuditSeq, readAuditSince } from './audit'
 
 /**
- * Un interrupteur pour faire échouer la mise en file, réel et non simulé —
- * même montage que `cra.test.ts`. C'est ce qui permet de provoquer un
- * véritable échec de la création du CRA (au sens : de la transaction qui la
- * porte) plutôt que d'en simuler la forme avec un mock qu'on interroge après
- * coup.
+ * Un interrupteur pour provoquer, réellement, l'échec précis que le test
+ * d'atomicité doit démontrer : celui de la création du CRA elle-même,
+ * **après** que le prévisionnel a déjà été traité dans la même transaction.
+ *
+ * `annulerPrevisionnelDuMois` fait d'abord son vrai travail (délégué à
+ * l'implémentation réelle), puis — seulement si l'interrupteur est armé —
+ * supprime la mission **dans la même transaction** (`tx`, jamais `prisma`).
+ * `tx.cra.create`, appelé juste après par `genererCra`, référence alors une
+ * mission qui n'existe plus dans cette transaction : une vraie violation de
+ * contrainte de clé étrangère, pas une forme de mock qu'on interroge après
+ * coup. La supprimer plus tôt (avant l'appel à `genererCra`) aurait cascadé
+ * sur la ligne et rendu la prestation introuvable — `NON_AFFECTE`, pas la
+ * panne de création qu'on veut provoquer ; elle doit donc tomber ici, entre
+ * les deux étapes exactes que la tâche demande d'observer.
  */
-const file = vi.hoisted(() => ({ indisponible: false }))
+const echecApresPrevisionnel = vi.hoisted(() => ({ actif: false }))
 
-vi.mock('@/services/sync/outbox', async (importOriginal) => {
-  const reel = await importOriginal<typeof import('./sync/outbox')>()
+vi.mock('./cra-previsionnel', async (importOriginal) => {
+  const reel = await importOriginal<typeof import('./cra-previsionnel')>()
   return {
     ...reel,
-    enqueueTimeEntry: async (...args: Parameters<typeof reel.enqueueTimeEntry>) => {
-      if (file.indisponible) throw new Error('file indisponible')
-      await reel.enqueueTimeEntry(...args)
+    annulerPrevisionnelDuMois: async (
+      tx: Parameters<typeof reel.annulerPrevisionnelDuMois>[0],
+      args: Parameters<typeof reel.annulerPrevisionnelDuMois>[1],
+    ) => {
+      const compte = await reel.annulerPrevisionnelDuMois(tx, args)
+      if (echecApresPrevisionnel.actif) {
+        await tx.mission.delete({ where: { id: args.missionId } })
+      }
+      return compte
     },
   }
 })
@@ -43,7 +58,7 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
-  file.indisponible = false
+  echecApresPrevisionnel.actif = false
   await prisma.syncOutbox.deleteMany({})
   await prisma.client.deleteMany({ where: { name: { startsWith: 'GEN' } } })
   const client = await createClient('GEN Client')
@@ -279,11 +294,19 @@ describe('genererCra', () => {
     const id = await saisir(premier, 'PREVISIONNEL')
     const avant = await currentAuditSeq()
 
-    file.indisponible = true
+    // L'échec est provoqué *après* que le prévisionnel a déjà été traité,
+    // dans la même transaction — voir le commentaire du mock plus haut.
+    echecApresPrevisionnel.actif = true
     await expect(
       genererCra(userId, { lineId, month, previsionnel: 'SUPPRIMER' }),
     ).rejects.toThrow()
-    file.indisponible = false
+    echecApresPrevisionnel.actif = false
+
+    // La transaction a tout annulé, y compris la suppression de la mission
+    // qui a servi à provoquer l'échec de la création : si ce n'était pas le
+    // cas, la mission aurait disparu pour de bon.
+    const mission = await prisma.mission.findUnique({ where: { id: missionId } })
+    expect(mission).not.toBeNull()
 
     const entry = await prisma.timeEntry.findUnique({ where: { id } })
     expect(entry?.kind).toBe('PREVISIONNEL')
