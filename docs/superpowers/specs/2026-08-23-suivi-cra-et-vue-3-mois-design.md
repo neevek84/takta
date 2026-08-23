@@ -1,4 +1,4 @@
-# Suivi CRA, génération depuis la saisie, vue 3 mois
+# Suivi CRA, génération depuis la saisie, vue 3 mois, agenda à la demande
 
 **Date :** 2026-08-23
 **Statut :** design validé, en attente de plan d'implémentation
@@ -7,7 +7,7 @@
 
 ## 1. Intention
 
-Six évolutions, demandées ensemble parce qu'elles racontent une seule chose :
+Sept évolutions, demandées ensemble parce qu'elles racontent une seule chose :
 **le CRA se génère là où on saisit, et l'écran CRA cesse d'être un lieu de
 travail pour devenir un lieu de suivi.**
 
@@ -25,6 +25,7 @@ qu'on est en train d'arrêter.
 | D | À la génération, le sort du prévisionnel du mois devient un **choix humain** |
 | E | Une troisième vue de saisie : **3 mois** (mois affiché, +1, +2) |
 | F | Le gabarit de page s'élargit et ses marges se resserrent |
+| G | L'agenda Google ne se lit plus qu'**à la demande**, sur la plage affichée |
 
 ### Ce que ces évolutions ne font pas
 
@@ -381,19 +382,18 @@ surface de saisie mobile.
 Les trois mois sont `month`, `shiftMonth(month, 1)`, `shiftMonth(month, 2)` —
 `buildMonthDays` pour chacun, avec les mêmes jours ouvrés et les mêmes fériés.
 
-Les saisies et l'occupation d'agenda passent à une **lecture de plage** plutôt
-que trois lectures de mois :
+Les saisies passent à une **lecture de plage** plutôt qu'à trois lectures de
+mois :
 
 ```ts
 getEntriesRange(userId, { du: string, au: string }): Promise<MonthEntry[]>
-getBusyRange(userId, { du: string, au: string }): Promise<string[]>
 ```
 
-`getMonthEntries` et `getBusyDays` deviennent des appels de plage sur un mois —
-une seule règle de bornes, pas deux. Trois allers-retours Google à chaque
-ouverture de la vue seraient payés par l'utilisateur à chaque bascule ; et
-comme aujourd'hui, une lecture d'agenda qui échoue rend une liste vide et la
-page s'affiche normalement.
+`getMonthEntries` devient un appel de plage sur un mois — une seule règle de
+bornes, pas deux.
+
+L'occupation d'agenda, elle, ne se lit plus au chargement du tout : voir la
+section G.
 
 ### La densité
 
@@ -476,7 +476,111 @@ suivent la nouvelle valeur. Leur intention — *un seul gabarit pour tous les
 
 ---
 
-## 8. Ce qui se teste
+## 8. G — L'agenda ne se lit plus qu'à la demande
+
+### Le problème que ça ferme
+
+Aujourd'hui, **chaque ouverture d'un mois de la Saisie appelle Google** :
+
+```ts
+const busyDates = await getBusyDays(user.id, month)
+```
+
+Parcourir douze mois, c'est douze appels `freeBusy` — pour un repère qu'on ne
+regardait peut-être pas. La vue 3 mois aurait triplé la note à chaque bascule.
+
+Le commentaire de [`availability.ts`](../../../src/services/availability.ts)
+assume explicitement ce choix : *« Aucun cache en v1 : un appel `freeBusy` est
+bon marché. »* Sur un quota serré, l'hypothèse ne tient plus. **Elle est
+renversée ici, et ce commentaire doit être corrigé avec elle** — le laisser
+justifierait encore une décision qu'on vient d'abandonner.
+
+### La décision
+
+**Plus aucune lecture d'agenda au chargement, dans aucune vue.** Un bouton
+dans la barre d'outils de la Saisie :
+
+> **Vérifier l'agenda**
+
+Un clic, un appel, sur **exactement la plage affichée** : un mois en vue
+calendrier et en vue tableau, trois en vue 3 mois. Les marqueurs d'occupation
+apparaissent alors comme aujourd'hui — même dessin, même infobulle
+(`OCCUPATION_TITRE`), même phrase à la saisie (`phraseOccupation`).
+
+### Le service et l'action
+
+`getBusyDays(userId, month)` devient :
+
+```ts
+getBusyRange(userId, { du: string, au: string }): Promise<
+  { ok: true; jours: string[] } | { ok: false; raison: RaisonAgenda }
+>
+```
+
+**Le changement de forme est le cœur de cette section, pas un détail.**
+Aujourd'hui, une lecture qui échoue et un mois sans aucune occupation rendent
+tous deux une liste vide : indistinguables. C'était acceptable tant que
+personne n'avait rien demandé — le repère était un confort qui apparaissait ou
+non. À partir du moment où l'utilisateur **clique** pour savoir, une liste vide
+qui veut dire « Google n'a pas répondu » est un mensonge.
+
+La garantie de fond ne change pas pour autant : **la fonction ne lève jamais.**
+Compte non connecté, appel expiré, autorisation révoquée — elle rend
+`{ ok: false }` et la saisie continue exactement comme avant.
+
+Une server action dans
+[`saisie/[month]/actions.ts`](../../../src/app/(app)/saisie/[month]/actions.ts) :
+
+```ts
+verifierAgenda(args: { du: string; au: string }): Promise<ResultatAgenda>
+```
+
+Elle borne la plage à ce qu'une vue peut afficher — **trois mois au maximum**.
+La plage vient du client, et un client forgé demandant dix ans brûlerait le
+quota en un appel.
+
+### Ce que le bouton dit
+
+Trois issues, et elles se disent différemment :
+
+| Issue | Ce qui s'affiche |
+|---|---|
+| occupations trouvées | les marqueurs, plus « *n* jours occupés sur \<plage\> » |
+| aucune occupation | « Aucune occupation sur \<plage\>. » — le vide, affirmé |
+| lecture en échec | « L'agenda n'a pas répondu. La saisie continue normalement. » |
+
+Le bouton n'est rendu que si un connecteur d'agenda est configuré — une lecture
+locale de `ProviderCredential`, sans réseau. Un bouton qui échoue toujours
+n'apprend rien à personne.
+
+### Où vit le résultat
+
+Dans l'état de `SaisieClient`, et nulle part ailleurs. **Aucune mémoire
+serveur, aucun cache** : c'est le choix du porteur, et c'est celui qui n'ajoute
+ni table, ni durée de péremption à arbitrer, ni fraîcheur à expliquer.
+
+`busyDates` cesse d'être une prop calculée par la page pour devenir la valeur
+initiale d'un `useState` — les tests continuent d'ensemencer les occupations
+par la prop, la page ne la passe plus.
+
+Le résultat porte **la plage qu'il couvre**. Deux conséquences, et il faut
+tenir les deux :
+
+- changer de mois est une navigation, donc l'état repart à vide — un mois
+  d'août vérifié ne doit jamais marquer des jours de septembre ;
+- **passer du calendrier à la vue 3 mois efface le résultat**, parce que la
+  plage vérifiée ne couvre plus ce qu'on montre. L'inverse — passer de 3 mois
+  au calendrier — le conserve : la plage vérifiée contient celle qu'on affiche.
+
+### Ce que ça coûte
+
+Il faut cliquer. C'est assumé : le repère d'occupation n'a jamais rien interdit
+ni rien bloqué — il informe. Le rendre explicite le rend aussi plus honnête,
+puisqu'il sait désormais dire qu'il n'a pas pu répondre.
+
+---
+
+## 9. Ce qui se teste
 
 La discipline du dépôt est le test d'abord ; ces points-là sont ceux qui
 échouent silencieusement si personne ne les écrit.
@@ -509,9 +613,18 @@ La discipline du dépôt est le test d'abord ; ces points-là sont ceux qui
 **F — Gabarit**
 - Le budget des 375 points tient toujours, lu depuis `PageShell`.
 
+**G — Agenda à la demande**
+- **Ouvrir la Saisie n'appelle pas Google.** C'est le test qui porte toute la
+  section : un connecteur espion doit rester à zéro appel après le rendu.
+- « Aucune occupation » et « l'agenda n'a pas répondu » produisent deux
+  messages distincts.
+- Une plage de plus de trois mois est refusée par l'action.
+- Passer du calendrier à la vue 3 mois efface le résultat ; l'inverse le garde.
+- Sans connecteur configuré, le bouton n'est pas rendu.
+
 ---
 
-## 9. Ordre de construction
+## 10. Ordre de construction
 
 Chaque étape laisse le produit utilisable ; aucune ne dépend d'une suivante.
 
@@ -524,4 +637,7 @@ Chaque étape laisse le produit utilisable ; aucune ne dépend d'une suivante.
    testées sans interface.
 5. **C** — le bouton et le panneau dans la Saisie, puis retrait du formulaire
    « Ouvrir un CRA ».
-6. **E** — la densité compacte, puis la vue 3 mois.
+6. **G** — `getBusyRange`, l'action, le bouton. **Avant E** : c'est ce qui
+   rend la vue 3 mois gratuite en quota, et l'écrire après reviendrait à
+   livrer un instant l'écran qu'on cherche justement à éviter.
+7. **E** — la densité compacte, puis la vue 3 mois.
