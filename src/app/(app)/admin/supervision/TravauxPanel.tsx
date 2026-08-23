@@ -67,23 +67,24 @@ export function TravauxPanel({
         <span className="font-medium">{ordonnanceur.proprietaireLabel}</span>, le plus ancien.
       </p>
 
-      {/* **Un ordonnanceur sans horloge.** `POST /api/jobs/tick` n'a pas de
-          minuterie : il attend qu'un déclencheur extérieur l'appelle. Tant que
-          personne ne l'appelle, rien ne tourne jamais — et l'écran affichait
-          sept lignes « Jamais exécuté » sans dire pourquoi.
+      {/* **L'horloge est interne, et c'est un revirement.** L'ordonnanceur
+          attendait un declencheur exterieur ; le porteur a tranche le 23 aout
+          2026 — l'API existe pour que d'autres outils viennent parler a
+          l'application, pas pour qu'elle se fasse marcher elle-meme.
 
-          Le silence s'impose dès qu'un travail a tourné (le réveil existe,
-          le redire serait crier au loup) et quand aucun n'est activé
-          (personne n'attend rien). */}
+          Ce bandeau ne dit donc plus « posez un cron » : il dit qu'un reveil
+          aurait deja du avoir lieu, et ou regarder. Il se tait des qu'un
+          travail a tourne, et quand aucun n'est active — autrement il
+          crierait au loup, et on cesserait de lire les bandeaux de cet
+          ecran. */}
       {jamaisReveille && (
         <div className="mb-3">
-          <Banner tone="warning" title="Aucun réveil n’a jamais eu lieu">
+          <Banner tone="warning" title="Aucun réveil n’a encore eu lieu">
             <p className="text-sm">
-              L’ordonnanceur n’a pas d’horloge : il attend qu’un déclencheur extérieur appelle{' '}
-              <code>POST /api/jobs/tick</code>, toutes les cinq minutes, avec l’en-tête{' '}
-              <code>Authorization: Bearer $CRA_API_TOKEN</code>. Sur un NAS, une tâche planifiée
-              suffit. Tant que personne ne l’appelle, aucun rappel ne partira et la file de sortie
-              ne se videra jamais d’elle-même.
+              L’ordonnanceur se réveille tout seul toutes les cinq minutes, dès le démarrage du
+              serveur. Si cette ligne persiste au-delà, c’est que le réveil ne se fait pas :
+              regardez les journaux du serveur, l’entrée <code>horloge</code>. Tant qu’il ne tourne
+              pas, aucun rappel ne part et la file de sortie ne se vide pas d’elle-même.
             </p>
           </Banner>
         </div>

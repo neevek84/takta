@@ -14,14 +14,16 @@
  * construit.
  */
 export async function register(): Promise<void> {
-  if (process.env.NEXT_RUNTIME !== undefined && process.env.NEXT_RUNTIME !== 'nodejs') return
-
-  const { assurerDurabilite } = await import('./db/client')
-  const { estSqlite } = await import('./db/durabilite')
-  const url = process.env.DATABASE_URL ?? ''
-  if (!estSqlite(url)) return
-
-  await assurerDurabilite()
-  // Aucun secret ici : ni l'URL, ni le chemin de la base ne sont écrits.
-  console.log('Base locale : journalisation WAL et attente du disque (synchronous=FULL) posées.')
+  // **La forme positive est obligatoire.** Next compile ce fichier pour les
+  // deux runtimes et remplace `NEXT_RUNTIME` par une constante dans chacun :
+  // c'est ce qui lui permet d'éliminer la branche entière du paquet edge, avec
+  // tout ce qu'elle importe. Écrite en sortie anticipée — « si ce n'est pas
+  // Node, on s'en va » — l'élimination ne se fait pas, et la construction
+  // échoue sur `nodemailer`, qui demande `stream`.
+  //
+  // `undefined` couvre les tests, où Next ne pose rien.
+  if (process.env.NEXT_RUNTIME === 'nodejs' || process.env.NEXT_RUNTIME === undefined) {
+    const { demarrerLeServeur } = await import('./instrumentation-node')
+    await demarrerLeServeur()
+  }
 }

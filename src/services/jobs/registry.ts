@@ -74,11 +74,20 @@ export const JOB_DEFINITIONS: readonly JobDefinition[] = [
     name: 'outbox.flush',
     label: 'Vidage de la file de sortie',
     intervalMinutes: 5,
-    // Désactivé par défaut bien qu'il soit porté : il **écrit chez autrui**
-    // (agenda Google, Dolibarr). Le bouton « Synchroniser maintenant » et
-    // `POST /api/sync/flush` suffisent à l'autoportance ; automatiser une
-    // écriture sortante se décide, cela ne s'hérite pas d'une installation.
-    enabledByDefault: false,
+    // **Activé par défaut**, et c'est un revirement assumé.
+    //
+    // Il l'était : « il écrit chez autrui — agenda Google, Dolibarr —, et
+    // automatiser une écriture sortante se décide ». Le raisonnement tenait
+    // tant que l'ordonnanceur lui-même attendait un déclencheur extérieur.
+    // Le porteur a tranché le 23 août 2026 : **la synchronisation est le
+    // travail de l'outil, pas d'un cron qu'on aurait pensé à poser.** Une
+    // saisie qui reste en file parce qu'une case n'a pas été cochée n'arrive
+    // jamais dans l'agenda, et rien ne le dit.
+    //
+    // Le consentement n'a pas disparu pour autant : il est **en amont**, au
+    // moment où l'on connecte Google ou Dolibarr. Sans connecteur, la file se
+    // vide sur rien.
+    enabledByDefault: true,
     // La file porte déjà le `userId` de chaque ligne : la vider une fois les
     // vide toutes. La rejouer par personne rejouerait les mêmes lignes.
     parPersonne: false,

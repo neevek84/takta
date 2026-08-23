@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { register } from '@/instrumentation'
 import { prisma, assurerDurabilite } from '@/db/client'
 import { estSqlite, poserDurabiliteSqlite } from '@/db/durabilite'
+import { arreterHorloge, demarrerHorloge } from '@/services/jobs/horloge'
 
 /**
  * Le crochet de démarrage du serveur. Sans lui, `synchronous=FULL` n'était posé
@@ -17,6 +18,10 @@ async function synchronous(): Promise<number> {
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  // Le crochet remonte une vraie horloge : la laisser battre ferait tourner de
+  // vrais travaux contre la base de test, pendant les fichiers suivants.
+  arreterHorloge()
+  delete process.env.NEXT_PHASE
   await poserDurabiliteSqlite(prisma, process.env.DATABASE_URL ?? '')
 })
 
@@ -63,5 +68,34 @@ describe('register', () => {
       if (avant === undefined) delete process.env.NEXT_RUNTIME
       else process.env.NEXT_RUNTIME = avant
     }
+  })
+})
+
+/**
+ * **L'application porte sa propre horloge, et c'est le démarrage qui la
+ * remonte.** L'ordonnanceur attendait auparavant un déclencheur extérieur —
+ * un cron, une tâche planifiée de NAS. Une synchronisation qui ne part que si
+ * quelqu'un y a pensé n'est pas une fonction du produit.
+ */
+describe("l'horloge de l'ordonnanceur", () => {
+  it('est remontée au démarrage du serveur', async () => {
+    arreterHorloge()
+
+    await register()
+
+    // Elle tourne : un second démarrage est donc refusé.
+    expect(demarrerHorloge()).toBe(false)
+  })
+
+  // `next build` exécute lui aussi ce point d'entrée. Sans cette garde, chaque
+  // construction ouvrirait la base de développement de qui construit et y
+  // ferait tourner de vrais travaux — écritures sortantes comprises.
+  it('reste au repos pendant la construction', async () => {
+    arreterHorloge()
+    process.env.NEXT_PHASE = 'phase-production-build'
+
+    await register()
+
+    expect(demarrerHorloge()).toBe(true)
   })
 })

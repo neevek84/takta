@@ -187,3 +187,33 @@ describe('les directives de frontière sont en tête de fichier', () => {
   })
 })
 
+
+/**
+ * **Le point d'entrée du serveur est compilé pour les DEUX runtimes.**
+ *
+ * Next compile `instrumentation.ts` pour Node *et* pour edge, et remplace
+ * `NEXT_RUNTIME` par une constante dans chacun. C'est cette substitution qui
+ * lui permet d'éliminer du paquet edge la branche Node — et tout ce qu'elle
+ * importe. Écrite en sortie anticipée (« si ce n'est pas Node, on s'en va »),
+ * l'élimination ne se fait pas : la construction échoue sur `nodemailer`, qui
+ * demande `stream`. Mesuré le 23 août 2026, en remontant l'horloge de
+ * l'ordonnanceur.
+ *
+ * `npm run build` l'attrape, mais la suite ne lance pas de construction : sans
+ * ce contrôle, la faute revient et ne se voit qu'à la publication.
+ */
+describe("le point d'entrée du serveur reste compilable pour edge", () => {
+  const ENTREE = readFileSync(join(process.cwd(), 'src', 'instrumentation.ts'), 'utf8')
+
+  it('teste le runtime par la forme positive', () => {
+    expect(ENTREE).toMatch(/process\.env\.NEXT_RUNTIME === 'nodejs'/)
+    expect(ENTREE).not.toMatch(/process\.env\.NEXT_RUNTIME !== 'nodejs'/)
+  })
+
+  it("n'importe rien statiquement, hors types", () => {
+    // Un seul import statique de la chaîne serveur suffit à la faire entrer
+    // dans le paquet edge, quelle que soit la garde qui l'entoure.
+    const statiques = [...ENTREE.matchAll(/^import\s+(?!type\b)/gm)]
+    expect(statiques.map((m) => m[0])).toEqual([])
+  })
+})

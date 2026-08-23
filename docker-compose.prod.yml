@@ -86,50 +86,6 @@ services:
       - '3000:3000'
     restart: unless-stopped
 
-  # **Le réveil de l'ordonnanceur.** Sans lui, rien ne tourne jamais.
-  #
-  # `/api/jobs/tick` n'a aucune minuterie interne : il attend qu'on l'appelle.
-  # Tant que personne ne l'appelle, aucun rappel ne part, aucune relance de
-  # signature, et **la file de sortie ne se vide pas** — les créneaux saisis
-  # n'arrivent jamais dans l'agenda Google. Le porteur a déployé, ouvert la
-  # supervision, et trouvé sept travaux « Jamais exécuté ».
-  #
-  # C'était jusqu'ici à l'exploitant de poser une tâche planifiée sur son NAS.
-  # Un prérequis invisible dont l'oubli ne se voit qu'à l'absence de ce qui
-  # aurait dû arriver : la pire forme de panne. La composition le porte donc
-  # elle-même.
-  #
-  # Par le réseau interne (`app:3000`), jamais par le domaine public : le
-  # réveil n'a rien à faire sur Internet, et le faire sortir puis rentrer par
-  # le proxy ajouterait une panne possible au traitement qui doit être le plus
-  # fiable de l'installation.
-  reveil:
-    image: curlimages/curl:latest
-    depends_on:
-      - app
-    environment:
-      CRA_API_TOKEN: ${CRA_API_TOKEN:-}
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        if [ -z "$$CRA_API_TOKEN" ]; then
-          echo "CRA_API_TOKEN absent : l'ordonnanceur ne sera pas reveille."
-          echo "La route repondrait 503. Renseignez-le dans .env, puis relancez le projet."
-          # On dort au lieu de boucler sur un echec : un conteneur qui redemarre
-          # toutes les secondes noie les journaux de l'installation entiere.
-          while true; do sleep 3600; done
-        fi
-        # Cinq minutes : chaque travail porte sa propre recurrence, et un reveil
-        # plus frequent ne ferait que constater qu'il n'y a rien a faire.
-        while true; do
-          curl -fsS -m 60 -X POST -H "Authorization: Bearer $$CRA_API_TOKEN" \
-            http://app:3000/api/jobs/tick > /dev/null \
-            || echo "reveil echoue a $$(date -Iseconds)"
-          sleep 300
-        done
-    restart: unless-stopped
-
   # Sauvegarde : un `pg_dump` quotidien, pas une copie du volume.
   #
   # Copier les fichiers d'une base **en cours d'écriture** capture un état

@@ -413,38 +413,6 @@ describe('docker-compose.prod.yml — la composition qui sera déployée', () =>
  * composition de production sans être documenté, et c'est le porteur qui l'a
  * remarqué en lisant le fichier.
  */
-/**
- * **Le prérequis invisible.**
- *
- * `/api/jobs/tick` n'a aucune minuterie : sans un appel régulier, aucun rappel
- * ne part et la file de sortie ne se vide jamais — les créneaux saisis
- * n'arrivent pas dans l'agenda. L'oubli ne se voit qu'à l'absence de ce qui
- * aurait dû arriver, et c'est la pire forme de panne. La composition porte donc
- * le réveil elle-même, et ces contrôles interdisent qu'il disparaisse.
- */
-describe("la composition de production reveille l'ordonnanceur", () => {
-  it('porte un service dédié', () => {
-    expect(COMPOSE_PROD).toMatch(/^ {2}reveil:$/m)
-  })
-
-  it('appelle la route du réveil, par le réseau interne', () => {
-    expect(COMPOSE_PROD).toContain('http://app:3000/api/jobs/tick')
-    // Jamais par le domaine public : le faire sortir puis rentrer par le proxy
-    // ajouterait une panne possible au traitement le plus critique.
-    expect(COMPOSE_PROD).not.toMatch(/https:\/\/\S*\/api\/jobs\/tick/)
-  })
-
-  it('recommence, au lieu de mourir après un appel', () => {
-    expect(COMPOSE_PROD).toMatch(/sleep 300/)
-  })
-
-  // Sans jeton la route répond 503 : boucler dessus noierait les journaux de
-  // l'installation entière sous un échec qu'aucun réessai ne réparera.
-  it("se met en sommeil quand le jeton manque, au lieu de marteler", () => {
-    expect(COMPOSE_PROD).toMatch(/if \[ -z "\$\$CRA_API_TOKEN" \]/)
-  })
-})
-
 describe('les compositions ne réclament rien que .env.example ne documente', () => {
   /** Noms interpolés depuis l'environnement dans une composition. */
   function variablesReclamees(compose: string): string[] {

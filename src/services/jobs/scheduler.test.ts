@@ -212,12 +212,16 @@ describe('réveil', () => {
     expect(rapport.executes.find((e) => e.name === 'webhooks.distribute')).toMatchObject({
       state: 'ECHEC',
     })
+    // `outbox.flush` est desormais actif par defaut — la synchronisation est
+    // le travail de l'outil, plus celui d'un cron. Son vrai traitement tourne
+    // ici sur une file vide et reussit ; ce qui compte pour ce test est que
+    // l'echec de `webhooks.distribute` n'ait arrete personne.
     expect(
       rapport.executes
         .filter((e) => e.state === 'SUCCES')
         .map((e) => e.name)
         .sort(),
-    ).toEqual(['journal.verification', 'rappel.saisie'])
+    ).toEqual(['journal.verification', 'outbox.flush', 'rappel.saisie'])
   })
 
   it('consigne travail.echoue, une entrée par échec', async () => {

@@ -586,56 +586,35 @@ n'expose pas son journal. Le réveil de l'ordonnanceur utilise le même jeton :
     curl -X POST -H "Authorization: Bearer $CRA_API_TOKEN" \
          http://localhost:3000/api/jobs/tick
 
-### L'ordonnanceur n'a pas d'horloge
+### L'ordonnanceur porte sa propre horloge
 
-**C'est le point qu'on oublie, et rien ne tourne tant qu'il est oublié.**
-`/api/jobs/tick` attend qu'un déclencheur extérieur l'appelle : il n'a aucune
-minuterie interne. Sans lui, aucun rappel de saisie ne part, aucune relance de
-signature, et la file de sortie ne se vide jamais d'elle-même. L'écran
-*Supervision · Travaux* affiche alors sept lignes « Jamais exécuté » — et le dit
-désormais explicitement.
+**Rien à configurer.** Au démarrage du serveur, l'application remonte une horloge
+interne qui réveille l'ordonnanceur toutes les cinq minutes. Les rappels partent,
+la file de sortie se vide, l'agenda et Dolibarr reçoivent ce qui les attend —
+sans cron, sans tâche planifiée, sans jeton.
 
-Toutes les cinq minutes suffisent : chaque travail porte sa propre récurrence, et
-un réveil trop fréquent ne fait que constater qu'il n'y a rien à faire.
+Cinq minutes : chaque travail porte **sa propre** récurrence — cinq minutes pour
+la file de sortie, un jour pour les rappels — et l'horloge ne fait que demander
+« y a-t-il quelque chose d'échu ».
 
-**Avec `docker-compose.prod.yml`, c'est déjà fait** : la composition porte un
-service `reveil` qui appelle la route toutes les cinq minutes, par le réseau
-interne. Il te reste seulement à renseigner **`CRA_API_TOKEN`** dans le `.env` —
-sans jeton la route répond 503, et le service le dit dans ses journaux au lieu de
-marteler.
+**Il n'en a pas toujours été ainsi**, et le revirement mérite d'être dit :
+l'ordonnanceur attendait un déclencheur extérieur. C'était une erreur de
+conception. L'API existe pour que d'autres outils viennent parler à
+l'application — pas pour que l'application se fasse marcher elle-même. Une
+synchronisation qui ne part que si quelqu'un a pensé à poser un cron n'est pas
+une fonction du produit, et son oubli ne se voit qu'à l'absence de ce qui aurait
+dû arriver.
 
-```
-CRA_API_TOKEN="<openssl rand -hex 24>"
-```
+`POST /api/jobs/tick` reste, et garde tout son sens : elle permet à un
+orchestrateur extérieur — n8n, un `crontab`, un timer `systemd` — de **provoquer**
+un réveil quand il le veut. Elle n'est simplement plus nécessaire au
+fonctionnement normal.
 
-**Ailleurs** — installation depuis le dépôt, archive portable, ou toute
-composition qui ne porte pas ce service : une ligne de `crontab`, un timer
-`systemd`, une tâche planifiée DSM, un nœud *Schedule* de n8n. N'importe quoi qui
-sache faire un `POST` à l'heure dite :
-
-```bash
-curl -fsS -X POST -H "Authorization: Bearer LE_JETON" http://localhost:3000/api/jobs/tick
-```
-
-**Par `localhost` ou par le réseau interne, jamais par le domaine public** : le
-réveil n'a rien à faire sur Internet, et le faire sortir puis rentrer par le
-proxy ajoute une panne possible au traitement qui doit être le plus fiable de
-l'installation.
-
-### Le réveil ne suffit pas : la synchronisation sortante s'active
-
-**`Vidage de la file de sortie` est désactivé par défaut, délibérément.** C'est
-le travail qui écrit **chez autrui** — l'agenda Google, Dolibarr. Automatiser une
-écriture sortante se décide ; cela ne s'hérite pas d'une installation.
-
-Conséquence à connaître : tant qu'il est désactivé, une saisie **entre en file**
-mais n'atteint jamais l'agenda toute seule. Elle attend soit le bouton
-« Synchroniser maintenant » de *Réglages · Synchro*, soit l'activation du
-travail.
-
-Pour l'automatiser : *Supervision · Travaux* → ligne « Vidage de la file de
-sortie » → **Activer**. Une fois activé, et le réveil en place, les créneaux
-partent d'eux-mêmes dans les cinq minutes.
+**Un travail resté désactivé ne tourne pas pour autant.** *Supervision · Travaux*
+liste les sept et permet d'activer chacun. Les installations neuves ont la file
+de sortie et la vérification du journal actives ; une installation existante
+garde le choix qu'elle avait, et c'est voulu — réactiver en silence ce qu'un
+exploitant a coupé serait pire que de le laisser coupé.
 
 ---
 

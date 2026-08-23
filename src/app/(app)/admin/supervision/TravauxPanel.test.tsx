@@ -149,27 +149,28 @@ describe("l'échéance d'un travail jamais exécuté", () => {
 })
 
 /**
- * **Un ordonnanceur sans horloge.**
+ * **Quand l'horloge interne n'a encore rien produit.**
  *
- * `POST /api/jobs/tick` n'a pas de minuterie interne : il attend qu'un
- * déclencheur extérieur l'appelle — cron, un planificateur de NAS, n8n. Tant
- * que personne ne l'appelle, **rien ne tourne jamais**, et l'écran se
- * contentait d'afficher sept lignes « Jamais exécuté » sans dire pourquoi. Le
- * porteur a demandé si c'était normal ; la question prouve que l'écran ne
- * répondait pas.
+ * L'ordonnanceur se remonte lui-même au démarrage du serveur. Sept lignes
+ * « Jamais exécuté » ne veulent donc plus dire « il manque un cron » — elles
+ * veulent dire que le réveil ne se fait pas, ce qui est une anomalie. L'écran
+ * l'annonce et dit où regarder ; il ne renvoie plus vers une configuration
+ * extérieure qui n'existe plus.
  */
-describe("quand personne n'a jamais réveillé l'ordonnanceur", () => {
-  it('le dit, et dit ce qu il faut faire', () => {
+describe("quand l'horloge n'a encore rien produit", () => {
+  it('le dit, et dit où regarder', () => {
     rendre([
       travail({ lastRunAt: null, lastState: '' }),
       travail({ name: 'journal.verification', lastRunAt: null, lastState: '' }),
     ])
 
     const bandeau = screen.getByRole('alert')
-    expect(bandeau.textContent).toMatch(/réveil/i)
-    // La route est **nommée** : « configurez un déclencheur » sans dire quoi
-    // appeler envoie chercher dans la documentation ce que l'écran sait.
-    expect(bandeau.textContent).toContain('/api/jobs/tick')
+    expect(bandeau.textContent).toMatch(/cinq minutes/i)
+    // L'entrée du journal est **nommée** : « regardez les journaux » sans dire
+    // quoi y chercher envoie lire dix mille lignes.
+    expect(bandeau.textContent).toContain('horloge')
+    // Et surtout : plus aucune invitation à poser un déclencheur extérieur.
+    expect(bandeau.textContent).not.toContain('/api/jobs/tick')
   })
 
   // Un seul travail qui a tourné prouve que le réveil existe : le dire encore
