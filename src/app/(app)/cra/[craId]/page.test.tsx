@@ -63,10 +63,16 @@ describe('page de detail du CRA', () => {
   })
 
   it('montre la synthese, le telechargement et les transitions', async () => {
-    await rendre(unCra())
+    const { container } = await rendre(unCra())
 
     expect(screen.getByText('ACME · ITSM')).toBeTruthy()
-    expect(screen.getByText('12,00 j')).toBeTruthy()
+    // Requête scopée sur le total : avec une seule ligne de synthèse, celle-ci
+    // vaut forcément le même montant que le total (`unCra` en pose une seule,
+    // « Run » à 1200 centièmes, égale au total) — `getByText('12,00 j')`
+    // trouverait alors deux nœuds identiques. La ventilation par ligne reste
+    // affichée, comme sur la liste ; seule la requête est précisée.
+    const total = container.querySelector('.text-lg.font-medium')
+    expect(total?.textContent).toBe('12,00 j')
     expect(screen.getByRole('link', { name: /Télécharger le PDF/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Marquer validé' })).toBeTruthy()
   })

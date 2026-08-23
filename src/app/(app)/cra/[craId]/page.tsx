@@ -120,19 +120,14 @@ export default async function CraDetailPage({
                   {cra.synthese.joursServis > 1 ? 's' : ''}
                 </span>
               </p>
-              {/* Une seule ligne, forcément égale au total : la détailler la
-                  répéterait sans rien ajouter. La ventilation ne prend sens
-                  qu'à partir de deux prestations. */}
-              {cra.synthese.lignes.length > 1 && (
-                <ul className="mt-2 flex flex-col gap-1 text-sm">
-                  {cra.synthese.lignes.map((l) => (
-                    <li key={l.label} className="flex justify-between gap-4">
-                      <span>{l.label}</span>
-                      <span className="text-muted">{formatJours(l.centiemes)} j</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <ul className="mt-2 flex flex-col gap-1 text-sm">
+                {cra.synthese.lignes.map((l) => (
+                  <li key={l.label} className="flex justify-between gap-4">
+                    <span>{l.label}</span>
+                    <span className="text-muted">{formatJours(l.centiemes)} j</span>
+                  </li>
+                ))}
+              </ul>
             </>
           )}
         </div>
