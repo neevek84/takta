@@ -17,7 +17,7 @@ vi.mock('@/auth', () => ({
   requireUser: async () => ({ id: 'u1', role: 'ADMIN' as const }),
 }))
 vi.mock('@/services/cra', () => ({
-  listCras: async () => cras,
+  listCrasSuivi: async () => cras,
   listCrasEnSouffrance: async () => souffrance,
 }))
 vi.mock('@/services/missions', () => ({ listMissionsForUser: async () => missions }))

@@ -1,7 +1,8 @@
 import { requireUser } from '@/auth'
-import { listCras, listCrasEnSouffrance, type CraView } from '@/services/cra'
+import { listCrasSuivi, listCrasEnSouffrance, type CraView } from '@/services/cra'
 import { listMissionsForUser } from '@/services/missions'
 import { canTransition, type CraTransition } from '@/core/cra/state-machine'
+import { ETATS_SUIVI } from '@/core/cra/etat-suivi'
 import { SignatureCard } from '@/components/cra/SignatureCard'
 import { StatusBadge } from '@/components/cra/StatusBadge'
 import { Origine } from '@/components/ui/Origine'
@@ -41,7 +42,11 @@ export default async function CraPage({
   const { month: raw } = await searchParams
   const month = raw ?? new Date().toISOString().slice(0, 7)
 
-  const cras = await listCras(user.id, month)
+  // La carte de cette liste reprend encore un unique mois : c'est la tâche 6
+  // qui la réécrit en tableau multi-périodes filtrable. En attendant, tous les
+  // états sont demandés pour reproduire le comportement de l'ancien
+  // `listCras` — aucune ligne du mois ne doit disparaître ici.
+  const cras = await listCrasSuivi(user.id, { etats: [...ETATS_SUIVI], month })
   const missions = await listMissionsForUser(user.id)
   const souffrance = await listCrasEnSouffrance(user.id)
 

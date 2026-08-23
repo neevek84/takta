@@ -1,4 +1,5 @@
 import { prisma } from '@/db/client'
+import type { Prisma } from '@prisma/client'
 import {
   annulerPrevisionnelDuMois,
   compterPrevisionnelParMission,
@@ -9,6 +10,7 @@ import { applyTransition, type CraTransition } from '@/core/cra/state-machine'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import type { SignatureStatus } from '@/core/signature/connector'
 import type { CraStatus } from '@/core/types'
+import type { EtatSuivi } from '@/core/cra/etat-suivi'
 import type { AuditAction } from '@/core/audit/events'
 import { DOLIBARR } from './dolibarr/api'
 import { isDolibarrPushArmed } from './dolibarr/push'
@@ -410,39 +412,104 @@ export async function getCra(userId: string, craId: string): Promise<CraView> {
   )
 }
 
-export async function listCras(userId: string, month: string): Promise<CraView[]> {
+/**
+ * Les clauses Prisma d'un jeu d'états de suivi.
+ *
+ * `VALIDE` et `FACTURE` désignent tous deux des CRA au statut `VALIDE` : ils
+ * ne peuvent donc pas entrer dans le même `status: { in: … }`, sans quoi
+ * cocher « Validé » ramènerait exactement ce que « Facturé » décoché venait de
+ * masquer. C'est le piège de cet écran, et c'est pour cela que les deux
+ * portent une clause à eux.
+ */
+function clausesDesEtats(etats: EtatSuivi[]): Prisma.CraWhereInput[] {
+  const clauses: Prisma.CraWhereInput[] = []
+
+  const simples = etats.filter((e) => e !== 'VALIDE' && e !== 'FACTURE')
+  if (simples.length > 0) clauses.push({ status: { in: simples } })
+
+  // Validé **et pas encore facturé** : l'absence des deux champs de suivi.
+  if (etats.includes('VALIDE')) {
+    clauses.push({ status: 'VALIDE', invoiceNumber: null, invoicedAt: null })
+  }
+
+  // Facturé : validé, plus au moins un des deux champs. Le miroir exact
+  // d'`estFacture`, écrit en SQL — les deux règles doivent bouger ensemble.
+  if (etats.includes('FACTURE')) {
+    clauses.push({
+      status: 'VALIDE',
+      OR: [{ NOT: { invoiceNumber: null } }, { NOT: { invoicedAt: null } }],
+    })
+  }
+
+  return clauses
+}
+
+/**
+ * Les CRA du suivi : toutes périodes par défaut, filtrés par état.
+ *
+ * Le filtre est appliqué **en base** et non après lecture : cet écran est fait
+ * pour le jour où il y aura des centaines de lignes, et tout charger pour en
+ * jeter les neuf dixièmes ferait payer l'écran au nombre de mois travaillés.
+ *
+ * Le tri met le mois le plus récent en tête : c'est celui sur lequel on agit.
+ */
+export async function listCrasSuivi(
+  userId: string,
+  args: { etats: EtatSuivi[]; month?: string },
+): Promise<CraView[]> {
+  const clauses = clausesDesEtats(args.etats)
+  // Aucun état coché : la réponse est « rien », et elle ne coûte pas un
+  // aller-retour à la base pour l'apprendre.
+  if (clauses.length === 0) return []
+
   const rows = await prisma.cra.findMany({
-    where: { userId, month: monthStart(month) },
+    where: {
+      userId,
+      ...(args.month === undefined ? {} : { month: monthStart(args.month) }),
+      OR: clauses,
+    },
     include: WITH_MISSION,
-    orderBy: { mission: { label: 'asc' } },
-  })
-  const archives = await craAvecArchive(rows.map((r) => r.id))
-  // Une seule requête pour toute la liste : une par CRA ferait payer l'écran
-  // au nombre de missions.
-  const previsionnel = await compterPrevisionnelParMission({
-    userId,
-    missionIds: rows.map((r) => r.missionId),
-    month,
-  })
-  // Une seule lecture des correspondances pour toute la liste : `isDolibarrPushArmed`
-  // en ferait une par CRA, et l'écran en affiche autant que de missions.
-  const armees = await missionsArmeesPourDolibarr(rows.map((r) => r.missionId))
-  const syntheses = await syntheseParMission({
-    userId,
-    missionIds: rows.map((r) => r.missionId),
-    month,
+    orderBy: [{ month: 'desc' }, { mission: { label: 'asc' } }],
   })
 
-  return rows.map((row) =>
-    // Un CRA déjà validé n'a plus rien à annoncer : son prévisionnel a été
-    // emporté au moment où il l'a été.
-    toView(
-      row,
-      archives,
-      row.status === 'VALIDE' ? 0 : (previsionnel.get(row.missionId) ?? 0),
-      armees.has(row.missionId),
-      syntheses.get(row.missionId) ?? SYNTHESE_VIDE,
-    ),
+  const archives = await craAvecArchive(rows.map((r) => r.id))
+
+  // Les trois lectures de lot sont désormais faites **par mois** : leurs
+  // signatures prennent un mois unique, et la liste en couvre plusieurs. Une
+  // passe par mois distinct, et non une par CRA — l'écran ne doit pas payer au
+  // nombre de lignes.
+  const parMois = new Map<string, Row[]>()
+  for (const row of rows) {
+    const mois = row.month.toISOString().slice(0, 7)
+    const seau = parMois.get(mois)
+    if (seau === undefined) parMois.set(mois, [row])
+    else seau.push(row)
+  }
+
+  const vues: CraView[] = []
+  for (const [mois, lignes] of parMois) {
+    const missionIds = lignes.map((l) => l.missionId)
+    const previsionnel = await compterPrevisionnelParMission({ userId, missionIds, month: mois })
+    const armees = await missionsArmeesPourDolibarr(missionIds)
+    const syntheses = await syntheseParMission({ userId, missionIds, month: mois })
+
+    for (const row of lignes) {
+      vues.push(
+        toView(
+          row,
+          archives,
+          row.status === 'VALIDE' ? 0 : (previsionnel.get(row.missionId) ?? 0),
+          armees.has(row.missionId),
+          syntheses.get(row.missionId) ?? SYNTHESE_VIDE,
+        ),
+      )
+    }
+  }
+
+  // Le regroupement par mois a défait l'ordre de la requête : on le rétablit.
+  return vues.sort(
+    (a, b) =>
+      b.month.localeCompare(a.month) || a.missionLabel.localeCompare(b.missionLabel, 'fr'),
   )
 }
 

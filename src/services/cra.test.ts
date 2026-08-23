@@ -6,8 +6,10 @@ import { prisma } from '@/db/client'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import { createClient } from './clients'
 import { createMission, createLine } from './missions'
-import { getOrCreateCra, transitionCra, listCras, updateInvoiceTracking, getCra } from './cra'
+import { getOrCreateCra, transitionCra, listCrasSuivi, updateInvoiceTracking, getCra } from './cra'
 import { InvalidTransitionError } from '@/core/cra/state-machine'
+import { ETATS_SUIVI } from '@/core/cra/etat-suivi'
+import type { CraStatus } from '@/core/types'
 import { saveInstanceCredential, revokeInstanceCredential } from './credentials'
 import { DOLIBARR } from './dolibarr/api'
 import { readAuditSince } from './audit'
@@ -157,7 +159,7 @@ describe('CRA', () => {
 
   it('liste les CRA d un mois', async () => {
     await getOrCreateCra(userId, missionId, '2026-03')
-    const list = await listCras(userId, '2026-03')
+    const list = await listCrasSuivi(userId, { etats: [...ETATS_SUIVI], month: '2026-03' })
     expect(list).toHaveLength(1)
     expect(list[0]!.clientName).toBe('CRA client')
   })
@@ -396,7 +398,7 @@ describe('consignation du CRA', () => {
     await getOrCreateCra(userId, missionId, '2027-03')
     await prisma.auditEvent.deleteMany({})
 
-    await listCras(userId, '2027-03')
+    await listCrasSuivi(userId, { etats: [...ETATS_SUIVI], month: '2027-03' })
 
     expect(await readAuditSince({ since: 0 })).toHaveLength(0)
   })
@@ -432,7 +434,9 @@ describe('CraView et signature', () => {
       },
     })
 
-    const relu = (await listCras(userId, '2026-08')).find((c) => c.id === cra.id)!
+    const relu = (
+      await listCrasSuivi(userId, { etats: [...ETATS_SUIVI], month: '2026-08' })
+    ).find((c) => c.id === cra.id)!
     expect(relu.signature).toEqual({
       provider: 'double',
       status: 'EN_ATTENTE',
@@ -450,7 +454,9 @@ describe('CraView et signature', () => {
       data: { craId: cra.id, provider: 'double', signedPdf: Buffer.from('%PDF') },
     })
 
-    const relu = (await listCras(userId, '2026-10')).find((c) => c.id === cra.id)!
+    const relu = (
+      await listCrasSuivi(userId, { etats: [...ETATS_SUIVI], month: '2026-10' })
+    ).find((c) => c.id === cra.id)!
     expect(relu.signature?.archive).toBe(true)
     expect(JSON.stringify(relu)).not.toContain('signedPdf')
   })
@@ -569,5 +575,218 @@ describe('getCra', () => {
     const cra = await getCra('u1', 'cra-valide')
 
     expect(cra.previsionnelAAnnuler).toBe(0)
+  })
+})
+
+describe('listCrasSuivi', () => {
+  // Deux missions aux libelles ordonnes, pour le tri « mois, puis mission » —
+  // et un second utilisateur, pour verifier que rien ne fuit d'un compte a
+  // l'autre. Identifiants figes en dur, comme dans `describe('getCra', ...)`,
+  // parce que les tests ci-dessous adressent des CRA precis par etat et par
+  // mois plutot que par le premier de la liste.
+  let clientSuiviId = ''
+  let missionAlphaId = ''
+  let missionZuluId = ''
+
+  beforeAll(async () => {
+    await prisma.user.create({
+      data: { id: 'suivi-u1', email: 'suivi@test.local', name: 'Suivi', passwordHash: 'x' },
+    })
+    await prisma.user.create({
+      data: { id: 'suivi-u2', email: 'suivi-autre@test.local', name: 'Autre', passwordHash: 'x' },
+    })
+    const client = await createClient('SUIVI client')
+    clientSuiviId = client.id
+    const alpha = await createMission({ clientId: client.id, label: 'Alpha mission' })
+    const zulu = await createMission({ clientId: client.id, label: 'Zulu mission' })
+    missionAlphaId = alpha.id
+    missionZuluId = zulu.id
+  })
+
+  afterAll(async () => {
+    await prisma.cra.deleteMany({ where: { userId: { in: ['suivi-u1', 'suivi-u2'] } } })
+    await prisma.mission.deleteMany({ where: { clientId: clientSuiviId } })
+    await prisma.client.deleteMany({ where: { name: 'SUIVI client' } })
+    await prisma.user.deleteMany({ where: { id: { in: ['suivi-u1', 'suivi-u2'] } } })
+  })
+
+  beforeEach(async () => {
+    // Chaque test seme ses propres CRA : sans ce nettoyage, ceux d'un test
+    // fuiraient dans le suivant a travers le meme couple utilisateur/mission.
+    await prisma.cra.deleteMany({ where: { userId: { in: ['suivi-u1', 'suivi-u2'] } } })
+  })
+
+  /**
+   * Un CRA seme directement en base, sans passer par la machine a etats.
+   *
+   * Une mission propre a chaque CRA par defaut : la contrainte d'unicite porte
+   * sur (missionId, userId, month), et plusieurs CRA d'un meme test partagent
+   * souvent le meme mois — les faire tous porter sur `missionAlphaId`
+   * entrerait en collision les uns avec les autres.
+   */
+  async function semerCra(args: {
+    id: string
+    userId?: string
+    missionId?: string
+    month: string
+    status: CraStatus
+    invoiceNumber?: string | null
+    invoicedAt?: Date | null
+  }): Promise<void> {
+    const missionId =
+      args.missionId ??
+      (await createMission({ clientId: clientSuiviId, label: `Mission ${args.id}` })).id
+
+    await prisma.cra.create({
+      data: {
+        id: args.id,
+        userId: args.userId ?? 'suivi-u1',
+        missionId,
+        month: new Date(`${args.month}-01T00:00:00.000Z`),
+        status: args.status,
+        invoiceNumber: args.invoiceNumber ?? null,
+        invoicedAt: args.invoicedAt ?? null,
+      },
+    })
+  }
+
+  // LE piege de cet ecran. Sans exclusion explicite, decocher « Facture » ne
+  // masquerait rien tant que « Valide » reste coche : les factures sont des
+  // CRA valides.
+  it('cocher VALIDE sans FACTURE ne ramene pas les factures', async () => {
+    await semerCra({ id: 'valide-non-facture', month: '2026-03', status: 'VALIDE' })
+    await semerCra({
+      id: 'valide-facture',
+      month: '2026-03',
+      status: 'VALIDE',
+      invoiceNumber: 'FA2603-0001',
+    })
+
+    const cras = await listCrasSuivi('suivi-u1', { etats: ['VALIDE'] })
+
+    expect(cras.map((c) => c.id)).toEqual(['valide-non-facture'])
+  })
+
+  it('cocher FACTURE ne ramene que des valides factures', async () => {
+    await semerCra({ id: 'brouillon', month: '2026-03', status: 'BROUILLON' })
+    await semerCra({ id: 'valide-non-facture', month: '2026-03', status: 'VALIDE' })
+    await semerCra({
+      id: 'valide-facture',
+      month: '2026-03',
+      status: 'VALIDE',
+      invoiceNumber: 'FA2603-0002',
+    })
+
+    const cras = await listCrasSuivi('suivi-u1', { etats: ['FACTURE'] })
+
+    expect(cras.map((c) => c.id)).toEqual(['valide-facture'])
+  })
+
+  // Le miroir exact d'`estFacture` : un numero seul suffit, une date seule
+  // suffit aussi. Les deux champs doivent compter independamment.
+  it('compte facture un CRA qui ne porte que le numero, ou que la date', async () => {
+    await semerCra({
+      id: 'facture-par-numero',
+      month: '2026-03',
+      status: 'VALIDE',
+      invoiceNumber: 'FA2603-0003',
+    })
+    await semerCra({
+      id: 'facture-par-date',
+      month: '2026-03',
+      status: 'VALIDE',
+      invoicedAt: new Date('2026-04-02T00:00:00.000Z'),
+    })
+
+    const cras = await listCrasSuivi('suivi-u1', { etats: ['FACTURE'] })
+
+    expect(cras.map((c) => c.id).sort()).toEqual(['facture-par-date', 'facture-par-numero'])
+  })
+
+  it('groupe les statuts simples en une seule liste', async () => {
+    await semerCra({ id: 'brouillon', month: '2026-03', status: 'BROUILLON' })
+    await semerCra({ id: 'envoye', month: '2026-03', status: 'ENVOYE' })
+    await semerCra({ id: 'refuse', month: '2026-03', status: 'REFUSE' })
+    await semerCra({ id: 'valide', month: '2026-03', status: 'VALIDE' })
+
+    const cras = await listCrasSuivi('suivi-u1', { etats: ['BROUILLON', 'ENVOYE', 'REFUSE'] })
+
+    expect(cras.map((c) => c.id).sort()).toEqual(['brouillon', 'envoye', 'refuse'])
+  })
+
+  // Aucun etat coche : la reponse est « rien », et elle ne coute aucune
+  // requete. Une clause `OR: []` en Prisma ne rend rien non plus, mais elle
+  // fait payer le trajet.
+  it('ne lit pas la base quand aucun etat n est demande', async () => {
+    await semerCra({ id: 'brouillon', month: '2026-03', status: 'BROUILLON' })
+    const espion = vi.spyOn(prisma.cra, 'findMany')
+
+    const cras = await listCrasSuivi('suivi-u1', { etats: [] })
+
+    expect(cras).toEqual([])
+    expect(espion).not.toHaveBeenCalled()
+    espion.mockRestore()
+  })
+
+  // Sans mois, toutes periodes : c'est ce qui donne son sens au filtre.
+  it('ne borne pas le mois quand aucun n est demande', async () => {
+    await semerCra({ id: 'mars', month: '2026-03', status: 'ENVOYE' })
+    await semerCra({ id: 'avril', month: '2026-04', status: 'ENVOYE' })
+
+    const cras = await listCrasSuivi('suivi-u1', { etats: ['ENVOYE'] })
+
+    expect(cras.map((c) => c.id).sort()).toEqual(['avril', 'mars'])
+  })
+
+  it('borne le mois quand il est demande', async () => {
+    await semerCra({ id: 'mars', month: '2026-03', status: 'ENVOYE' })
+    await semerCra({ id: 'avril', month: '2026-04', status: 'ENVOYE' })
+
+    const cras = await listCrasSuivi('suivi-u1', { etats: ['ENVOYE'], month: '2026-03' })
+
+    expect(cras.map((c) => c.id)).toEqual(['mars'])
+  })
+
+  // Le mois le plus recent en tete : c'est celui sur lequel on agit. A
+  // l'interieur d'un meme mois, la mission departage — dans l'ordre de son
+  // libelle.
+  it('trie du mois le plus recent au plus ancien, puis par mission', async () => {
+    await semerCra({
+      id: 'mars-zulu',
+      month: '2026-03',
+      status: 'ENVOYE',
+      missionId: missionZuluId,
+    })
+    await semerCra({
+      id: 'mars-alpha',
+      month: '2026-03',
+      status: 'ENVOYE',
+      missionId: missionAlphaId,
+    })
+    await semerCra({
+      id: 'avril-alpha',
+      month: '2026-04',
+      status: 'ENVOYE',
+      missionId: missionAlphaId,
+    })
+
+    const cras = await listCrasSuivi('suivi-u1', { etats: ['ENVOYE'] })
+
+    expect(cras.map((c) => c.id)).toEqual(['avril-alpha', 'mars-alpha', 'mars-zulu'])
+  })
+
+  it('est toujours scope sur l utilisateur', async () => {
+    await semerCra({ id: 'a-moi', month: '2026-03', status: 'ENVOYE', userId: 'suivi-u1' })
+    await semerCra({
+      id: 'a-un-autre',
+      month: '2026-03',
+      status: 'ENVOYE',
+      userId: 'suivi-u2',
+      missionId: missionZuluId,
+    })
+
+    const cras = await listCrasSuivi('suivi-u1', { etats: ['ENVOYE'] })
+
+    expect(cras.map((c) => c.id)).toEqual(['a-moi'])
   })
 })
