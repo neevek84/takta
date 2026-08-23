@@ -107,7 +107,7 @@ describe('page Administration · Thème', () => {
     const { container } = render(await AdminThemePage())
 
     const principal = container.querySelector('main')!
-    expect(principal.className).toContain('max-w-5xl')
+    expect(principal.className).toContain('max-w-[100rem]')
     expect(principal.className).not.toContain('max-w-3xl')
     expect(screen.getByRole('heading', { level: 1 }).className).toContain('text-2xl')
   })

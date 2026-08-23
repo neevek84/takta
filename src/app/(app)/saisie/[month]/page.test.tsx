@@ -138,7 +138,7 @@ describe('page de saisie — le gabarit commun', () => {
     // la lit dans `PageShell.tsx`, et un écran qui déclarerait la sienne
     // mesurerait un budget que personne n'applique.
     const principal = container.querySelector('main')!
-    expect(principal.className).toContain('max-w-5xl')
-    expect(principal.className).toContain('p-6')
+    expect(principal.className).toContain('max-w-[100rem]')
+    expect(principal.className).toContain('p-4')
   })
 })
