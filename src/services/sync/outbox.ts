@@ -271,7 +271,11 @@ export async function flushOutbox(args: {
     }
 
     if (resultat.ok) {
-      await prisma.syncOutbox.delete({ where: { id: ligne.id } })
+      // `deleteMany` : la ligne peut avoir disparu pendant qu'on la traitait —
+      // un second drainage, ou la suppression d'une prestation qui purge la
+      // file. `delete` lèverait `P2025` et ferait échouer le drainage entier
+      // pour une ligne que plus personne n'attendait.
+      await prisma.syncOutbox.deleteMany({ where: { id: ligne.id } })
       rapport.reussies += 1
 
       // `temps.pousses`, et depuis ici plutôt que depuis le connecteur.
@@ -303,7 +307,9 @@ export async function flushOutbox(args: {
       ? nextAttempt(ligne.attempts, now)
       : abandon(ligne.attempts, now)
 
-    await prisma.syncOutbox.update({
+    // `updateMany`, même raison : replanifier une ligne effacée entre temps ne
+    // doit pas transformer un échec rejouable en échec du travail entier.
+    await prisma.syncOutbox.updateMany({
       where: { id: ligne.id },
       data: {
         attempts: suite.attempts,

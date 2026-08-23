@@ -10,6 +10,7 @@ import { saveGoogleOAuthClient } from '@/services/google/oauth-client'
 import { createGoogleCalendarConnector } from '@/integrations/google/calendar'
 import { createFakeGoogleApi, type FakeGoogleApi } from '@/integrations/google/fake-google-api'
 import { drainSyncOutbox, flushAllSyncOutboxes, flushSyncOutbox } from './flush'
+import { readAuditSince } from '@/services/audit'
 
 const DEDIE = 'cra-dedie@group.calendar.google.com'
 const NOW = new Date('2026-03-20T10:00:00.000Z')
@@ -887,5 +888,82 @@ describe('journal de preuve — ce que le drainage de l agenda consigne', () => 
     const entrees = await prisma.auditEvent.findMany({ where: { action: 'synchro.echec' } })
     expect(entrees, 'aucune entrée `synchro.echec`').toHaveLength(1)
     expect(entrees[0]!.actorId).toBe(userId)
+  })
+})
+
+/**
+ * **Une ligne qui disparaît sous le drainage ne doit pas le faire échouer.**
+ *
+ * Constaté en production le 23 août 2026 : « Vidage de la file de sortie » en
+ * échec, avec `Invalid prisma.syncOutbox.update() invocation: No record was
+ * found for an update`. Deux chemins effacent une ligne pendant qu'un
+ * drainage la tient : un second drainage — le bouton « Synchroniser
+ * maintenant » pendant que l'horloge bat —, et la suppression d'une prestation
+ * ou d'une mission, qui purge la file de ce qui vise ses saisies.
+ *
+ * Le message affiché était doublement trompeur : il nommait `update` alors que
+ * la cause est une ligne absente, et il masquait l'erreur réelle du `try`.
+ */
+describe('une ligne effacée pendant le drainage', () => {
+  /**
+   * Un connecteur normal, sauf qu'il efface la ligne de file au moment où on
+   * l'appelle : c'est la fenêtre exacte pendant laquelle un second drainage,
+   * ou la suppression d'une prestation, peut la faire disparaître.
+   */
+  function connecteurQuiEfface(id: string) {
+    let efface = false
+    const fetchFn: typeof api.fetchFn = async (...args) => {
+      if (!efface) {
+        efface = true
+        await prisma.syncOutbox.deleteMany({ where: { id } })
+      }
+      return api.fetchFn(...args)
+    }
+    return createGoogleCalendarConnector({
+      fetchFn,
+      accessToken: 'ya29.acces',
+      calendarId: DEDIE,
+    })
+  }
+
+  it('ne fait pas échouer le drainage quand la poussée a réussi', async () => {
+    await saisir('2026-03-12')
+    const ligne = await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })
+
+    // Quelqu'un l'efface pendant que le connecteur travaille : c'est ce que
+    // fait la suppression d'une prestation, et un second drainage simultané.
+    const r = await flushSyncOutbox({
+      userId,
+      now: NOW,
+      connector: connecteurQuiEfface(ligne.id),
+    })
+
+    expect(r.echecs).toBe(0)
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+    // **La preuve que la poussée est allée au bout** : le journal ne porte
+    // l'événement que si le retrait de la ligne a réussi. Sans lui, un `delete`
+    // qui lève sur une ligne absente passe inaperçu — le compte est nul de
+    // toute façon, puisque quelqu'un d'autre l'a effacée.
+    expect(
+      await readAuditSince({ since: 0, action: 'agenda.bloc.pousse', limit: 500 }),
+    ).not.toEqual([])
+  })
+
+  it('ne fait pas échouer le drainage quand la poussée a échoué', async () => {
+    await saisir('2026-03-12')
+    const ligne = await prisma.syncOutbox.findFirstOrThrow({ where: { userId } })
+
+    api.failNext('RESEAU')
+
+    // Sans le correctif, la replanification lève `P2025` et le travail entier
+    // passe en échec — pour une ligne que plus personne n'attendait.
+    const r = await flushSyncOutbox({
+      userId,
+      now: NOW,
+      connector: connecteurQuiEfface(ligne.id),
+    })
+
+    expect(r.traitees).toBe(1)
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
   })
 })

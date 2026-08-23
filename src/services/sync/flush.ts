@@ -263,7 +263,15 @@ export async function flushSyncOutbox(args: {
 
       // Conflit compris : la ligne quitte la file, le conflit porte désormais
       // l'état. Sans cela, chaque passage rouvrirait la même divergence.
-      await prisma.syncOutbox.delete({ where: { id: row.id } })
+      //
+      // `deleteMany` et non `delete` : la ligne peut avoir disparu **pendant**
+      // qu'on la traitait — un second drainage (le bouton « Synchroniser
+      // maintenant » pendant que l'horloge bat), ou la suppression d'une
+      // prestation, qui purge la file de ce qui vise ses saisies. `delete`
+      // lève alors `P2025`, et le `catch` qui suit tenterait de replanifier
+      // une ligne absente : le drainage entier passe en échec pour une ligne
+      // que plus personne n'attendait.
+      await prisma.syncOutbox.deleteMany({ where: { id: row.id } })
 
       if (issue.etat === 'POUSSE') {
         aConsigner = async () =>
@@ -290,7 +298,11 @@ export async function flushSyncOutbox(args: {
       const definitif = err instanceof CalendarApiError && err.kind === 'INVALID'
       const suite = definitif ? abandon(row.attempts, now) : nextAttempt(row.attempts, now)
       const erreur = messageDe(err)
-      await prisma.syncOutbox.update({
+      // `updateMany` pour la même raison : replanifier une ligne effacée entre
+      // temps ne doit pas transformer un échec de poussée — rejouable — en
+      // échec du travail entier. Le message affiché nommait alors `update` et
+      // masquait la cause réelle.
+      await prisma.syncOutbox.updateMany({
         where: { id: row.id },
         data: {
           attempts: suite.attempts,

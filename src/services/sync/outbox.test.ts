@@ -987,3 +987,55 @@ describe('la file en attente, telle que la supervision la montre', () => {
     expect(ligne?.attenteHeures).toBe(30)
   })
 })
+
+/**
+ * **Une ligne effacée pendant le drainage ne doit pas le faire échouer.**
+ *
+ * Même défaut que sur le chemin de l'agenda, et même fenêtre : un second
+ * drainage, ou la suppression d'une prestation qui purge la file de ce qui vise
+ * ses saisies. `delete` et `update` lèvent alors `P2025`, et le travail
+ * « Vidage de la file de sortie » passe en échec pour une ligne que plus
+ * personne n'attendait. Constaté en production le 23 août 2026, sur le chemin
+ * de l'agenda ; celui-ci portait exactement la même faute.
+ */
+describe('une ligne effacée pendant le drainage générique', () => {
+  /** Un gestionnaire qui efface la ligne de file au moment où on l'appelle. */
+  function effaceur(resultat: SyncOutcome): SyncHandler {
+    const effacer = async (job: SyncJob) => {
+      await prisma.syncOutbox.deleteMany({
+        where: { entityId: job.entityId, provider: job.provider },
+      })
+    }
+    return {
+      async upsert(job) {
+        await effacer(job)
+        return resultat
+      },
+      async remove(job) {
+        await effacer(job)
+        return resultat
+      },
+    }
+  }
+
+  it('ne lève pas quand la poussée a réussi', async () => {
+    await enfiler({ userId, entityId: 'cra-efface-ok' })
+
+    const r = await flushOutbox({ userId, handlers: { [DOLIBARR]: effaceur(SUCCES) } })
+
+    expect(r.reussies).toBe(1)
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+  })
+
+  it('ne lève pas quand la poussée a échoué', async () => {
+    await enfiler({ userId, entityId: 'cra-efface-ko' })
+
+    const r = await flushOutbox({
+      userId,
+      handlers: { [DOLIBARR]: effaceur({ ok: false, retriable: true, message: 'reseau' }) },
+    })
+
+    expect(r.traitees).toBe(1)
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+  })
+})
