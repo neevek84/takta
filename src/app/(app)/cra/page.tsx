@@ -12,14 +12,16 @@ import { Card } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
 import { PageShell } from '@/components/ui/PageShell'
 import { Select } from '@/components/ui/Select'
+import { lancerRelances, openCra } from './actions'
+// Les quatre actions de signature/transition/suivi vivent désormais à côté de
+// la page de détail — c'est là qu'elles redirigent. La carte de cette liste
+// les invoque encore le temps que la tâche 6 la remplace par un tableau.
 import {
   envoyerPourSignature,
-  lancerRelances,
   moveCra,
-  openCra,
   rafraichirSignature,
   saveTracking,
-} from './actions'
+} from './[craId]/actions'
 
 const LABELS: Record<CraTransition, string> = {
   ENVOYER: 'Marquer envoyé',
@@ -30,47 +32,21 @@ const LABELS: Record<CraTransition, string> = {
 
 const ALL: CraTransition[] = ['ENVOYER', 'VALIDER', 'REFUSER', 'ROUVRIR']
 
-/**
- * Les motifs d'échec que les services de signature savent rendre, traduits en
- * une phrase. Le motif transite par l'URL parce qu'une server action qui
- * redirige ne rend rien : la page est le seul endroit qui puisse encore parler
- * à l'utilisateur.
- */
-const ERREURS: Record<string, string> = {
-  PAS_DE_CONNECTEUR:
-    'Aucun outil de signature n’est configuré. Le CRA reste téléchargeable et les transitions manuelles restent disponibles.',
-  PAS_DE_SIGNATAIRE:
-    'Renseignez le signataire de la mission (nom et adresse électronique) avant d’envoyer le CRA.',
-  TRANSITION_IMPOSSIBLE: 'Ce CRA ne peut pas être envoyé dans son état actuel.',
-  CONNECTEUR_EN_ECHEC:
-    'L’outil de signature n’a pas accepté le document. Le CRA n’a pas changé d’état.',
-  PAS_DE_DEMANDE: 'Ce CRA n’a jamais été envoyé pour signature.',
-}
-
 export default async function CraPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string; erreur?: string }>
+  searchParams: Promise<{ month?: string }>
 }) {
   const user = await requireUser()
-  const { month: raw, erreur } = await searchParams
+  const { month: raw } = await searchParams
   const month = raw ?? new Date().toISOString().slice(0, 7)
 
   const cras = await listCras(user.id, month)
   const missions = await listMissionsForUser(user.id)
   const souffrance = await listCrasEnSouffrance(user.id)
-  const messageErreur = erreur === undefined ? undefined : ERREURS[erreur]
 
   return (
     <PageShell title={`CRA · ${month}`}>
-      {messageErreur !== undefined && (
-        <div className="mb-6">
-          <Banner tone="warning" title="Envoi impossible">
-            {messageErreur}
-          </Banner>
-        </div>
-      )}
-
       <form action={openCra} className="mb-8 flex flex-wrap items-end gap-2">
         <input type="hidden" name="month" value={month} />
         <Select label="Mission" name="missionId" required>

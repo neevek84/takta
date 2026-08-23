@@ -23,11 +23,15 @@ vi.mock('@/services/cra', () => ({
 vi.mock('@/services/missions', () => ({ listMissionsForUser: async () => missions }))
 vi.mock('./actions', () => ({
   openCra: vi.fn(),
+  lancerRelances: vi.fn(),
+}))
+// Ces quatre actions vivent désormais à côté de la page de détail ; la carte
+// de cette liste les invoque encore le temps que la tâche 6 la remplace.
+vi.mock('./[craId]/actions', () => ({
   moveCra: vi.fn(),
   saveTracking: vi.fn(),
   envoyerPourSignature: vi.fn(),
   rafraichirSignature: vi.fn(),
-  lancerRelances: vi.fn(),
 }))
 
 // eslint-disable-next-line import/first -- `vi.mock` est hissé au-dessus des imports.
@@ -178,7 +182,6 @@ async function rendre(
     cras?: unknown[]
     missions?: unknown[]
     souffrance?: unknown[]
-    erreur?: string
   } = {},
 ): Promise<ReturnType<typeof render>> {
   cras.length = 0
@@ -189,7 +192,7 @@ async function rendre(
   souffrance.push(...(jeu.souffrance ?? []))
   return render(
     await CraPage({
-      searchParams: Promise.resolve({ month: '2026-03', erreur: jeu.erreur }),
+      searchParams: Promise.resolve({ month: '2026-03' }),
     }),
   )
 }
@@ -422,10 +425,5 @@ describe('signature du CRA', () => {
       ],
     })
     expect(screen.getByRole('button', { name: /lancer les relances/i })).toBeTruthy()
-  })
-
-  it('affiche le motif d échec remonté par l action', async () => {
-    await rendre({ cras: [unCra('BROUILLON')], erreur: 'PAS_DE_CONNECTEUR' })
-    expect(document.body.textContent).toContain('Aucun outil de signature')
   })
 })
