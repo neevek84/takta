@@ -100,3 +100,50 @@ export async function annulerPrevisionnelDuMois(
 
   return emportees.length
 }
+
+/**
+ * Passe en réalisé le prévisionnel du mois d'une mission, et rend le nombre de
+ * saisies converties.
+ *
+ * **Le miroir exact d'`annulerPrevisionnelDuMois`**, et volontairement son
+ * voisin de fichier : ce sont les deux issues d'une même question posée à
+ * l'utilisateur au moment où il génère un CRA. Les séparer les ferait diverger.
+ *
+ * **Ce n'est pas `convertPastForecast`.** Celle-ci ne prend que le
+ * prévisionnel *échu* et n'est pas scopée sur une mission : s'en servir ici
+ * convertirait le prévisionnel des autres clients et laisserait de côté
+ * précisément les jours à venir qu'on veut projeter.
+ *
+ * Elle ne consulte pas le verrou de CRA validé : le cas est refusé en amont,
+ * par `genererCra`, avant qu'aucune saisie ne soit touchée.
+ *
+ * Chaque saisie repart en file `UPSERT` : le prévisionnel converti change de
+ * couleur dans l'agenda.
+ */
+export async function validerPrevisionnelDuMois(
+  tx: Prisma.TransactionClient,
+  args: { userId: string; missionId: string; month: string },
+): Promise<number> {
+  const { debut, fin } = bornes(args.month)
+
+  const converties = await tx.timeEntry.findMany({
+    where: {
+      userId: args.userId,
+      kind: 'PREVISIONNEL',
+      date: { gte: debut, lt: fin },
+      line: { missionId: args.missionId },
+    },
+    select: { id: true },
+  })
+  if (converties.length === 0) return 0
+
+  await tx.timeEntry.updateMany({
+    where: { userId: args.userId, id: { in: converties.map((e) => e.id) } },
+    data: { kind: 'REALISE' },
+  })
+  for (const convertie of converties) {
+    await enqueueTimeEntry(tx, { userId: args.userId, entryId: convertie.id, operation: 'UPSERT' })
+  }
+
+  return converties.length
+}

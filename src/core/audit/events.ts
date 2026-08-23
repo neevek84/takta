@@ -27,6 +27,12 @@ export const AUDIT_ACTIONS = [
   'saisie.modifiee',
   'saisie.supprimee',
   'previsionnel.converti',
+  // La suppression du prévisionnel n'était jusqu'ici tracée que dans la charge
+  // utile de `cra.valide` (`previsionnelAnnule`). Depuis que le sort du
+  // prévisionnel se décide **à la génération** et non plus à la validation,
+  // elle a lieu hors de toute transition : sans nom à elle, une suppression
+  // décidée par un humain ne laisserait plus aucune trace consultable.
+  'previsionnel.supprime',
   // CRA
   'cra.ouvert',
   'cra.envoye',

@@ -24,6 +24,7 @@ describe('catalogue des événements', () => {
       'saisie.modifiee',
       'saisie.supprimee',
       'previsionnel.converti',
+      'previsionnel.supprime',
       'cra.ouvert',
       'cra.envoye',
       'cra.valide',
@@ -52,8 +53,8 @@ describe('catalogue des événements', () => {
     ])
   })
 
-  it('en compte 29', () => {
-    expect(AUDIT_ACTIONS).toHaveLength(29)
+  it('en compte 30', () => {
+    expect(AUDIT_ACTIONS).toHaveLength(30)
   })
 
   it('ne porte plus la demande de facture, retirée du produit', () => {
