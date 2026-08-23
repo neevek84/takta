@@ -107,3 +107,64 @@ describe('page de detail du CRA', () => {
     expect(introuvable).toHaveBeenCalled()
   })
 })
+
+// Cette couverture vivait sur l'ancienne page de liste, retirée avec le
+// rendu par cartes lors du passage au tableau de suivi. Le comportement, lui,
+// n'a pas bougé : `SignatureCard`, le formulaire d'envoi et celui de
+// rafraîchissement sont toujours rendus ici, sur la page de détail — seule
+// leur couverture avait disparu avec les cartes.
+describe('signature du CRA', () => {
+  afterEach(() => {
+    cleanup()
+    introuvable.mockClear()
+  })
+
+  it('propose l envoi pour signature sur un brouillon', async () => {
+    await rendre(unCra({ status: 'BROUILLON' }))
+
+    const bouton = screen.getByRole('button', { name: /envoyer pour signature/i })
+    expect(bouton.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('desactive l envoi et l explique quand la mission n a pas de signataire', async () => {
+    await rendre(
+      unCra({ status: 'BROUILLON', signataireNom: '', signataireEmail: '' }),
+    )
+
+    const bouton = screen.getByRole('button', { name: /envoyer pour signature/i })
+    expect(bouton.hasAttribute('disabled')).toBe(true)
+    expect(document.body.textContent).toContain('signataire')
+  })
+
+  it('ne propose pas l envoi quand la transition est impossible', async () => {
+    // `unCra()` est `ENVOYE` par défaut : `ENVOYER` n'y mène que depuis
+    // `BROUILLON`, donc le bouton ne doit pas apparaître ici.
+    await rendre(unCra())
+
+    expect(screen.queryByRole('button', { name: /envoyer pour signature/i })).toBeNull()
+  })
+
+  it('propose le rafraichissement des qu une demande de signature existe', async () => {
+    await rendre(
+      unCra({
+        signature: {
+          provider: 'documenso',
+          status: 'EN_ATTENTE',
+          sentAt: new Date('2026-03-05T09:00:00.000Z'),
+          relances: 0,
+          lastRelanceAt: null,
+          abandoned: false,
+          archive: false,
+        },
+      }),
+    )
+
+    expect(screen.getByRole('button', { name: /rafraîchir l’état/i })).toBeTruthy()
+  })
+
+  it('ne propose pas le rafraichissement sans demande de signature', async () => {
+    await rendre(unCra({ signature: null }))
+
+    expect(screen.queryByRole('button', { name: /rafraîchir l’état/i })).toBeNull()
+  })
+})
