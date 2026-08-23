@@ -566,3 +566,43 @@ describe("la publication de l'image se recolle", () => {
     expect(WORKFLOW_IMAGE).toContain('--tag "${IMAGE}:${VERSION}"')
   })
 })
+
+/**
+ * **Aucun fichier de `src/` ne doit être exclu de l'image.**
+ *
+ * Un motif `**` suivi de `/donnees` visait le dossier d'exploitation de
+ * l'installation portable. Il
+ * emportait aussi `src/app/(app)/admin/donnees/` — l'écran de gestion des
+ * données — qui n'entrait donc **pas** dans l'image. Le résultat : un 404 en
+ * production, sur une route présente dans le dépôt, présente dans la
+ * construction locale, et listée par `next build`. Constaté en production le
+ * 23 août 2026 ; le nom de l'écran et le nom du dossier de données étaient le
+ * même mot, et rien ne les distinguait.
+ *
+ * Le contrôle balaie l'arborescence réelle : un motif ajouté demain qui
+ * happerait un écran par la coïncidence de son nom échouera ici, et non chez
+ * l'utilisateur.
+ */
+describe("aucun motif de .dockerignore n'ampute le code source", () => {
+  function fichiersDe(dossier: string): string[] {
+    const trouves: string[] = []
+    for (const entree of readdirSync(path.join(RACINE, dossier), { withFileTypes: true })) {
+      const chemin = `${dossier}/${entree.name}`
+      if (entree.isDirectory()) trouves.push(...fichiersDe(chemin))
+      else trouves.push(chemin)
+    }
+    return trouves
+  }
+
+  it('laisse entrer tout `src/`', () => {
+    const exclus = fichiersDe('src').filter((f) => ignoreParDocker(f))
+    expect(exclus).toEqual([])
+  })
+
+  // Les bases SQLite de test vivent sous `prisma/`, pas sous `src/` : le
+  // contrôle ci-dessus ne doit pas être vidé de son sens par une exception.
+  it('continue d exclure ce qui doit l être', () => {
+    expect(ignoreParDocker('donnees/cra.db')).toBe(true)
+    expect(ignoreParDocker('prisma/dev.db')).toBe(true)
+  })
+})

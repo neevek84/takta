@@ -25,8 +25,21 @@ distribution
 **/*.db-shm
 **/*.db-journal
 
-# Secrets : `.env` du depot, ses variantes, et le dossier d'exploitation de
-# l'installation portable.
+# Secrets : `.env` du depot et ses variantes, a toute profondeur.
 **/.env
 **/.env.*
-**/donnees
+
+# Le dossier d'exploitation de l'installation portable, et celui que la
+# composition de production monte pour Postgres. **A la racine, et nulle part
+# ailleurs.**
+#
+# Il s'ecrivait `**/donnees`, et ce joker emportait
+# `src/app/(app)/admin/donnees/` — l'ecran de gestion des donnees. Il
+# n'entrait donc pas dans l'image : route presente au depot, presente dans la
+# construction locale, listee par `next build`, et **404 en production**.
+# Constate le 23 aout 2026. L'ecran et le dossier de donnees portaient le meme
+# mot, et rien ne les distinguait.
+#
+# Un controle balaie desormais `src/` contre les motifs reels de ce fichier :
+# aucun ne peut plus amputer le code source.
+donnees
