@@ -27,6 +27,13 @@ export const AUDIT_ACTIONS = [
   'saisie.modifiee',
   'saisie.supprimee',
   'previsionnel.converti',
+  // La suppression du prévisionnel, elle, ne se consignait qu'à l'intérieur
+  // de la charge utile de `cra.valide`, sous `previsionnelAnnule` — parce
+  // qu'elle ne pouvait survenir qu'à la validation. Depuis que le choix se
+  // pose à la génération du CRA, en dehors de toute transition, elle a
+  // besoin d'un nom à elle : la charge utile d'un autre événement n'est pas
+  // un canal d'abonnement.
+  'previsionnel.supprime',
   // CRA
   'cra.ouvert',
   'cra.envoye',
