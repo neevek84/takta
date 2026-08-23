@@ -6,7 +6,7 @@ import { prisma } from '@/db/client'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import { createClient } from './clients'
 import { createMission, createLine } from './missions'
-import { getOrCreateCra, transitionCra, listCras, updateInvoiceTracking } from './cra'
+import { getOrCreateCra, transitionCra, listCras, updateInvoiceTracking, getCra } from './cra'
 import { InvalidTransitionError } from '@/core/cra/state-machine'
 import { saveInstanceCredential, revokeInstanceCredential } from './credentials'
 import { DOLIBARR } from './dolibarr/api'
@@ -469,5 +469,105 @@ describe('CraView et signature', () => {
     // forcément, il ne l'enfreint pas. Même parti pris que `design-system.test.ts`.
     const code = bloc![0].replace(/(^|[^:])\/\/.*$/gm, '$1')
     expect(code).not.toMatch(/signedPdf/)
+  })
+})
+
+describe('getCra', () => {
+  // Identifiants figés en dur : `getCra` sert une page de détail adressée par
+  // id (`/cra/[craId]`), pas par mois — le montage doit donc fixer les siens
+  // plutôt que de reprendre `userId`/`missionId` du module, communs au reste
+  // du fichier.
+  beforeAll(async () => {
+    await prisma.user.create({
+      data: { id: 'u1', email: 'getcra@test.local', name: 'U1', passwordHash: 'x' },
+    })
+    await prisma.user.create({
+      data: { id: 'u2', email: 'getcra-autre@test.local', name: 'U2', passwordHash: 'x' },
+    })
+    const client = await createClient('GETCRA client')
+    const mission = await createMission({ clientId: client.id, label: 'GETCRA mission' })
+    const ligne = await createLine({
+      missionId: mission.id,
+      userId: 'u1',
+      label: 'Consultant',
+      soldCentiemes: 3000,
+      tjmCents: 0,
+    })
+
+    await prisma.cra.create({
+      data: {
+        id: 'cra-1',
+        missionId: mission.id,
+        userId: 'u1',
+        month: new Date('2026-05-01T00:00:00.000Z'),
+        status: 'BROUILLON',
+      },
+    })
+    await prisma.timeEntry.create({
+      data: {
+        lineId: ligne.id,
+        userId: 'u1',
+        date: new Date('2026-05-04T00:00:00.000Z'),
+        minutes: 420,
+        minutesParJour: 420,
+        kind: 'REALISE',
+        slotId: 'REALISE-1',
+        startMinute: 540,
+      },
+    })
+
+    await prisma.cra.create({
+      data: {
+        id: 'cra-valide',
+        missionId: mission.id,
+        userId: 'u1',
+        month: new Date('2026-06-01T00:00:00.000Z'),
+        status: 'VALIDE',
+      },
+    })
+    // Du prévisionnel bien réel sur ce mois : sans lui, le test suivant
+    // passerait même si `getCra` oubliait de forcer le zéro, puisque le
+    // compte brut serait déjà nul.
+    await prisma.timeEntry.create({
+      data: {
+        lineId: ligne.id,
+        userId: 'u1',
+        date: new Date('2026-06-10T00:00:00.000Z'),
+        minutes: 420,
+        minutesParJour: 420,
+        kind: 'PREVISIONNEL',
+        slotId: 'PREVISIONNEL-1',
+        startMinute: 600,
+      },
+    })
+  })
+
+  afterAll(async () => {
+    await prisma.timeEntry.deleteMany({ where: { userId: 'u1' } })
+    await prisma.cra.deleteMany({ where: { id: { in: ['cra-1', 'cra-valide'] } } })
+    await prisma.client.deleteMany({ where: { name: 'GETCRA client' } })
+    await prisma.user.deleteMany({ where: { id: { in: ['u1', 'u2'] } } })
+  })
+
+  it('rend un CRA complet — synthese, previsionnel et armement Dolibarr', async () => {
+    const cra = await getCra('u1', 'cra-1')
+
+    expect(cra.id).toBe('cra-1')
+    expect(cra.synthese.totalCentiemes).toBeGreaterThan(0)
+  })
+
+  // Le scope par utilisateur est la garantie qu'on n'affiche jamais le CRA
+  // d'un autre. Il se teste, il ne se suppose pas.
+  it('leve quand le CRA appartient a quelqu un d autre', async () => {
+    await expect(getCra('u2', 'cra-1')).rejects.toThrow()
+  })
+
+  // Un CRA valide n'a plus de previsionnel a annoncer : il a ete emporte au
+  // moment ou il l'a ete. La liste applique deja cette regle ; le detail ne
+  // peut pas en appliquer une autre.
+  it('n annonce aucun previsionnel sur un CRA valide', async () => {
+    const cra = await getCra('u1', 'cra-valide')
+
+    expect(cra.previsionnelAAnnuler).toBe(0)
   })
 })

@@ -373,6 +373,43 @@ export async function updateInvoiceTracking(
   return toView(row, await craAvecArchive([row.id]))
 }
 
+/**
+ * Un CRA, complet, pour sa page de détail.
+ *
+ * Les fonctions de lot sont appelées avec un seul identifiant plutôt que
+ * réécrites pour l'unité : un second chemin de calcul finirait par diverger du
+ * premier, et la liste et le détail afficheraient alors deux chiffres pour le
+ * même CRA.
+ *
+ * `findFirstOrThrow` et non `findUnique` : le scope par `userId` fait partie
+ * de la requête, il n'est pas vérifié après coup. C'est ce qui garantit qu'on
+ * ne sert jamais le CRA d'un autre, même en connaissant son identifiant.
+ */
+export async function getCra(userId: string, craId: string): Promise<CraView> {
+  const row = await prisma.cra.findFirstOrThrow({
+    where: { id: craId, userId },
+    include: WITH_MISSION,
+  })
+
+  const month = row.month.toISOString().slice(0, 7)
+  const archives = await craAvecArchive([row.id])
+  const previsionnel = await compterPrevisionnelParMission({
+    userId,
+    missionIds: [row.missionId],
+    month,
+  })
+  const armees = await missionsArmeesPourDolibarr([row.missionId])
+  const syntheses = await syntheseParMission({ userId, missionIds: [row.missionId], month })
+
+  return toView(
+    row,
+    archives,
+    row.status === 'VALIDE' ? 0 : (previsionnel.get(row.missionId) ?? 0),
+    armees.has(row.missionId),
+    syntheses.get(row.missionId) ?? SYNTHESE_VIDE,
+  )
+}
+
 export async function listCras(userId: string, month: string): Promise<CraView[]> {
   const rows = await prisma.cra.findMany({
     where: { userId, month: monthStart(month) },
