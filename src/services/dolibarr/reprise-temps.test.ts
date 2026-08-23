@@ -167,13 +167,39 @@ describe('reprendreLesTemps', () => {
 
   // La file Dolibarr n'est alimentée qu'à la transition vers validé. La reprise
   // ne doit pas y passer : les temps sont déjà là-bas.
-  it('ne met aucun push en file', async () => {
+  it('ne renvoie rien vers Dolibarr, d où ils viennent', async () => {
     const d = await decor()
     seedTemps({ taskId: d.tache.id, dolibarrUserId: d.auteur.id, date: '2026-07-15', durationSeconds: 25_200 })
 
     await reprendreLesTemps({ missionId: d.mission.id, userId, api, aujourdhui: AUJOURDHUI })
 
-    expect(await prisma.syncOutbox.count()).toBe(0)
+    expect(await prisma.syncOutbox.count({ where: { provider: 'DOLIBARR' } })).toBe(0)
+  })
+
+  /**
+   * **Vers l'agenda, en revanche, elles doivent partir.**
+   *
+   * La reprise écrivait ses saisies directement en base, sans passer par la
+   * file : tout l'historique réalisé d'une installation restait donc invisible
+   * dans l'agenda, où seuls les prévisionnels tapés à la main apparaissaient.
+   * Constaté par le porteur le 23 août 2026 — « dans Google seuls descendent
+   * les jours prévisionnels ». Ce n'était pas un filtre sur la nature de la
+   * saisie : c'était ce chemin-ci qui ne mettait rien en file.
+   */
+  it('MET LES SAISIES REPRISES EN FILE VERS L AGENDA', async () => {
+    const d = await decor()
+    seedTemps({ taskId: d.tache.id, dolibarrUserId: d.auteur.id, date: '2026-07-15', durationSeconds: 25_200 })
+
+    await reprendreLesTemps({ missionId: d.mission.id, userId, api, aujourdhui: AUJOURDHUI })
+
+    const saisie = await prisma.timeEntry.findFirstOrThrow({ where: { lineId: d.ligne.id } })
+    const file = await prisma.syncOutbox.findMany({ where: { provider: 'GOOGLE' } })
+    expect(file).toHaveLength(1)
+    expect(file[0]!.entityId).toBe(saisie.id)
+    // Sous le compte **de l'auteur**, pas de celui qui lance la reprise : la
+    // file d'agenda est personnelle, et un bloc doit atterrir dans l'agenda de
+    // celui qui a travaillé.
+    expect(file[0]!.userId).toBe(saisie.userId)
   })
 
   it("crée l'utilisateur de l'auteur, sans mot de passe utilisable", async () => {

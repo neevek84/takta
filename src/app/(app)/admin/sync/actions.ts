@@ -7,6 +7,7 @@ import { resolveConflict, type ResolveResult } from '@/services/sync/conflicts'
 import { drainProvidersForUser } from '@/services/sync/drain'
 import type { DrainReport } from '@/services/sync/flush'
 import { retrySyncRow } from '@/services/sync/queue'
+import { renvoyerVersAgenda, type RenvoiResult } from '@/services/sync/renvoi'
 
 /**
  * Le déclenchement manuel, celui qui rend l'application autoportante : aucun
@@ -48,6 +49,20 @@ export async function rejouer(rowId: string): Promise<boolean> {
   // file est de portée instance (arbitrage du 20 août 2026).
   await exigerAdministration()
   const r = await retrySyncRow(rowId)
+  revalidatePath('/admin/sync')
+  return r
+}
+
+/**
+ * Remet en file, vers l'agenda, les saisies d'une période.
+ *
+ * **Sur le compte de la session, jamais sur un compte fourni.** La file
+ * d'agenda est personnelle : accepter un identifiant venu du formulaire
+ * permettrait de faire écrire dans l'agenda de quelqu'un d'autre.
+ */
+export async function renvoyerAgenda(du: string, au: string): Promise<RenvoiResult> {
+  const user = await requireUser()
+  const r = await renvoyerVersAgenda({ userId: user.id, du, au })
   revalidatePath('/admin/sync')
   return r
 }

@@ -7,6 +7,7 @@ const {
   drainSyncOutbox,
   resolveConflict,
   retrySyncRow,
+  renvoyerVersAgenda,
 } = vi.hoisted(() => ({
   requireUser: vi.fn(),
   revalidatePath: vi.fn(),
@@ -14,6 +15,7 @@ const {
   drainSyncOutbox: vi.fn(),
   resolveConflict: vi.fn(),
   retrySyncRow: vi.fn(),
+  renvoyerVersAgenda: vi.fn(),
 }))
 
 vi.mock('@/auth', () => ({
@@ -39,8 +41,9 @@ vi.mock('@/services/sync/drain', () => ({ drainProvidersForUser }))
 vi.mock('@/services/sync/flush', () => ({ drainSyncOutbox }))
 vi.mock('@/services/sync/conflicts', () => ({ resolveConflict }))
 vi.mock('@/services/sync/queue', () => ({ retrySyncRow }))
+vi.mock('@/services/sync/renvoi', () => ({ renvoyerVersAgenda }))
 
-import { arbitrer, rejouer, synchroniserMaintenant } from './actions'
+import { arbitrer, rejouer, renvoyerAgenda, synchroniserMaintenant } from './actions'
 
 const RAPPORT = { nonConnecte: false, traitees: 1, reussies: 1, conflits: 0, echecs: 0, reste: 0 }
 
@@ -51,6 +54,7 @@ beforeEach(() => {
   drainSyncOutbox.mockReset().mockResolvedValue(RAPPORT)
   resolveConflict.mockReset().mockResolvedValue({ ok: true, resolution: 'RETABLIR' })
   retrySyncRow.mockReset().mockResolvedValue(true)
+  renvoyerVersAgenda.mockReset().mockResolvedValue({ ok: true, misesEnFile: 3, motif: '' })
 })
 
 /**
@@ -130,4 +134,40 @@ describe('chaque action agit sur le seul compte de la session', () => {
   // La déconnexion de l'agenda a quitté ce fichier : elle est de portée
   // personnelle, et vit désormais dans `(app)/profil/actions.ts`, où son propre
   // test reprend les deux mêmes garanties — session exigée, compte de la session.
+})
+
+/**
+ * **La file d'agenda est personnelle.** Accepter un identifiant venu du
+ * formulaire permettrait de faire écrire des centaines de blocs dans l'agenda
+ * de quelqu'un d'autre, depuis un point d'entrée public.
+ */
+describe("renvoyer des saisies vers l'agenda", () => {
+  it('vise le compte de la session, jamais un compte fourni', async () => {
+    requireUser.mockResolvedValue({ id: 'u42', role: 'CONSULTANT' })
+
+    await renvoyerAgenda('2026-07-01', '2026-07-31')
+
+    expect(renvoyerVersAgenda).toHaveBeenCalledWith({
+      userId: 'u42',
+      du: '2026-07-01',
+      au: '2026-07-31',
+    })
+  })
+
+  it('exige une session', async () => {
+    requireUser.mockRejectedValue(new Error('non connecté'))
+
+    await expect(renvoyerAgenda('2026-07-01', '2026-07-31')).rejects.toThrow()
+    expect(renvoyerVersAgenda).not.toHaveBeenCalled()
+  })
+
+  it('relaie le verdict du service tel quel', async () => {
+    renvoyerVersAgenda.mockResolvedValue({ ok: false, misesEnFile: 0, motif: 'Période trop longue' })
+
+    expect(await renvoyerAgenda('2020-01-01', '2026-12-31')).toEqual({
+      ok: false,
+      misesEnFile: 0,
+      motif: 'Période trop longue',
+    })
+  })
 })
