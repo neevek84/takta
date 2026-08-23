@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { Field } from '@/components/ui/Field'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -8,7 +9,7 @@ import type { ConflictResolution } from '@/core/sync/policy'
 import type { OpenConflict } from '@/services/sync/conflicts'
 import type { FailedSyncRow, PendingSyncRow } from '@/services/sync/queue'
 import type { DrainReport } from '@/services/sync/flush'
-import { arbitrer, rejouer, synchroniserMaintenant } from './actions'
+import { arbitrer, rejouer, renvoyerAgenda, synchroniserMaintenant } from './actions'
 
 const ISSUES: Array<{ resolution: ConflictResolution; label: string }> = [
   { resolution: 'RETABLIR', label: 'Rétablir' },
@@ -85,6 +86,11 @@ export function SyncClient(props: {
 }) {
   const [message, setMessage] = useState<Message | null>(null)
   const [enCours, setEnCours] = useState(false)
+  // Vides au départ : proposer un mois par défaut ferait partir un rattrapage
+  // que personne n'a choisi, d'un seul clic distrait.
+  const [du, setDu] = useState('')
+  const [au, setAu] = useState('')
+  const [renvoiEnCours, setRenvoiEnCours] = useState(false)
 
   async function onArbitrer(id: string, resolution: ConflictResolution): Promise<void> {
     try {
@@ -107,6 +113,27 @@ export function SyncClient(props: {
       setMessage({ tone: 'info', texte: 'Ligne remise en file.' })
     } catch {
       setMessage(panne('La remise en file'))
+    }
+  }
+
+  async function onRenvoyer(): Promise<void> {
+    setRenvoiEnCours(true)
+    try {
+      const r = await renvoyerAgenda(du, au)
+      setMessage(
+        r.ok
+          ? {
+              tone: 'info',
+              // Le nombre est **dit** : « c’est fait » ne distingue pas un
+              // rattrapage de quatre cents blocs d’une période vide.
+              texte: `${r.misesEnFile} saisie(s) remise(s) en file vers l’agenda.`,
+            }
+          : { tone: 'danger', texte: r.motif },
+      )
+    } catch {
+      setMessage(panne('Le renvoi vers l’agenda'))
+    } finally {
+      setRenvoiEnCours(false)
     }
   }
 
@@ -138,23 +165,47 @@ export function SyncClient(props: {
       <Card title="Synchronisation">
         <div className="flex flex-col items-start gap-3 text-sm">
           {/*
-            Rien n’ordonnance le drainage dans le dépôt : ni `instrumentation.ts`,
-            ni `setInterval`, ni service, ni cron. Annoncer un écoulement
-            automatique ferait croire que l’agenda part tout seul alors que ce
-            bouton est le seul. On dit donc ce qui est, et ce qu’il faut poser
-            pour obtenir mieux.
+            Ce texte annonçait « aucun drainage automatique n’est installé ».
+            C’était vrai jusqu’à l’horloge interne : le laisser ferait chercher
+            un cron que personne n’a plus à poser. Ce qui reste vrai, et qu’il
+            faut dire, c’est que l’écoulement dépend d’un travail qu’on peut
+            avoir coupé.
           */}
           <p className="text-muted">
-            Aucun drainage automatique n’est installé : ce bouton est le seul écoulement de la file.
-          </p>
-          <p className="text-muted">
-            Pour un drainage régulier, faites appeler <code>POST /api/sync/flush</code> par un cron
-            ou par n8n, après avoir défini <code>SYNC_FLUSH_TOKEN</code> — vide, l’endpoint reste
-            fermé.
+            La file s’écoule toute seule, <strong>toutes les cinq minutes</strong>, tant que le
+            travail « Vidage de la file de sortie » est actif — il se règle dans Supervision.
+            Ce bouton force un écoulement immédiat.
           </p>
           <Button variant="primary" loading={enCours} onClick={() => void onSynchroniser()}>
             Synchroniser maintenant
           </Button>
+        </div>
+      </Card>
+
+      {/*
+        **Le rattrapage.** Deux chemins ont écrit des saisies sans jamais les
+        mettre en file : la reprise Dolibarr — corrigée depuis, mais
+        l’historique déjà repris reste muet — et toute saisie antérieure à la
+        connexion de l’agenda. On ne voyait alors dans l’agenda que les
+        prévisionnels tapés à la main.
+
+        La période est demandée, jamais « tout » : un rattrapage sur toute
+        l’histoire d’une installation enverrait des milliers d’écritures chez
+        un tiers sans que personne ne l’ait voulu.
+      */}
+      <Card title="Renvoyer des saisies vers l’agenda">
+        <div className="flex flex-col items-start gap-3 text-sm">
+          <p className="text-muted">
+            Remet en file les saisies d’une période, réalisé compris, qu’elles soient déjà parties
+            ou non. Sans effet double : un bloc déjà présent est mis à jour, pas recréé.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Du" name="renvoiDu" type="date" value={du} onChange={(e) => setDu(e.target.value)} />
+            <Field label="Au" name="renvoiAu" type="date" value={au} onChange={(e) => setAu(e.target.value)} />
+            <Button loading={renvoiEnCours} onClick={() => void onRenvoyer()}>
+              Renvoyer vers l’agenda
+            </Button>
+          </div>
         </div>
       </Card>
 

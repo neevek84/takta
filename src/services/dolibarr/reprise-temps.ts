@@ -41,6 +41,7 @@ import { getSettings } from '@/services/settings'
 import { resolveLineMinutesParJour } from '@/services/time-entries'
 import { DOLIBARR, type DolibarrApi, type DolibarrTimeSpent } from './api'
 import { LIEN_LIGNE, LIEN_TEMPS_REPRIS, LIEN_UTILISATEUR } from './liens'
+import { enqueueTimeEntry } from '@/services/sync/outbox'
 
 /** La constante Dolibarr qui dit combien d'heures vaut une journée. */
 const CONSTANTE_JOURNEE = 'TIMESHEET_DAY_DURATION'
@@ -380,6 +381,17 @@ export async function reprendreLesTemps(args: {
               comment: t.note,
               minutesParJour,
             },
+          })
+          // **Vers l'agenda, dans la même transaction.** La reprise écrivait
+          // ses saisies sans passer par la file : tout l'historique réalisé
+          // d'une installation restait invisible dans l'agenda, où seuls les
+          // prévisionnels tapés à la main apparaissaient. Sous le compte de
+          // **l'auteur** — la file d'agenda est personnelle, et un bloc doit
+          // atterrir chez celui qui a travaillé, pas chez qui lance la reprise.
+          await enqueueTimeEntry(tx, {
+            userId: local.userId,
+            entryId: saisie.id,
+            operation: 'UPSERT',
           })
           await tx.externalLink.create({
             data: {

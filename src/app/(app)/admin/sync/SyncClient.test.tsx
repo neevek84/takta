@@ -4,12 +4,13 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import type { OpenConflict } from '@/services/sync/conflicts'
 import type { FailedSyncRow } from '@/services/sync/queue'
 
-const { arbitrer, synchroniserMaintenant, rejouer } = vi.hoisted(() => ({
+const { arbitrer, synchroniserMaintenant, rejouer, renvoyerAgenda } = vi.hoisted(() => ({
   arbitrer: vi.fn(),
   synchroniserMaintenant: vi.fn(),
   rejouer: vi.fn(),
+  renvoyerAgenda: vi.fn(),
 }))
-vi.mock('./actions', () => ({ arbitrer, synchroniserMaintenant, rejouer }))
+vi.mock('./actions', () => ({ arbitrer, synchroniserMaintenant, rejouer, renvoyerAgenda }))
 
 import { SyncClient } from './SyncClient'
 
@@ -205,23 +206,26 @@ describe('synchroniser maintenant', () => {
 })
 
 /**
- * Aucun ordonnanceur n'existe dans le dépôt : ni `instrumentation.ts`, ni
- * `setInterval`, ni service dans `docker-compose.yml`, ni entrée cron. Annoncer
- * un drainage périodique ferait croire à l'utilisateur que son agenda part tout
- * seul alors que ce bouton est le seul écoulement de l'installation nominale.
+ * **Cet écran disait l'inverse, et il avait raison de le dire.** Tant qu'aucun
+ * ordonnanceur n'existait, annoncer un drainage périodique aurait fait croire
+ * que l'agenda partait tout seul alors que le bouton était le seul écoulement.
+ *
+ * L'horloge interne existe depuis : c'est le silence qui mentirait maintenant.
+ * Ce qui reste vrai, et qu'il faut dire, c'est que l'écoulement dépend d'un
+ * travail qu'on peut avoir coupé — sans quoi une file qui ne bouge pas reste
+ * inexplicable.
  */
 describe('ce que l écran promet du drainage', () => {
-  it('ne promet aucun drainage automatique', () => {
+  it('annonce l écoulement automatique et sa cadence', () => {
     renderSync()
-    expect(screen.queryByText(/tout seul/i)).toBeNull()
-    expect(screen.queryByText(/périodique/i)).toBeNull()
+    expect(screen.getByText(/toutes les/i).textContent).toMatch(/cinq minutes/i)
   })
 
-  it('dit comment poser un drainage périodique pour qui en veut un', () => {
+  it('nomme le travail dont il dépend, et où le régler', () => {
     renderSync()
-    expect(screen.getByText(/Aucun drainage automatique/i)).toBeTruthy()
-    expect(screen.getByText(/\/api\/sync\/flush/)).toBeTruthy()
-    expect(screen.getByText(/SYNC_FLUSH_TOKEN/)).toBeTruthy()
+    const texte = document.body.textContent ?? ''
+    expect(texte).toContain('Vidage de la file de sortie')
+    expect(texte).toMatch(/supervision/i)
   })
 })
 
@@ -309,5 +313,55 @@ describe('la file en attente', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Forcer maintenant' }))
 
     await waitFor(() => expect(rejouer).toHaveBeenCalledWith('row-9'))
+  })
+})
+
+/**
+ * **Le rattrapage vers l'agenda.**
+ *
+ * Deux chemins ont écrit des saisies sans jamais les mettre en file : la
+ * reprise Dolibarr, et toute saisie antérieure à la connexion de l'agenda. Le
+ * porteur ne voyait donc que ses prévisionnels tapés à la main, et en a conclu
+ * qu'un filtre écartait le réalisé — il n'y en avait aucun.
+ */
+describe("renvoyer des saisies vers l'agenda", () => {
+  it('met en file la période demandée et rend compte', async () => {
+    renvoyerAgenda.mockResolvedValue({ ok: true, misesEnFile: 42, motif: '' })
+    renderSync()
+
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-07-01' } })
+    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-07-31' } })
+    fireEvent.click(screen.getByRole('button', { name: /Renvoyer/ }))
+
+    await waitFor(() => expect(renvoyerAgenda).toHaveBeenCalledWith('2026-07-01', '2026-07-31'))
+    // Le nombre est **dit** : « c'est fait » ne distingue pas un rattrapage de
+    // quatre cents blocs d'une période où il n'y avait rien.
+    await waitFor(() => expect(document.body.textContent).toContain('42'))
+  })
+
+  it('affiche le refus tel que le service le formule', async () => {
+    renvoyerAgenda.mockResolvedValue({
+      ok: false,
+      misesEnFile: 0,
+      motif: 'La date de fin précède la date de début.',
+    })
+    renderSync()
+
+    fireEvent.click(screen.getByRole('button', { name: /Renvoyer/ }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('précède'),
+    )
+  })
+
+  // L'écran annonçait « aucun drainage automatique n'est installé ». C'était
+  // vrai jusqu'à l'horloge interne ; le laisser ferait chercher un cron que
+  // personne n'a plus à poser.
+  it('ne prétend plus qu aucun drainage automatique n existe', () => {
+    renderSync()
+
+    const texte = document.body.textContent ?? ''
+    expect(texte).not.toMatch(/aucun drainage automatique/i)
+    expect(texte).toMatch(/cinq minutes/i)
   })
 })

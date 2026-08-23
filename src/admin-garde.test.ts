@@ -51,7 +51,11 @@ const ECRAN_MIXTE = 'admin/sync/page.tsx'
  * mordant : une action ajoutée à ce fichier sans garde le fait tomber.
  */
 const ACTIONS_PERSONNELLES: Readonly<Record<string, readonly string[]>> = {
-  'admin/sync/actions.ts': ['synchroniserMaintenant', 'arbitrer'],
+  // `renvoyerAgenda` rejoint les deux autres : il ne remet en file que **les
+  // saisies de la session**, vers l'agenda personnel de celui qui le demande.
+  // L'exiger derrière un rôle d'administration priverait un consultant du seul
+  // moyen de rattraper son propre historique.
+  'admin/sync/actions.ts': ['synchroniserMaintenant', 'arbitrer', 'renvoyerAgenda'],
 }
 
 /**
