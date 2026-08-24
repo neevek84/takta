@@ -583,6 +583,55 @@ describe("la publication de l'image se recolle", () => {
  * happerait un écran par la coïncidence de son nom échouera ici, et non chez
  * l'utilisateur.
  */
+/**
+ * **Un script `.ts` de `scripts/` a importé un fichier que l'étage final ne
+ * copie pas.**
+ *
+ * Contexte : `backfill-invites-calendrier.ts` importe `secret-box.ts` par
+ * chemin relatif — l'alias `@/…` ne se résout pas sous
+ * `node --experimental-strip-types`, seul moyen d'exécuter un `.ts` dans
+ * l'image sans bundler. `scripts/` est copié dans l'étage final, mais `src/`
+ * ne l'est pas dans son ensemble : chaque fichier qu'un script y importe doit
+ * donc être copié explicitement, sans quoi l'import échoue par
+ * `ERR_MODULE_NOT_FOUND` — **une fois le conteneur en service**, jamais
+ * pendant la construction, qui n'exécute aucun de ces scripts. Constaté le
+ * 24 août 2026.
+ *
+ * Ne suit pas les imports transitifs : aucun fichier importé par un script
+ * n'en importe aujourd'hui d'autres à son tour. Le jour où ça change, ce
+ * contrôle devra en faire autant.
+ */
+describe("Dockerfile — les scripts .ts embarquent ce qu'ils importent", () => {
+  const copies = lignesActives(DOCKERFILE)
+    .map((l) => /^COPY --from=builder \/app\/(\S+)\s/.exec(l)?.[1] ?? '')
+    .filter((c) => c !== '')
+
+  function couvert(chemin: string): boolean {
+    return copies.some((c) => chemin === c || chemin.startsWith(`${c}/`))
+  }
+
+  const scriptsTs = readdirSync(path.join(RACINE, 'scripts')).filter((f) => f.endsWith('.ts'))
+
+  it('trouve au moins un script .ts (sinon ce garde-fou ne garde rien)', () => {
+    expect(scriptsTs.length).toBeGreaterThan(0)
+  })
+
+  it.each(scriptsTs)('%s : chaque import relatif est copié dans l étage final', (fichier) => {
+    const contenu = readFileSync(path.join(RACINE, 'scripts', fichier), 'utf8')
+    const imports = [...contenu.matchAll(/from '(\.\.?\/[^']+)'/g)]
+      .map((m) => m[1])
+      .filter((i): i is string => i !== undefined)
+
+    for (const imp of imports) {
+      const resolu = path.normalize(path.join('scripts', imp))
+      expect(
+        couvert(resolu),
+        `${fichier} importe ${imp} (résolu : ${resolu}), absent des COPY du Dockerfile`,
+      ).toBe(true)
+    }
+  })
+})
+
 describe("aucun motif de .dockerignore n'ampute le code source", () => {
   function fichiersDe(dossier: string): string[] {
     const trouves: string[] = []

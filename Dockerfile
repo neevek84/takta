@@ -38,6 +38,14 @@ COPY --from=builder /app/public ./public
 # (provider = "postgresql"), coherent avec prisma/migrations/migration_lock.toml.
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/scripts ./scripts
+# Les scripts de maintenance sous scripts/ (ex. backfill-invites-calendrier.ts)
+# ne passent pas par le tracing de sortie standalone de Next puisqu'aucun code
+# applicatif ne les importe : ils sont executes tels quels par
+# `node --experimental-strip-types`, et importent directement ce module par
+# chemin relatif plutot que par l'alias @/, que ce mode d'execution ne resout
+# pas. Sans cette ligne, cet import echoue avec ERR_MODULE_NOT_FOUND une fois
+# le conteneur en service, ce que le build n'exerce jamais.
+COPY --from=builder /app/src/core/crypto ./src/core/crypto
 # node_modules complet (pas seulement node_modules/.prisma) : le demarrage du
 # conteneur a besoin du CLI `prisma` (paquet "prisma", devDependency) pour
 # executer `prisma migrate deploy`, que le tracing de sortie standalone de
