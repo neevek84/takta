@@ -2245,4 +2245,41 @@ describe('MonthCalendar — la grille compacte tient-elle a la largeur de la vue
 
     expect(colonne).toBeGreaterThanOrEqual(CIBLE)
   })
+
+  /**
+   * Le test ci-dessus mesure le confort sur un moniteur large — 100 rem
+   * pleinement déployés. Mais ce n'est pas la largeur à laquelle la vue 3
+   * mois devient *atteignable* : c'est `md` (`SaisieClient.tsx`, le bouton
+   * « 3 mois » en `hidden md:inline-flex`), et `md` vaut 768 px — le seuil
+   * par défaut de Tailwind v4, que ce projet ne redéclare nulle part
+   * (`globals.css` ne porte aucun `--breakpoint-md` dans son bloc `@theme`).
+   * Pas de regex ici : ce n'est pas un jeton du projet à extraire d'un
+   * fichier source, mais une constante du framework — documentée comme
+   * telle plutôt que recopiée en silence.
+   *
+   * `PageShell` est déjà en `md:px-8` à cette largeur exacte (la marge, elle,
+   * reste lue dans sa source : `MARGE_MD` ci-dessus).
+   */
+  const LARGEUR_MD = 768
+
+  it('tombe sous la cible tactile au premier seuil ou la vue devient atteignable', () => {
+    const { container } = renderCalendar({ densite: 'COMPACTE' })
+    const grille = container.querySelector('[data-testid="grille-calendrier"]')!
+
+    const CONTENU_MD = LARGEUR_MD - 2 * MARGE_MD
+    const colonneGrilleMd = (CONTENU_MD - 2 * GOUTTIERE_ENTRE_GRILLES) / 3
+    const colonneMd = (colonneGrilleMd - 6 * gap(grille)) / 7
+
+    // ~30,67 px contre une cible de 44 px partout ailleurs dans ce projet
+    // (`@utility touch-target`, `globals.css`). Un compromis assumé, pas un
+    // oubli : la vue 3 mois est une vue grand écran, pensée souris/trackpad,
+    // pas la surface de saisie tactile principale — celle-là reste le
+    // calendrier, qui garde ses 44 px à 375 points (budget de densité
+    // normale ci-dessus, posé à la tâche 1) et n'est pas affecté par ce
+    // compromis : il est atteignable et complet à toute largeur. Sous `md`,
+    // Calendrier et Tableau restent un repli à un clic pour qui veut saisir
+    // au doigt.
+    expect(colonneMd).toBeLessThan(CIBLE)
+    expect(colonneMd).toBeCloseTo(30.67, 2)
+  })
 })
