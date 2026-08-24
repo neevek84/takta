@@ -165,10 +165,24 @@ export function SaisieClient(props: {
   const [toutLeMois, setToutLeMois] = useState(false)
   const [confirmationVidage, setConfirmationVidage] = useState(false)
   const [formulaire, setFormulaire] = useState<{ date: string; etat: CellState } | null>(null)
-  // Le compte de prévisionnel qui a ouvert le panneau de génération, `null`
-  // tant qu'aucune génération n'est en cours. Il vient du clic, jamais du
-  // rendu — voir `compterPrevisionnelDeLaLigne`.
-  const [generation, setGeneration] = useState<{ previsionnel: number } | null>(null)
+  /**
+   * Ce que le panneau de génération montre, `null` tant qu'aucune génération
+   * n'est en cours. Le compte vient du clic, jamais du rendu — voir
+   * `compterPrevisionnelDeLaLigne`.
+   *
+   * **`lineId` et `missionLabel` sont figés ici, pas relus depuis `ligne`.**
+   * `LineSelector` reste actif tant que le panneau est ouvert : sans ce gel,
+   * changer de prestation pendant que le panneau affiche « 7 jours … sur la
+   * mission A » ferait basculer le libellé sur la mission B tout en gardant
+   * le chiffre de A à l'écran — puis générerait bel et bien pour B au clic. Un
+   * choix pris sur un nombre que l'utilisateur n'a jamais vu, exactement ce
+   * que ce panneau existe pour empêcher.
+   */
+  const [generation, setGeneration] = useState<{
+    lineId: string
+    missionLabel: string
+    previsionnel: number
+  } | null>(null)
 
   // La sélection mémorisée ne peut être lue qu'après le montage : la lire dans
   // l'initialiseur ferait diverger le rendu serveur du rendu client.
@@ -268,14 +282,20 @@ export function SaisieClient(props: {
    * Génère le CRA du mois, une fois le sort du prévisionnel réglé — par le
    * panneau, ou d'office quand il n'y avait rien à trancher.
    *
+   * `lineIdCible` est un paramètre explicite, jamais relu depuis `lineId` : ce
+   * dernier peut avoir changé sous le panneau pendant que l'utilisateur
+   * regardait la question posée pour une autre prestation. La générer pour la
+   * prestation courante au lieu de celle affichée traiterait un prévisionnel
+   * que personne n'a vu.
+   *
    * **L'écran reste sur la Saisie.** Rediriger vers le suivi arracherait
    * l'utilisateur à un mois qu'il n'a pas fini de regarder ; le compte rendu
    * s'écrit dans le bandeau existant, avec le renvoi vers le suivi pour qui
    * veut voir le document.
    */
-  async function lancerGeneration(choix: ChoixPrevisionnel): Promise<void> {
+  async function lancerGeneration(lineIdCible: string, choix: ChoixPrevisionnel): Promise<void> {
     setGeneration(null)
-    const r = await genererCraAction({ lineId, month: props.month, previsionnel: choix })
+    const r = await genererCraAction({ lineId: lineIdCible, month: props.month, previsionnel: choix })
 
     if (!r.ok) {
       // MOIS_VALIDE n'a rien posé : c'est un refus, pas un avertissement.
@@ -373,14 +393,20 @@ export function SaisieClient(props: {
             <Button
               type="button"
               onClick={async () => {
+                // Figés dès le clic : `lineId` peut changer pendant l'attente
+                // du compte (sélecteur de prestation toujours actif), et le
+                // panneau — s'il s'ouvre — doit rester celui de la
+                // prestation pour laquelle la question a été posée.
+                const lineIdVise = lineId
+                const missionLabelVise = `${ligne.clientName} · ${ligne.missionLabel}`
                 const previsionnel = await compterPrevisionnelDeLaLigne({
-                  lineId,
+                  lineId: lineIdVise,
                   month: props.month,
                 })
                 // Rien à trancher : on génère sans poser de question — une
                 // question sur zéro jour apprendrait à cliquer sans lire.
-                if (previsionnel === 0) await lancerGeneration('SUPPRIMER')
-                else setGeneration({ previsionnel })
+                if (previsionnel === 0) await lancerGeneration(lineIdVise, 'SUPPRIMER')
+                else setGeneration({ lineId: lineIdVise, missionLabel: missionLabelVise, previsionnel })
               }}
             >
               Générer le CRA
@@ -419,13 +445,17 @@ export function SaisieClient(props: {
         </div>
       )}
 
-      {generation !== null && ligne !== undefined && (
+      {/* `missionLabel` et le `lineId` visé viennent de `generation`, figés au
+          clic — jamais de `ligne` / `lineId`, qui suivent le sélecteur resté
+          actif sous le panneau. Un choix doit porter sur ce que l'écran a
+          montré, pas sur ce que le sélecteur affiche au moment du clic. */}
+      {generation !== null && (
         <PanneauGeneration
           month={props.month}
-          missionLabel={`${ligne.clientName} · ${ligne.missionLabel}`}
+          missionLabel={generation.missionLabel}
           previsionnel={generation.previsionnel}
           onChoix={(choix) => {
-            void lancerGeneration(choix)
+            void lancerGeneration(generation.lineId, choix)
           }}
           onAnnuler={() => setGeneration(null)}
         />

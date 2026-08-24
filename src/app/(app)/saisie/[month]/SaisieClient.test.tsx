@@ -57,6 +57,35 @@ const lines: LineForGrid[] = [
   },
 ]
 
+/**
+ * Deux missions au libellé distinct, pour prouver que le panneau de
+ * génération fige la prestation à l'ouverture : `lines` ci-dessus porte deux
+ * lignes de la même mission ACME · ITSM, ce qui masquerait un mélange entre
+ * elles.
+ */
+const lignesDistinctes: LineForGrid[] = [
+  {
+    id: 'lA',
+    label: 'Consultant A',
+    missionLabel: 'Mission A',
+    clientName: 'ACME',
+    displayUnit: 'JOUR',
+    minutesParJour: 480,
+    soldCentiemes: 3000,
+    allowedSlotIds: [],
+  },
+  {
+    id: 'lB',
+    label: 'Consultant B',
+    missionLabel: 'Mission B',
+    clientName: 'BETA',
+    displayUnit: 'JOUR',
+    minutesParJour: 480,
+    soldCentiemes: 3000,
+    allowedSlotIds: [],
+  },
+]
+
 function renderClient(
   overrides: Partial<React.ComponentProps<typeof SaisieClient>> = {},
 ): void {
@@ -742,6 +771,47 @@ describe('SaisieClient — calendrier', () => {
       expect(bandeau).not.toBeNull()
       expect(bandeau!.className).toContain('bg-danger')
       expect(bandeau!.className).not.toContain('bg-warning')
+    })
+
+    // Défaut trouvé en revue : `LineSelector` reste actif tant que le panneau
+    // est ouvert. Sans gel de la ligne visée, changer de prestation pendant
+    // que le panneau affiche encore le compte de l'ancienne ferait générer
+    // pour la nouvelle — un choix pris sur un nombre que l'utilisateur n'a
+    // jamais vu, exactement ce que ce panneau existe pour empêcher.
+    it('fige la prestation visée : changer de sélection pendant que le panneau est ouvert ne dévie pas la génération', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(7)
+      genererCraAction.mockResolvedValue({ ok: true, craId: 'c1', previsionnelTraite: 7 })
+      renderClient({ lines: lignesDistinctes })
+
+      // Ouvre le panneau pour la ligne A.
+      fireEvent.change(screen.getByLabelText('Prestation'), { target: { value: 'lA' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+      await screen.findByText(/ACME · Mission A/)
+      expect(compterPrevisionnelDeLaLigne).toHaveBeenCalledWith({ lineId: 'lA', month: '2026-03' })
+
+      // Le sélecteur reste utilisable pendant que le panneau est ouvert : on
+      // bascule sur la ligne B sans jamais fermer le panneau.
+      fireEvent.change(screen.getByLabelText('Prestation'), { target: { value: 'lB' } })
+
+      // Le panneau continue de nommer la mission pour laquelle la question a
+      // été posée, jamais celle que le sélecteur affiche maintenant.
+      expect(screen.getByText(/ACME · Mission A/)).toBeTruthy()
+      expect(screen.queryByText(/BETA · Mission B/)).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: /Valider ces jours/ }))
+
+      // Généré pour A — celle affichée et comptée —, jamais pour B, devenue
+      // courante entre-temps mais jamais montrée à l'utilisateur.
+      await waitFor(() =>
+        expect(genererCraAction).toHaveBeenCalledWith({
+          lineId: 'lA',
+          month: '2026-03',
+          previsionnel: 'VALIDER',
+        }),
+      )
+      expect(genererCraAction).not.toHaveBeenCalledWith(
+        expect.objectContaining({ lineId: 'lB' }),
+      )
     })
   })
 
