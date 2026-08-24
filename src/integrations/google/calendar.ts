@@ -27,7 +27,19 @@ interface GoogleEvent {
   extendedProperties?: { private?: Record<string, string> }
 }
 
-function toBody(draft: CalendarEventDraft): Record<string, unknown> {
+/**
+ * `ownerEmail` s'invite lui-même sur le bloc — vide, aucun invité n'est posé.
+ *
+ * Un calendrier secondaire reste privé même partagé en `freeBusyReader` : ce
+ * partage ouvre la lecture de *ce* calendrier précis, mais Google ne fusionne
+ * jamais un calendrier secondaire dans le libre/occupé interrogé par
+ * l'adresse `primary` du compte. Ce que Google agrège en revanche sous cette
+ * adresse, ce sont les événements où elle figure comme invitée — quel que
+ * soit le calendrier organisateur. S'inviter soi-même sur son propre bloc,
+ * dans son propre calendrier dédié, suffit donc à faire porter l'occupation
+ * jusqu'à l'agenda principal, sans jamais y écrire un événement.
+ */
+function toBody(draft: CalendarEventDraft, ownerEmail: string): Record<string, unknown> {
   return {
     summary: draft.summary,
     description: draft.description,
@@ -36,6 +48,9 @@ function toBody(draft: CalendarEventDraft): Record<string, unknown> {
     transparency: draft.transparency,
     colorId: draft.colorId,
     extendedProperties: { private: { craEntryId: draft.craEntryId } },
+    ...(ownerEmail === ''
+      ? {}
+      : { attendees: [{ email: ownerEmail, responseStatus: 'accepted' }] }),
   }
 }
 
@@ -90,8 +105,44 @@ function toRemote(raw: GoogleEvent): RemoteEvent {
   }
 }
 
+interface AclRule {
+  role: string
+  scope?: { type: string }
+}
+
 /**
- * Retrouve le calendrier dédié par son libellé, ou le crée.
+ * Ouvre la lecture libre/occupé du calendrier dédié à tout le monde, y
+ * compris hors du domaine de l'utilisateur — sans quoi un client externe qui
+ * l'invite à une réunion dans Google Calendar ne le voit jamais occupé : un
+ * calendrier secondaire fraîchement créé est privé par défaut, et le rester
+ * même avec des événements `opaque` viderait de son sens l'intention du lot 0
+ * (« l'agenda est la surface de disponibilité »).
+ *
+ * Relit d'abord les règles existantes : un partage déjà plus large que
+ * `freeBusyReader` ne doit pas être touché, seulement complété s'il manque
+ * une portée `default`.
+ */
+async function assurerLibreOccupePublic(
+  fetchFn: FetchLike,
+  accessToken: string,
+  calendarId: string,
+): Promise<void> {
+  const acl = `${BASE}/calendars/${encodeURIComponent(calendarId)}/acl`
+  const liste = (await request(fetchFn, accessToken, 'GET', acl)) as { items?: AclRule[] }
+
+  const dejaOuvert = (liste.items ?? []).some((regle) => regle.scope?.type === 'default')
+  if (dejaOuvert) return
+
+  await request(fetchFn, accessToken, 'POST', acl, {
+    role: 'freeBusyReader',
+    scope: { type: 'default' },
+  })
+}
+
+/**
+ * Retrouve le calendrier dédié par son libellé, ou le crée — et s'assure
+ * dans les deux cas que son libre/occupé est partagé publiquement (voir
+ * `assurerLibreOccupePublic`).
  *
  * Jamais l'agenda principal : le calendrier dédié est affichable ou masquable
  * d'un clic et effaçable d'un geste, ce qui est la condition pour que
@@ -110,27 +161,62 @@ export async function ensureDedicatedCalendar(
   )) as { items?: Array<{ id: string; summary?: string }> }
 
   const existant = (liste.items ?? []).find((c) => c.summary === summary)
-  if (existant !== undefined) return existant.id
+  const calendarId =
+    existant !== undefined
+      ? existant.id
+      : (
+          (await request(fetchFn, accessToken, 'POST', `${BASE}/calendars`, {
+            summary,
+          })) as { id: string }
+        ).id
 
-  const cree = (await request(fetchFn, accessToken, 'POST', `${BASE}/calendars`, {
-    summary,
-  })) as { id: string }
-  return cree.id
+  await assurerLibreOccupePublic(fetchFn, accessToken, calendarId)
+  return calendarId
+}
+
+/**
+ * L'adresse du calendrier `primary` du compte connecté — littéralement
+ * l'adresse du compte. Lue une fois à la connexion (voir `connect.ts`), pour
+ * inviter le compte sur ses propres blocs sans lui demander de scope
+ * supplémentaire : le calendrier `primary` est déjà couvert par le scope
+ * `calendar` que l'application détient.
+ */
+export async function getPrimaryCalendarEmail(
+  fetchFn: FetchLike,
+  accessToken: string,
+): Promise<string> {
+  const raw = (await request(fetchFn, accessToken, 'GET', `${BASE}/calendars/primary`)) as {
+    id: string
+  }
+  return raw.id
 }
 
 export function createGoogleCalendarConnector(args: {
   fetchFn: FetchLike
   accessToken: string
   calendarId: string
+  /** adresse invitée sur chaque bloc ; vide, aucun invité n'est posé */
+  ownerEmail?: string
 }): CalendarConnector {
   const { fetchFn, accessToken, calendarId } = args
+  const ownerEmail = args.ownerEmail ?? ''
   const events = `${BASE}/calendars/${encodeURIComponent(calendarId)}/events`
+  // `sendUpdates=none` : l'invité n'est autre que le compte qui écrit —
+  // sans ce paramètre, Google lui enverrait un courriel d'invitation à
+  // chaque bloc posé.
+  const sansNotification = (url: string): string => `${url}?sendUpdates=none`
 
   return {
     dedicatedCalendarId: calendarId,
 
     async createEvent(draft) {
-      const raw = (await request(fetchFn, accessToken, 'POST', events, toBody(draft))) as GoogleEvent
+      const raw = (await request(
+        fetchFn,
+        accessToken,
+        'POST',
+        sansNotification(events),
+        toBody(draft, ownerEmail),
+      )) as GoogleEvent
       return { externalId: raw.id, etag: raw.etag }
     },
 
@@ -139,8 +225,8 @@ export function createGoogleCalendarConnector(args: {
         fetchFn,
         accessToken,
         'PUT',
-        `${events}/${encodeURIComponent(externalId)}`,
-        toBody(draft),
+        sansNotification(`${events}/${encodeURIComponent(externalId)}`),
+        toBody(draft, ownerEmail),
       )) as GoogleEvent
       return { etag: raw.etag }
     },

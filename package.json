@@ -18,6 +18,7 @@
     "setup:local": "node scripts/set-db-provider.mjs sqlite && prisma db push && prisma generate",
     "backfill:rates": "node scripts/backfill-minutes-par-jour.mjs",
     "backfill:heures": "node scripts/backfill-heures-saisies.mjs",
+    "backfill:invites-calendrier": "node --experimental-strip-types scripts/backfill-invites-calendrier.ts",
     "theme:reprise": "node scripts/migrer-theme-encre.mjs",
     "fonts:sync": "node scripts/sync-fonts.mjs",
     "empaqueter": "node scripts/empaqueter.mjs",

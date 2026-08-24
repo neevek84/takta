@@ -112,6 +112,27 @@ describe('connexion', () => {
     expect(row.refreshTokenEnc).not.toContain('rafraichissement')
   })
 
+  it('retrouve et stocke l adresse du compte connecté', async () => {
+    await connectGoogle({ userId, code: 'code-de-consentement', fetchFn: api.fetchFn })
+
+    const creds = await getCredential(userId, 'GOOGLE')
+    expect(creds?.ownerEmail).toBe(api.primaryEmail)
+  })
+
+  it('n enregistre rien quand l adresse du compte ne peut pas être retrouvée', async () => {
+    // Même invariant que pour le calendrier dédié : un compte à moitié
+    // préparé afficherait « connecté » pour rien, sans raison de recommencer.
+    const fetchFn: typeof api.fetchFn = async (url, init) => {
+      if (String(url).includes('/calendars/primary')) throw new Error('adresse indisponible')
+      return api.fetchFn(url, init)
+    }
+
+    await expect(
+      connectGoogle({ userId, code: 'code-de-consentement', fetchFn }),
+    ).rejects.toThrow()
+    expect(await prisma.providerCredential.count({ where: { userId } })).toBe(0)
+  })
+
   it('réutilise le calendrier dédié à la reconnexion', async () => {
     const premier = await connectGoogle({ userId, code: 'code-1', fetchFn: api.fetchFn })
     const second = await connectGoogle({ userId, code: 'code-2', fetchFn: api.fetchFn })
@@ -271,6 +292,7 @@ describe('état et révocation', () => {
       expiresAt: new Date(Date.now() + 3_600_000),
       scope: 'https://www.googleapis.com/auth/calendar',
       calendarId: '',
+      ownerEmail: '',
     })
 
     expect((await getConnectionState(userId)).connected).toBe(false)

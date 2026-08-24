@@ -548,6 +548,10 @@ model ProviderCredential {
   scope           String   @default("")
   /// le calendrier dédié, exclu de toute lecture d'occupation
   calendarId      String   @default("")
+  /// adresse du compte connecté (calendrier `primary`) ; vide pour Dolibarr.
+  /// Invitée sur chaque bloc pour que le libre/occupé du compte la porte —
+  /// voir `assurerLibreOccupePublic` et `src/integrations/google/calendar.ts`.
+  ownerEmail      String   @default("")
   /// URL de base du fournisseur ; vide si sans objet
   baseUrl         String   @default("")
   /// ce qui est propre à un fournisseur (identifiant d'utilisateur Dolibarr…).

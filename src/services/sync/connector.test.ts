@@ -138,6 +138,18 @@ describe('chaque cause de « null » devient distinguable', () => {
   })
 })
 
+describe('le connecteur porte l adresse du compte', () => {
+  it('transmet ownerEmail au connecteur Google', async () => {
+    getCredential.mockResolvedValue(jetons({ ownerEmail: 'compte@exemple.test' }))
+
+    await resolveConnector('u1', { now: MAINTENANT })
+
+    expect(createGoogleCalendarConnector).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerEmail: 'compte@exemple.test' }),
+    )
+  })
+})
+
 describe('le renouvellement emploie le client enregistré', () => {
   it('passe le client OAuth de la base au renouvellement', async () => {
     getCredential.mockResolvedValue(jetons({ expiresAt: new Date('2026-03-10T09:00:10Z') }))

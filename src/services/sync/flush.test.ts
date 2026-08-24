@@ -455,6 +455,7 @@ describe('résilience — une panne Google ne bloque jamais la saisie', () => {
       expiresAt: new Date(NOW.getTime() - 60_000),
       scope: 'calendar',
       calendarId: DEDIE,
+      ownerEmail: 'compte@exemple.test',
     })
     api.oauth.refusRefresh = true
     await saisir('2026-03-12')
@@ -470,6 +471,7 @@ describe('résilience — une panne Google ne bloque jamais la saisie', () => {
       expiresAt: new Date(NOW.getTime() - 60_000),
       scope: 'calendar',
       calendarId: DEDIE,
+      ownerEmail: 'compte@exemple.test',
     })
     await saisir('2026-03-12')
 
@@ -728,6 +730,7 @@ describe('drainage de tous les comptes', () => {
       expiresAt: new Date(NOW.getTime() + 3_600_000),
       scope: 'calendar',
       calendarId: DEDIE,
+      ownerEmail: 'compte@exemple.test',
     })
   }
 
@@ -773,6 +776,7 @@ describe('drainage de tous les comptes', () => {
       expiresAt: new Date(NOW.getTime() + 3_600_000),
       scope: 'calendar',
       calendarId: '',
+      ownerEmail: '',
     })
     await saisir('2026-03-12')
 

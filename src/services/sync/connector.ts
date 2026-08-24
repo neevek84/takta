@@ -68,5 +68,10 @@ export async function resolveConnector(
     }
   }
 
-  return createGoogleCalendarConnector({ fetchFn, accessToken, calendarId: creds.calendarId })
+  return createGoogleCalendarConnector({
+    fetchFn,
+    accessToken,
+    calendarId: creds.calendarId,
+    ownerEmail: creds.ownerEmail,
+  })
 }

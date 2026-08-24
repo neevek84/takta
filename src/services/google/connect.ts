@@ -1,12 +1,17 @@
 import { prisma } from '@/db/client'
 import { PROVIDER_GOOGLE } from '@/core/sync/policy'
-import { ensureDedicatedCalendar, type FetchLike } from '@/integrations/google/calendar'
+import {
+  ensureDedicatedCalendar,
+  getPrimaryCalendarEmail,
+  type FetchLike,
+} from '@/integrations/google/calendar'
 import { exchangeCode } from '@/integrations/google/oauth'
 import {
   OWNER_SCOPE_USER,
   revokeCredential,
   saveCredential,
   setCalendarId,
+  setOwnerEmail,
 } from '@/services/credentials'
 import { journalErreur } from '@/services/log'
 import { readGoogleOAuthClient } from './oauth-client'
@@ -76,9 +81,19 @@ export async function enregistrerEtPreparerAgenda(args: {
   fetchFn?: FetchLike
 }): Promise<{ calendarId: string }> {
   const fetchFn = args.fetchFn ?? (globalThis.fetch as unknown as FetchLike)
-  await saveCredential(args.userId, PROVIDER_GOOGLE, { ...args.jetons, calendarId: '' })
+  await saveCredential(args.userId, PROVIDER_GOOGLE, {
+    ...args.jetons,
+    calendarId: '',
+    ownerEmail: '',
+  })
 
   try {
+    // L'adresse du compte sert à l'inviter sur ses propres blocs (voir
+    // `toBody` dans calendar.ts) : sans elle, le libre/occupé posé dans le
+    // calendrier dédié ne remonte jamais jusqu'à l'agenda principal.
+    const ownerEmail = await getPrimaryCalendarEmail(fetchFn, args.jetons.accessToken)
+    await setOwnerEmail(args.userId, PROVIDER_GOOGLE, ownerEmail)
+
     const calendarId = await ensureDedicatedCalendar(
       fetchFn,
       args.jetons.accessToken,

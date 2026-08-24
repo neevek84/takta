@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { CalendarApiError } from '@/core/calendar/connector'
 import { buildCalendarEvent } from '@/core/calendar/event'
-import { createGoogleCalendarConnector } from './calendar'
+import {
+  createGoogleCalendarConnector,
+  ensureDedicatedCalendar,
+  getPrimaryCalendarEmail,
+} from './calendar'
 import { createFakeGoogleApi, type FakeGoogleApi } from './fake-google-api'
 import { exchangeCode } from './oauth'
 
@@ -9,11 +13,12 @@ const DEDIE = 'cra-dedie@group.calendar.google.com'
 
 let api: FakeGoogleApi
 
-function connector(calendarId = DEDIE) {
+function connector(calendarId = DEDIE, ownerEmail?: string) {
   return createGoogleCalendarConnector({
     fetchFn: api.fetchFn,
     accessToken: 'ya29.acces',
     calendarId,
+    ...(ownerEmail === undefined ? {} : { ownerEmail }),
   })
 }
 
@@ -173,6 +178,77 @@ describe('lecture d occupation', () => {
   })
 })
 
+describe('adresse du compte connecté', () => {
+  it('rend l identifiant du calendrier primary, littéralement l adresse du compte', async () => {
+    api.primaryEmail = 'porteur@exemple.test'
+    await expect(getPrimaryCalendarEmail(api.fetchFn, 'ya29.acces')).resolves.toBe(
+      'porteur@exemple.test',
+    )
+  })
+})
+
+describe('invité — libre/occupé de l agenda principal', () => {
+  const COMPTE = 'compte@exemple.test'
+
+  it('invite le compte connecté sur le bloc qu il pose lui-même', async () => {
+    await connector(DEDIE, COMPTE).createEvent(draft())
+    const corps = api.dernierAppel().body as { attendees?: Array<{ email: string }> }
+    expect(corps.attendees).toEqual([{ email: COMPTE, responseStatus: 'accepted' }])
+  })
+
+  it('ne pose aucun invité sans adresse connue', async () => {
+    // Compatibilité avec une connexion antérieure à ce correctif, dont
+    // `ownerEmail` n'a pas encore été rempli.
+    await connector(DEDIE).createEvent(draft())
+    const corps = api.dernierAppel().body as { attendees?: unknown }
+    expect(corps.attendees).toBeUndefined()
+  })
+
+  it('reporte l invité sur chaque mise à jour', async () => {
+    const c = connector(DEDIE, COMPTE)
+    const cree = await c.createEvent(draft())
+    await c.updateEvent(cree.externalId, draft())
+
+    const corps = api.dernierAppel().body as { attendees?: Array<{ email: string }> }
+    expect(corps.attendees).toEqual([{ email: COMPTE, responseStatus: 'accepted' }])
+  })
+
+  it('n envoie aucun courriel d invitation : sendUpdates=none', async () => {
+    const c = connector(DEDIE, COMPTE)
+    const cree = await c.createEvent(draft())
+    expect(api.dernierAppel().url).toContain('sendUpdates=none')
+
+    await c.updateEvent(cree.externalId, draft())
+    expect(api.dernierAppel().url).toContain('sendUpdates=none')
+  })
+})
+
+describe('calendrier dédié — partage libre/occupé', () => {
+  // Sans cette règle, un calendrier secondaire fraîchement créé reste privé :
+  // un tiers qui invite l'utilisateur dans Google Calendar ne le voit jamais
+  // occupé pendant un bloc CRA, même marqué `opaque`.
+  it('ouvre le libre/occupé en portée publique à la création', async () => {
+    const calendarId = await ensureDedicatedCalendar(api.fetchFn, 'ya29.acces', 'CRA — disponibilités')
+    expect(api.acl.get(calendarId)).toEqual([{ role: 'freeBusyReader', scope: { type: 'default' } }])
+  })
+
+  it('ne repose pas la règle quand le calendrier est retrouvé déjà ouvert', async () => {
+    const premier = await ensureDedicatedCalendar(api.fetchFn, 'ya29.acces', 'CRA — disponibilités')
+    const second = await ensureDedicatedCalendar(api.fetchFn, 'ya29.acces', 'CRA — disponibilités')
+
+    expect(second).toBe(premier)
+    expect(api.acl.get(premier)).toHaveLength(1)
+  })
+
+  it('respecte un partage déjà plus large sans le rétrograder', async () => {
+    const calendarId = await ensureDedicatedCalendar(api.fetchFn, 'ya29.acces', 'CRA — disponibilités')
+    api.acl.set(calendarId, [{ role: 'reader', scope: { type: 'default' } }])
+
+    await ensureDedicatedCalendar(api.fetchFn, 'ya29.acces', 'CRA — disponibilités')
+    expect(api.acl.get(calendarId)).toEqual([{ role: 'reader', scope: { type: 'default' } }])
+  })
+})
+
 describe('pannes', () => {
   it('traduit une coupure réseau en UNAVAILABLE', async () => {
     api.failNext('RESEAU')
@@ -244,7 +320,10 @@ describe('sévérité du double', () => {
    */
   async function urlEvents(): Promise<string> {
     await connector().createEvent(draft())
-    return api.dernierAppel().url
+    // Sans le paramètre `sendUpdates` : ces cas construisent des URL dérivées
+    // (`${base}/${id}`), et le connecteur le pose lui-même quand il en a
+    // besoin — voir la « sévérité du double — invité » plus bas.
+    return api.dernierAppel().url.split('?')[0] ?? ''
   }
 
   async function urlFreeBusy(): Promise<string> {
@@ -372,8 +451,10 @@ describe('sévérité du double', () => {
     // Ce test rendait 404 avant que le double ne devienne le gardien du
     // catalogue. Un 404 est traduit par le connecteur en `NOT_FOUND`, que
     // `deleteEvent` avale : le refus doit lever pour se voir sur ce chemin.
-    const acl = (await urlEvents()).replace(/\/events$/, '/acl')
-    await expect(api.fetchFn(acl, { method: 'GET', headers: ENTETES })).rejects.toThrow(
+    // `/acl` sert désormais un vrai usage (partage libre/occupé) ; `/watch`
+    // reste absent du catalogue et tient donc ce rôle d'exemple non catalogué.
+    const watch = (await urlEvents()).replace(/\/events$/, '/watch')
+    await expect(api.fetchFn(watch, { method: 'GET', headers: ENTETES })).rejects.toThrow(
       /non catalogué/,
     )
   })

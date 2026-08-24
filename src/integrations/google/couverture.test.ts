@@ -3,7 +3,11 @@ import { comparerCouverture } from '@/core/integrations/catalogue'
 import type { CalendarEventDraft } from '@/core/calendar/event'
 import type { GoogleOAuthClient } from '@/core/google/oauth-client'
 import { createFakeGoogleApi } from './fake-google-api'
-import { createGoogleCalendarConnector, ensureDedicatedCalendar } from './calendar'
+import {
+  createGoogleCalendarConnector,
+  ensureDedicatedCalendar,
+  getPrimaryCalendarEmail,
+} from './calendar'
 import { exchangeCode, refreshAccessToken } from './oauth'
 import { CATALOGUE_GOOGLE } from './catalogue'
 
@@ -54,6 +58,7 @@ describe('couverture du catalogue Google', () => {
     await exchangeCode(api.fetchFn, CLIENT_FACTICE, 'code-factice')
     await refreshAccessToken(api.fetchFn, CLIENT_FACTICE, 'jeton-factice')
 
+    const ownerEmail = await getPrimaryCalendarEmail(api.fetchFn, 'jeton-factice')
     const calendarId = await ensureDedicatedCalendar(
       api.fetchFn,
       'jeton-factice',
@@ -63,6 +68,7 @@ describe('couverture du catalogue Google', () => {
       fetchFn: api.fetchFn,
       accessToken: 'jeton-factice',
       calendarId,
+      ownerEmail,
     })
 
     const { externalId } = await connecteur.createEvent(brouillon())

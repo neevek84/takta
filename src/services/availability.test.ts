@@ -149,6 +149,7 @@ describe('getBusyRange — pipeline reel', () => {
       expiresAt,
       scope: 'calendar',
       calendarId: 'cra-dedie@group.calendar.google.com',
+      ownerEmail: 'compte@exemple.test',
     })
   }
 
