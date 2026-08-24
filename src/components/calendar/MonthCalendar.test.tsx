@@ -34,7 +34,7 @@ const ligneJour: LineForGrid = {
 
 const ligneHeure: LineForGrid = { ...ligneJour, id: 'l2', label: 'Astreinte', displayUnit: 'HEURE' }
 
-function entree(over: Partial<MonthEntry>): MonthEntry {
+function entree(over: Partial<MonthEntry> = {}): MonthEntry {
   return {
     id: 'e', lineId: 'l1', date: '2026-03-10', minutes: 480,
     kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480, ...over,
@@ -2087,5 +2087,142 @@ describe('MonthCalendar — le marqueur d une journée éclatée', () => {
         ).toBeGreaterThanOrEqual(AA_TEXT_RATIO)
       }
     }
+  })
+})
+
+/**
+ * La densité compacte sert la vue 3 mois (lot suivant) : trois grilles dans
+ * l'emprise d'une seule ramènent la case de ~145 à ~55 points. Ce qui ne
+ * survit pas à la réduction — le libellé d'heures ou de créneau — disparaît ;
+ * ce qui porte l'information — l'aplat, le numéro du jour, les marqueurs —
+ * reste. C'est une surface de saisie aux deux calibres, pas un aperçu au
+ * second : la cinématique (clic, glissement, clavier) est donc identique.
+ */
+describe('MonthCalendar — densite compacte', () => {
+  afterEach(cleanup)
+
+  it('retire le libelle qui ne survit pas a la reduction — un format en heures', () => {
+    renderCalendar({
+      densite: 'COMPACTE',
+      line: ligneHeure,
+      entries: [entree({ lineId: 'l2', minutes: 210, slotId: 'matin' })],
+    })
+
+    // En densité normale, cette même saisie afficherait « 3h30 » (voir le
+    // test symétrique ci-dessous) : la grille compacte ne doit plus porter
+    // aucun « h » d'heure.
+    const grille = screen.getByTestId('grille-calendrier')
+    expect(grille.textContent).not.toContain('h')
+  })
+
+  it('garde le numero du jour et les marqueurs', () => {
+    renderCalendar({
+      densite: 'COMPACTE',
+      entries: [entree({ kind: 'PREVISIONNEL' })],
+      busyDates: ['2026-03-10'],
+    })
+
+    expect(screen.getByTestId('previsionnel-2026-03-10')).toBeTruthy()
+    expect(screen.getByTestId('occupation-2026-03-10')).toBeTruthy()
+    expect(screen.getByText('10')).toBeTruthy()
+    // Le libellé, lui, ne survit pas à la réduction : la case garde son
+    // aplat, jamais son chiffre.
+    expect(valeurDu('2026-03-10').textContent).toBe('')
+  })
+
+  // C'est une surface de saisie, pas un apercu : la cinematique est
+  // identique, sinon la vue 3 mois ne sert qu'a regarder.
+  it('reste cliquable et applique le meme cycle', async () => {
+    const onApply = vi.fn(async () => true)
+    renderCalendar({ densite: 'COMPACTE', onApply })
+
+    fireEvent.click(caseDu('2026-03-10'))
+
+    await waitFor(() => expect(onApply).toHaveBeenCalled())
+  })
+
+  it('la densite normale ne change pas', () => {
+    renderCalendar({
+      line: ligneHeure,
+      entries: [entree({ lineId: 'l2', minutes: 210, slotId: 'matin' })],
+    })
+
+    expect(valeurDu('2026-03-10').textContent).toBe('3h30')
+  })
+})
+
+/**
+ * La contrainte de la tâche 13 : la grille compacte doit rester utilisable au
+ * doigt, à sa largeur réelle. La densité normale mesure sa cible à 375
+ * points, sur un téléphone ; la densité compacte se déploie à trois grilles
+ * par ligne, à `md`, où le gabarit change de marge — voir `PageShell`.
+ *
+ * Mêmes principes que le budget de densité normale ci-dessus : rien n'est
+ * recopié à la main, chaque terme est lu là où il est réellement déclaré.
+ */
+describe('MonthCalendar — la grille compacte tient-elle a la largeur de la vue 3 mois', () => {
+  afterEach(cleanup)
+
+  const CSS = readFileSync(join(process.cwd(), 'src', 'app', 'globals.css'), 'utf8')
+  const SHELL = readFileSync(
+    join(process.cwd(), 'src', 'components', 'ui', 'PageShell.tsx'),
+    'utf8',
+  )
+
+  function rem(valeur: string): number {
+    return Number(valeur) * 16
+  }
+
+  function jetonRem(nom: string): number {
+    const trouve = new RegExp(`${nom}:\\s*([\\d.]+)rem`).exec(CSS)
+    expect(trouve, `${nom} introuvable dans globals.css`).not.toBeNull()
+    return rem(trouve![1]!)
+  }
+
+  const bloc = /@utility\s+touch-target\s*\{([^}]*)\}/.exec(CSS)
+  const CIBLE = rem(/min-width:\s*([\d.]+)rem/.exec(bloc![1]!)![1]!)
+  const PAS = jetonRem('--spacing')
+
+  /**
+   * 100rem, tel que le gabarit commun le déclare — jamais recopié en 1600.
+   * `MonthCalendar.test.tsx` (budget normal, plus haut) lit déjà `p-4` sur ce
+   * même fichier ; ce bloc lit les deux autres déclarations dont la vue 3
+   * mois dépend.
+   */
+  const largeurPage = /max-w-\[(\d+)rem\]/.exec(SHELL)
+  expect(largeurPage, 'PageShell ne déclare plus de max-w-[Nrem]').not.toBeNull()
+  const LARGEUR_PAGE = rem(largeurPage![1]!)
+
+  /**
+   * La marge de la page **à `md`** : trois grilles sur une ligne n'ont de
+   * sens qu'à cette largeur, où `PageShell` passe de `p-4` à `md:px-8`. Le
+   * budget de densité normale lit `p-4` ; celui-ci lit l'autre déclaration,
+   * par le même mécanisme — une expression régulière sur la même chaîne, pas
+   * un chiffre recopié.
+   */
+  const margeMd = /md:px-(\d+)\b/.exec(SHELL)
+  expect(margeMd, 'PageShell ne déclare plus de marge `md:px-N`').not.toBeNull()
+  const MARGE_MD = Number(margeMd![1]!) * PAS
+
+  /** Nombre de pas d'espacement d'une classe `gap-N` ou `gap-x-N`. */
+  function gap(el: Element): number {
+    const trouve = /(?:^|\s)gap-(?:x-)?([\d.]+)(?:\s|$)/.exec(el.className)
+    expect(trouve, `aucune gouttière déclarée sur ${el.className}`).not.toBeNull()
+    return Number(trouve![1]!) * PAS
+  }
+
+  it('laisse a chaque case compacte une cible utilisable sur ecran large', () => {
+    const { container } = renderCalendar({ densite: 'COMPACTE' })
+    const grille = container.querySelector('[data-testid="grille-calendrier"]')!
+
+    // Trois grilles dans le contenu de la page, chacune avec ses six
+    // gouttières internes — la même gouttière que la grille compacte rend
+    // réellement, pas une valeur supposée : la densité ne conditionne pas
+    // `gap-*`, seuls les libellés et les classes de corps de texte le sont
+    // (voir la documentation de la prop sur `MonthCalendar`).
+    const CONTENU = LARGEUR_PAGE - 2 * MARGE_MD
+    const colonne = (CONTENU / 3 - 6 * gap(grille)) / 7
+
+    expect(colonne).toBeGreaterThanOrEqual(CIBLE)
   })
 })
