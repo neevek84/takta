@@ -6,6 +6,7 @@ import { MonthCalendar } from '@/components/calendar/MonthCalendar'
 import { EngagementBar } from '@/components/grid/EngagementBar'
 import { CellForm } from '@/components/calendar/CellForm'
 import { LineSelector } from '@/components/calendar/LineSelector'
+import { monthLabel } from '@/components/MonthNav'
 import { readSelection } from '@/components/calendar/selection-storage'
 import { resolveSelection } from '@/core/saisie/selection'
 import { formatClearReport, formatFillReport } from '@/core/saisie/report'
@@ -41,10 +42,31 @@ function bornesAffichees(days: MonthDay[]): { du: string; au: string } {
 }
 
 /**
+ * Les bornes de la vue 3 mois : le premier jour du premier mois affiché, le
+ * dernier jour du troisième. `bornesAffichees` ne porte qu'un seul mois — la
+ * vue 3 mois vérifie l'agenda sur les trois grilles à la fois, jamais sur la
+ * seule première.
+ */
+function bornesTroisMois(joursParMois: MonthDay[][]): { du: string; au: string } {
+  const premier = joursParMois[0] ?? []
+  const dernier = joursParMois[joursParMois.length - 1] ?? []
+  return { du: premier[0]?.date ?? '', au: dernier[dernier.length - 1]?.date ?? '' }
+}
+
+/**
  * Constante de module et non littéral au point d'appel : un `[]` écrit dans le
  * JSX serait un tableau neuf à chaque rendu.
  */
 const AUCUN_TOTAL: LineEngagementTotals = []
+
+/**
+ * La vue 3 mois n'offre pas la bascule « Toutes les prestations » : trois
+ * grilles côte à côte, chacune déjà réduite pour tenir, n'ont pas la place
+ * d'empiler en plus les libellés des autres prestations. `autresLignes` reste
+ * donc vide, dans les trois grilles, tout le temps — une constante de module
+ * pour la même raison que `AUCUN_TOTAL`.
+ */
+const AUCUNE_AUTRE_LIGNE: LineForGrid[] = []
 
 /**
  * Centièmes de jour → jours, comme la charge et l'engagement les affichent
@@ -99,19 +121,20 @@ function refus(texte: string): Message {
 }
 
 /**
- * `TROIS_MOIS` n'a pas encore de bouton ni de rendu — ils arrivent avec la vue
- * 3 mois elle-même. Elle entre dans le type ici parce que la règle de portée
- * de `choisirVue`, ci-dessous, doit déjà savoir la reconnaître : sans quoi la
- * tâche qui l'ajoutera devrait revenir modifier cette règle en même temps.
+ * Trois vues : le calendrier — la seule surface de saisie mobile —, le
+ * tableau multi-CRA, et la vue 3 mois : le mois choisi et les deux suivants,
+ * en grilles compactes côte à côte (voir le rendu plus bas). `TROIS_MOIS` est
+ * entré dans ce type dans un lot antérieur, avant même d'avoir son bouton : la
+ * règle de portée de `choisirVue`, ci-dessous, devait déjà savoir la
+ * reconnaître.
  */
 export type Vue = 'CALENDRIER' | 'TROIS_MOIS' | 'TABLEAU'
 
 /**
  * La largeur de la dernière vérification d'agenda réussie, `null` avant tout
- * clic. `'1MOIS'` est la seule valeur que ce lot produit — `BoutonAgenda` ne
- * vérifie jamais que le mois affiché. `'3MOIS'` existe déjà pour que la règle
- * de portée ci-dessous sache l'attendre, sans que la tâche qui introduira la
- * vue 3 mois doive revenir la modifier.
+ * clic. `'1MOIS'` sert au calendrier et au tableau, qui n'affichent jamais que
+ * le mois courant ; `'3MOIS'` sert à la vue 3 mois, vérifiée sur ses trois
+ * mois à la fois — jamais sur le seul premier.
  */
 export type PlageVerifiee = '1MOIS' | '3MOIS' | null
 
@@ -132,6 +155,15 @@ export function doitEffacerOccupations(prochaine: Vue, plageVerifiee: PlageVerif
 export function SaisieClient(props: {
   month: string
   days: MonthDay[]
+  /**
+   * les trois mois de la vue 3 mois : `month`, `month + 1`, `month + 2`.
+   *
+   * Construits par la page avec `shiftMonth` — jamais recalculés ici, un
+   * calcul de calendrier réécrit à deux endroits finit par diverger.
+   */
+  mois: string[]
+  /** les jours de chacun des trois mois ci-dessus, dans le même ordre. */
+  joursParMois: MonthDay[][]
   lines: LineForGrid[]
   entries: MonthEntry[]
   engagementTotals: Record<string, LineEngagementTotals>
@@ -212,6 +244,7 @@ export function SaisieClient(props: {
     if (doitEffacerOccupations(prochaine, plageVerifiee)) setOccupations([])
     const parametres = new URLSearchParams(window.location.search)
     if (prochaine === 'TABLEAU') parametres.set('vue', 'tableau')
+    else if (prochaine === 'TROIS_MOIS') parametres.set('vue', '3mois')
     else parametres.delete('vue')
     const requete = parametres.toString()
     window.history.replaceState(
@@ -252,10 +285,11 @@ export function SaisieClient(props: {
 
   const ligne = props.lines.find((l) => l.id === lineId)
 
-  // La plage que `BoutonAgenda` vérifie : exactement le mois affiché ici,
-  // tel que `props.days` le porte déjà — inutile de refaire un calcul de
-  // calendrier pour retrouver ce que la page a déjà construit.
-  const { du, au } = bornesAffichees(props.days)
+  // La plage que `BoutonAgenda` vérifie : le mois affiché en calendrier et en
+  // tableau, les trois mois en vue 3 mois — jamais recalculée, `props.days` et
+  // `props.joursParMois` la portent déjà.
+  const { du, au } =
+    vue === 'TROIS_MOIS' ? bornesTroisMois(props.joursParMois) : bornesAffichees(props.days)
 
   /**
    * Le signalement d'occupation, quand il n'y a rien de plus important à dire.
@@ -385,6 +419,19 @@ export function SaisieClient(props: {
         >
           Calendrier
         </Button>
+        {/* Vingt et une colonnes ne tiennent pas sur un téléphone — trois
+            grilles de sept, réduites en densité compacte. Le calendrier reste
+            la seule surface de saisie mobile ; la vue 3 mois, comme le
+            tableau, ne s'atteint qu'au poste. */}
+        <Button
+          type="button"
+          aria-pressed={vue === 'TROIS_MOIS'}
+          variant={vue === 'TROIS_MOIS' ? 'primary' : 'secondary'}
+          onClick={() => choisirVue('TROIS_MOIS')}
+          className="hidden md:inline-flex"
+        >
+          3 mois
+        </Button>
         {/* Sept colonnes tiennent sur un téléphone ; trente et une, non. La
             vue calendrier, elle, reste offerte sur les deux. */}
         {/* Le tableau montre toutes les missions et prestations auxquelles on
@@ -444,7 +491,7 @@ export function SaisieClient(props: {
             au={au}
             onResultat={(jours) => {
               setOccupations(jours)
-              setPlageVerifiee('1MOIS')
+              setPlageVerifiee(vue === 'TROIS_MOIS' ? '3MOIS' : '1MOIS')
             }}
           />
         </div>
@@ -579,36 +626,83 @@ export function SaisieClient(props: {
               pleineLargeur
             />
           </div>
-          {formulaire !== null && (
-            <CellForm
-              date={formulaire.date}
-              etat={formulaire.etat}
-              line={ligne}
-              slots={props.slots}
-              // La plage journée pré-remplit les deux heures d'une case vide,
-              // et les créneaux nommés celles d'un créneau choisi. Aucune
-              // n'est imposée : ce sont des pré-remplissages, pas des règles.
-              journeeDebutMinute={props.journeeDebutMinute}
-              journeeFinMinute={props.journeeFinMinute}
-              onSubmit={async (minutes, slotId, startMinute, endMinute) => {
-                setFormulaire(null)
-                await handleApply(formulaire.date, {
-                  kind: 'LIBRE',
-                  minutes,
-                  slotId,
-                  startMinute,
-                  endMinute,
-                  eclatee: false,
-                })
-              }}
-              onDelete={async () => {
-                setFormulaire(null)
-                await handleApply(formulaire.date, { kind: 'VIDE' })
-              }}
-              onCancel={() => setFormulaire(null)}
-            />
-          )}
         </>
+      )}
+
+      {/* Le mois choisi et les deux suivants (`shiftMonth`), trois grilles
+          `MonthCalendar` en densité compacte plutôt que trois vues distinctes :
+          diverger au premier correctif dessinerait deux fois le même fait de
+          deux façons (voir la documentation de `densite`). Chaque grille garde
+          exactement la cinématique du calendrier — même `onApply`, même
+          `onRange`, même formulaire — c'est une surface de saisie, pas un
+          aperçu à trois volets. */}
+      {vue === 'TROIS_MOIS' && ligne !== undefined && (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            {props.mois.map((m, i) => (
+              <section key={m}>
+                <h2 className="mb-1 text-sm font-medium">{monthLabel(m)}</h2>
+                <MonthCalendar
+                  densite="COMPACTE"
+                  days={props.joursParMois[i]!}
+                  line={ligne}
+                  slots={props.slots}
+                  entries={props.entries}
+                  autresLignes={AUCUNE_AUTRE_LIGNE}
+                  toutLeMois={false}
+                  busyDates={occupations}
+                  aujourdhui={props.aujourdhui}
+                  onApply={handleApply}
+                  onRange={handleRange}
+                  onFormulaire={(date, etat) => setFormulaire({ date, etat })}
+                />
+              </section>
+            ))}
+          </div>
+          {/* L'engagement se lit sur toute la durée de la ligne, pas sur un
+              mois affiché : une seule réglette, sous l'ensemble des trois
+              grilles. L'empiler trois fois dirait trois fois le même chiffre. */}
+          <div className="mt-3">
+            <EngagementBar
+              line={ligne}
+              totals={props.engagementTotals[ligne.id] ?? AUCUN_TOTAL}
+              pleineLargeur
+            />
+          </div>
+        </>
+      )}
+
+      {/* Le formulaire de case : le même geste, qu'il soit ouvert depuis le
+          calendrier ou depuis l'une des trois grilles de la vue 3 mois — le
+          rendre deux fois répéterait la même boîte pour la même raison. */}
+      {(vue === 'CALENDRIER' || vue === 'TROIS_MOIS') && ligne !== undefined && formulaire !== null && (
+        <CellForm
+          date={formulaire.date}
+          etat={formulaire.etat}
+          line={ligne}
+          slots={props.slots}
+          // La plage journée pré-remplit les deux heures d'une case vide, et
+          // les créneaux nommés celles d'un créneau choisi. Aucune n'est
+          // imposée : ce sont des pré-remplissages, pas des règles.
+          journeeDebutMinute={props.journeeDebutMinute}
+          journeeFinMinute={props.journeeFinMinute}
+          onSubmit={async (minutes, slotId, startMinute, endMinute) => {
+            setFormulaire(null)
+            await handleApply(formulaire.date, {
+              kind: 'LIBRE',
+              minutes,
+              slotId,
+              startMinute,
+              endMinute,
+              eclatee: false,
+            })
+          }}
+          onDelete={async () => {
+            setFormulaire(null)
+            await handleApply(formulaire.date, { kind: 'VIDE' })
+          }}
+          onCancel={() => setFormulaire(null)}
+        />
       )}
 
       {vue === 'TABLEAU' && (

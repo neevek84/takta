@@ -48,7 +48,10 @@ vi.mock('@/services/missions', () => ({
   ],
 }))
 vi.mock('@/services/time-entries', () => ({
-  getMonthEntries: async () => [],
+  // Remplace `getMonthEntries` : la page lit désormais une seule plage de
+  // trois mois plutôt qu'un seul mois, pour construire les trois vues sans
+  // tripler la requête.
+  getEntriesRange: async () => [],
   getLineEngagementTotals: async () => ({ l1: [] }),
   getPastForecastWithLockStatus: async () => ({ entries: [], lockedCount: 0 }),
 }))
@@ -60,7 +63,13 @@ vi.mock('./actions', () => ({
   validerJoursPasses: vi.fn(),
   verifierAgenda: vi.fn(),
 }))
-vi.mock('@/components/MonthNav', () => ({ MonthNav: () => null }))
+// `monthLabel` reste réel : la vue 3 mois de `SaisieClient` s'en sert pour
+// nommer chacune de ses trois grilles, et un mock complet le ferait
+// disparaître avec `MonthNav`.
+vi.mock('@/components/MonthNav', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/MonthNav')>()),
+  MonthNav: () => null,
+}))
 
 // eslint-disable-next-line import/first -- `vi.mock` est hissé au-dessus des imports.
 import SaisiePage from './page'
@@ -160,5 +169,69 @@ describe('page de saisie — le gabarit commun', () => {
     const principal = container.querySelector('main')!
     expect(principal.className).toContain('max-w-[100rem]')
     expect(principal.className).toContain('p-4')
+  })
+})
+
+/**
+ * Tâche 14 — la vue 3 mois : le mois choisi et les deux suivants, en grilles
+ * compactes côte à côte. Atteinte par `?vue=3mois`, exactement comme
+ * `?vue=tableau` l'est déjà.
+ */
+describe('page de saisie — la vue 3 mois', () => {
+  beforeEach(() => {
+    agendaEspion.mockReset()
+    aUnConnecteurAgenda.mockReset().mockResolvedValue(false)
+    appliquerCase.mockReset()
+    window.localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  async function rendreEnTroisMois(month: string): Promise<void> {
+    render(
+      await SaisiePage({
+        params: Promise.resolve({ month }),
+        searchParams: Promise.resolve({ vue: '3mois' }),
+      }),
+    )
+  }
+
+  it('resout la vue 3 mois depuis l adresse', async () => {
+    await rendreEnTroisMois('2026-03')
+
+    expect(screen.getByRole('button', { name: '3 mois' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+  })
+
+  it('montre le mois choisi et les deux suivants', async () => {
+    await rendreEnTroisMois('2026-11')
+
+    expect(screen.getByText('novembre 2026')).toBeTruthy()
+    expect(screen.getByText('décembre 2026')).toBeTruthy()
+    // Le passage d'année n'a pas de cas particulier : `shiftMonth` le gère.
+    expect(screen.getByText('janvier 2027')).toBeTruthy()
+  })
+
+  it('ecrit a la bonne date quand on clique dans le troisieme mois', async () => {
+    appliquerCase.mockResolvedValue({ ok: true, state: { kind: 'JOURNEE' } })
+    await rendreEnTroisMois('2026-03')
+
+    // La troisième grille est mai : cliquer là doit écrire sur mai, pas sur
+    // le mois choisi ni sur celui du milieu.
+    fireEvent.click(screen.getByTestId('case-2026-05-12'))
+
+    await waitFor(() =>
+      expect(appliquerCase).toHaveBeenCalledWith(
+        expect.objectContaining({ date: '2026-05-12' }),
+      ),
+    )
+  })
+
+  // Vingt et une colonnes ne tiennent pas sur un téléphone. Le calendrier
+  // reste la surface de saisie mobile.
+  it('n est pas atteignable sous md', async () => {
+    await rendreEnTroisMois('2026-03')
+
+    expect(screen.getByRole('button', { name: '3 mois' }).className).toContain('hidden md:')
   })
 })

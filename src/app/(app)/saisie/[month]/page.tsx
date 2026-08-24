@@ -2,12 +2,12 @@ import { requireUser } from '@/auth'
 import { getSettings } from '@/services/settings'
 import { listActiveLines } from '@/services/missions'
 import {
+  getEntriesRange,
   getLineEngagementTotals,
-  getMonthEntries,
   getPastForecastWithLockStatus,
 } from '@/services/time-entries'
 import { aUnConnecteurAgenda } from '@/services/credentials'
-import { buildMonthDays } from '@/core/month/build'
+import { buildMonthDays, shiftMonth } from '@/core/month/build'
 import { MonthNav } from '@/components/MonthNav'
 import { PageShell } from '@/components/ui/PageShell'
 import { PastForecastNotice } from './PastForecastNotice'
@@ -29,13 +29,27 @@ export default async function SaisiePage({
 
   const settings = await getSettings()
   const lines = await listActiveLines(user.id)
-  const entries = await getMonthEntries(user.id, month)
+
+  // Les deux mois suivants, pour la vue 3 mois. Construits toujours — ils ne
+  // coûtent aucune requête, `buildMonthDays` est un calcul pur — et lus en une
+  // seule requête de plage plutôt qu'en trois. Les vues calendrier et tableau
+  // continuent d'afficher le premier mois seul (`days`) ; leurs composants
+  // filtrent déjà les saisies par date, donc leur passer la plage entière ne
+  // leur fait rien voir de plus.
+  const mois = [month, shiftMonth(month, 1), shiftMonth(month, 2)]
+  const joursParMois = mois.map((m) => buildMonthDays(m, settings.workingDays, settings.holidays))
+  const dernierMois = joursParMois[2]!
+  const entries = await getEntriesRange(user.id, {
+    du: `${mois[0]}-01`,
+    au: dernierMois[dernierMois.length - 1]!.date,
+  })
+
   // L'engagement se lit sur toute la durée de la ligne, pas sur le mois affiché.
   const engagementTotals = await getLineEngagementTotals(
     user.id,
     lines.map((l) => l.id),
   )
-  const days = buildMonthDays(month, settings.workingDays, settings.holidays)
+  const days = joursParMois[0]!
 
   // Plus aucune lecture d'agenda ici : douze mois parcourus ne coûtaient pas
   // moins de douze appels freeBusy, pour un repère qu'on ne regardait peut-être
@@ -60,9 +74,11 @@ export default async function SaisiePage({
         lockedCount={pastForecast.lockedCount}
       />
       <SaisieClient
-        vueInitiale={vue === 'tableau' ? 'TABLEAU' : 'CALENDRIER'}
+        vueInitiale={vue === '3mois' ? 'TROIS_MOIS' : vue === 'tableau' ? 'TABLEAU' : 'CALENDRIER'}
         month={month}
         days={days}
+        mois={mois}
+        joursParMois={joursParMois}
         lines={lines}
         entries={entries}
         engagementTotals={engagementTotals}

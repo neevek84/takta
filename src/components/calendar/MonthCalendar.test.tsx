@@ -2168,6 +2168,17 @@ describe('MonthCalendar — la grille compacte tient-elle a la largeur de la vue
     join(process.cwd(), 'src', 'components', 'ui', 'PageShell.tsx'),
     'utf8',
   )
+  /**
+   * La gouttière **entre** les trois grilles — celle du conteneur
+   * `grid-cols-3` que `SaisieClient` pose autour d'elles, distincte de la
+   * gouttière interne à chaque grille (`gap(grille)`, plus bas). Tâche 14 :
+   * ce budget avait été calculé avant que ce conteneur n'existe, donc sans
+   * elle ; elle est lue ici dans son fichier source, jamais recopiée.
+   */
+  const CLIENT = readFileSync(
+    join(process.cwd(), 'src', 'app', '(app)', 'saisie', '[month]', 'SaisieClient.tsx'),
+    'utf8',
+  )
 
   function rem(valeur: string): number {
     return Number(valeur) * 16
@@ -2211,17 +2222,26 @@ describe('MonthCalendar — la grille compacte tient-elle a la largeur de la vue
     return Number(trouve![1]!) * PAS
   }
 
+  const gouttiereEntreGrilles = /grid-cols-3\s+gap-([\d.]+)/.exec(CLIENT)
+  expect(
+    gouttiereEntreGrilles,
+    'SaisieClient ne déclare plus grid-cols-3 gap-N pour la vue 3 mois',
+  ).not.toBeNull()
+  const GOUTTIERE_ENTRE_GRILLES = Number(gouttiereEntreGrilles![1]!) * PAS
+
   it('laisse a chaque case compacte une cible utilisable sur ecran large', () => {
     const { container } = renderCalendar({ densite: 'COMPACTE' })
     const grille = container.querySelector('[data-testid="grille-calendrier"]')!
 
-    // Trois grilles dans le contenu de la page, chacune avec ses six
-    // gouttières internes — la même gouttière que la grille compacte rend
-    // réellement, pas une valeur supposée : la densité ne conditionne pas
-    // `gap-*`, seuls les libellés et les classes de corps de texte le sont
-    // (voir la documentation de la prop sur `MonthCalendar`).
+    // Trois grilles dans le contenu de la page, séparées par deux gouttières
+    // entre colonnes (`grid-cols-3`, deux gouttières pour trois colonnes), et
+    // chacune avec ses six gouttières internes — la même gouttière que la
+    // grille compacte rend réellement, pas une valeur supposée : la densité
+    // ne conditionne pas `gap-*`, seuls les libellés et les classes de corps
+    // de texte le sont (voir la documentation de la prop sur `MonthCalendar`).
     const CONTENU = LARGEUR_PAGE - 2 * MARGE_MD
-    const colonne = (CONTENU / 3 - 6 * gap(grille)) / 7
+    const colonneGrille = (CONTENU - 2 * GOUTTIERE_ENTRE_GRILLES) / 3
+    const colonne = (colonneGrille - 6 * gap(grille)) / 7
 
     expect(colonne).toBeGreaterThanOrEqual(CIBLE)
   })

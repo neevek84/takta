@@ -86,6 +86,9 @@ const lignesDistinctes: LineForGrid[] = [
   },
 ]
 
+/** Les trois mois par défaut des tests : mars, avril, mai 2026. */
+const MOIS_PAR_DEFAUT = ['2026-03', '2026-04', '2026-05']
+
 function renderClient(
   overrides: Partial<React.ComponentProps<typeof SaisieClient>> = {},
 ): void {
@@ -93,6 +96,8 @@ function renderClient(
     <SaisieClient
       month="2026-03"
       days={buildMonthDays('2026-03', [1, 2, 3, 4, 5], [])}
+      mois={MOIS_PAR_DEFAUT}
+      joursParMois={MOIS_PAR_DEFAUT.map((m) => buildMonthDays(m, [1, 2, 3, 4, 5], []))}
       lines={lines}
       entries={[]}
       engagementTotals={{ l1: [], l2: [] }}
@@ -115,6 +120,11 @@ const deuxJournees: MonthEntry[] = [
 /** La vue tableau n'est plus la vue par défaut : ces tests l'ouvrent d'abord. */
 function ouvrirTableau(): void {
   fireEvent.click(screen.getByRole('button', { name: 'Tableau multi-CRA' }))
+}
+
+/** Idem pour la vue 3 mois. */
+function ouvrirTroisMois(): void {
+  fireEvent.click(screen.getByRole('button', { name: '3 mois' }))
 }
 
 /**
@@ -903,6 +913,86 @@ describe('SaisieClient — calendrier', () => {
 })
 
 /**
+ * Tâche 14 — le mois choisi et les deux suivants, en trois grilles compactes.
+ * C'est une surface de saisie, pas un aperçu : même cinématique que le
+ * calendrier, une seule réglette d'engagement sous l'ensemble.
+ */
+describe('SaisieClient — vue 3 mois', () => {
+  beforeEach(() => {
+    appliquerCase.mockReset()
+    window.localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  it('montre trois grilles compactes plutôt qu une seule', () => {
+    renderClient()
+    ouvrirTroisMois()
+
+    expect(screen.getAllByTestId('grille-calendrier')).toHaveLength(3)
+  })
+
+  it('nomme chaque grille par son mois', () => {
+    renderClient()
+    ouvrirTroisMois()
+
+    expect(screen.getByText('mars 2026')).toBeTruthy()
+    expect(screen.getByText('avril 2026')).toBeTruthy()
+    expect(screen.getByText('mai 2026')).toBeTruthy()
+  })
+
+  it('applique la cinématique du calendrier dans la troisième grille', async () => {
+    appliquerCase.mockResolvedValue({ ok: true, state: { kind: 'JOURNEE' } })
+    renderClient()
+    ouvrirTroisMois()
+
+    fireEvent.click(screen.getByTestId('case-2026-05-12'))
+
+    await waitFor(() =>
+      expect(appliquerCase).toHaveBeenCalledWith({
+        lineId: 'l1',
+        date: '2026-05-12',
+        state: { kind: 'JOURNEE' },
+        month: '2026-03',
+      }),
+    )
+  })
+
+  // L'engagement se lit sur toute la durée de la ligne, pas sur un mois
+  // affiché : une seule réglette sous les trois grilles, jamais une par mois.
+  it('pose une seule réglette d engagement, pas une par mois', () => {
+    renderClient({
+      engagementTotals: {
+        l1: [{ kind: 'REALISE', minutes: 480 * 18, minutesParJour: 480 }],
+        l2: [],
+      },
+    })
+    ouvrirTroisMois()
+
+    expect(screen.getAllByTestId('engagement-l1')).toHaveLength(1)
+    expect(screen.getByTestId('piste-engagement-l1').className).toContain('w-full')
+  })
+
+  // Vingt et une colonnes ne tiennent pas sur un téléphone. Le calendrier
+  // reste la surface de saisie mobile.
+  it('reste inatteignable sous md', () => {
+    renderClient()
+
+    expect(screen.getByRole('button', { name: '3 mois' }).className).toContain('hidden')
+    expect(screen.getByRole('button', { name: '3 mois' }).className).toContain('md:inline-flex')
+  })
+
+  // Le formulaire d'heures est le même geste qu'au calendrier : Maj+Entrée
+  // sur une case de n'importe laquelle des trois grilles doit l'ouvrir.
+  it('ouvre le formulaire de case depuis la troisième grille', () => {
+    renderClient()
+    ouvrirTroisMois()
+
+    fireEvent.contextMenu(screen.getByTestId('case-2026-05-12'))
+    expect(screen.getByLabelText('Heure de début')).toBeTruthy()
+  })
+})
+
+/**
  * L'occupation de l'agenda est un repère, jamais un verrou : elle se marque
  * dans les deux vues et s'annonce sans rien refuser.
  */
@@ -1110,6 +1200,29 @@ describe('la vue choisie vit dans l adresse', () => {
   // tous les liens un paramètre qui ne dit rien de plus que leur absence.
   it("retire le paramètre en revenant au calendrier", () => {
     renderClient({ vueInitiale: 'TABLEAU' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
+    expect(window.location.search).toBe('')
+  })
+
+  // Tâche 14 — même mécanisme que `?vue=tableau`, avec sa propre valeur.
+  it("s'ouvre sur la vue 3 mois quand l'adresse le demande", () => {
+    renderClient({ vueInitiale: 'TROIS_MOIS' })
+
+    expect(screen.getByRole('button', { name: '3 mois' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+  })
+
+  it("inscrit le choix 3 mois dans l'adresse sans recharger la page", () => {
+    renderClient()
+
+    fireEvent.click(screen.getByRole('button', { name: '3 mois' }))
+    expect(window.location.search).toBe('?vue=3mois')
+  })
+
+  it('retire le paramètre en revenant au calendrier depuis la vue 3 mois', () => {
+    renderClient({ vueInitiale: 'TROIS_MOIS' })
 
     fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
     expect(window.location.search).toBe('')
