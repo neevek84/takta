@@ -56,6 +56,27 @@ class MoisDejaValideError extends Error {
 }
 
 /**
+ * Résout la mission derrière une prestation, et vérifie au passage que
+ * l'utilisateur y est affecté — en une lecture scopée.
+ *
+ * Partagée entre `genererCra` et `compterPrevisionnelDeLaLigne` (l'action de
+ * la Saisie qui lit le nombre de jours avant de poser la question) : les deux
+ * ont besoin de la même garantie — le client ne décide pas seul sur quelle
+ * mission on lit ou on écrit. Une seconde version de ce contrôle aurait
+ * divergé de la première au premier défaut corrigé d'un seul côté.
+ */
+export async function resoudreMissionAffectee(
+  userId: string,
+  lineId: string,
+): Promise<string | null> {
+  const line = await prisma.missionLine.findFirst({
+    where: { id: lineId, assignments: { some: { userId } } },
+    select: { missionId: true },
+  })
+  return line?.missionId ?? null
+}
+
+/**
  * Génère le CRA d'un mois, après avoir réglé le sort de son prévisionnel.
  *
  * `lineId` et non `missionId` : c'est ce que l'écran de saisie connaît. La
@@ -66,16 +87,12 @@ export async function genererCra(
   userId: string,
   args: { lineId: string; month: string; previsionnel: ChoixPrevisionnel },
 ): Promise<ResultatGeneration> {
-  // La ligne, la mission, et l'affectation — en une lecture scopée.
-  const line = await prisma.missionLine.findFirst({
-    where: { id: args.lineId, assignments: { some: { userId } } },
-    select: { missionId: true },
-  })
-  if (line === null) return { ok: false, raison: 'NON_AFFECTE' }
+  const missionId = await resoudreMissionAffectee(userId, args.lineId)
+  if (missionId === null) return { ok: false, raison: 'NON_AFFECTE' }
 
   const existant = await prisma.cra.findUnique({
     where: {
-      missionId_userId_month: { missionId: line.missionId, userId, month: monthStart(args.month) },
+      missionId_userId_month: { missionId, userId, month: monthStart(args.month) },
     },
     select: { id: true, status: true },
   })
@@ -93,17 +110,17 @@ export async function genererCra(
         args.previsionnel === 'VALIDER'
           ? await validerPrevisionnelDuMois(tx, {
               userId,
-              missionId: line.missionId,
+              missionId,
               month: args.month,
             })
           : await annulerPrevisionnelDuMois(tx, {
               userId,
-              missionId: line.missionId,
+              missionId,
               month: args.month,
             })
 
       const sortie = { cree: false }
-      const cra = await getOrCreateCra(userId, line.missionId, args.month, tx, sortie)
+      const cra = await getOrCreateCra(userId, missionId, args.month, tx, sortie)
 
       // La lecture de garde, plus haut, a laissé passer un mois qui n'était
       // pas encore validé à cet instant-là. S'il l'est devenu entre cette
@@ -135,7 +152,7 @@ export async function genererCra(
       action: 'cra.ouvert',
       entityType: 'Cra',
       entityId: craId,
-      payload: { missionId: line.missionId, month: args.month, status: 'BROUILLON' },
+      payload: { missionId, month: args.month, status: 'BROUILLON' },
     })
   }
 
@@ -149,7 +166,7 @@ export async function genererCra(
       entityId: args.month,
       payload: {
         month: args.month,
-        missionId: line.missionId,
+        missionId,
         // D'où vient le geste : ce n'est pas l'annulation automatique portée
         // par `cra-previsionnel.ts` à la validation, c'est la question posée
         // à la génération du CRA.

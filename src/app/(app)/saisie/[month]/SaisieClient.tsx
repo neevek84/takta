@@ -19,7 +19,16 @@ import type { Slot } from '@/core/time/slots'
 import type { CapacityMode } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
-import { appliquerCase, remplirMois, saveCell, viderMois } from './actions'
+import type { ChoixPrevisionnel } from '@/services/cra-generation'
+import {
+  appliquerCase,
+  compterPrevisionnelDeLaLigne,
+  genererCraAction,
+  remplirMois,
+  saveCell,
+  viderMois,
+} from './actions'
+import { PanneauGeneration } from './PanneauGeneration'
 
 /**
  * Constante de module et non littéral au point d'appel : un `[]` écrit dans le
@@ -156,6 +165,10 @@ export function SaisieClient(props: {
   const [toutLeMois, setToutLeMois] = useState(false)
   const [confirmationVidage, setConfirmationVidage] = useState(false)
   const [formulaire, setFormulaire] = useState<{ date: string; etat: CellState } | null>(null)
+  // Le compte de prévisionnel qui a ouvert le panneau de génération, `null`
+  // tant qu'aucune génération n'est en cours. Il vient du clic, jamais du
+  // rendu — voir `compterPrevisionnelDeLaLigne`.
+  const [generation, setGeneration] = useState<{ previsionnel: number } | null>(null)
 
   // La sélection mémorisée ne peut être lue qu'après le montage : la lire dans
   // l'initialiseur ferait diverger le rendu serveur du rendu client.
@@ -251,6 +264,33 @@ export function SaisieClient(props: {
     for (const date of dates) await handleApply(date, state)
   }
 
+  /**
+   * Génère le CRA du mois, une fois le sort du prévisionnel réglé — par le
+   * panneau, ou d'office quand il n'y avait rien à trancher.
+   *
+   * **L'écran reste sur la Saisie.** Rediriger vers le suivi arracherait
+   * l'utilisateur à un mois qu'il n'a pas fini de regarder ; le compte rendu
+   * s'écrit dans le bandeau existant, avec le renvoi vers le suivi pour qui
+   * veut voir le document.
+   */
+  async function lancerGeneration(choix: ChoixPrevisionnel): Promise<void> {
+    setGeneration(null)
+    const r = await genererCraAction({ lineId, month: props.month, previsionnel: choix })
+
+    if (!r.ok) {
+      // MOIS_VALIDE n'a rien posé : c'est un refus, pas un avertissement.
+      setMessage(
+        refus(
+          r.raison === 'MOIS_VALIDE'
+            ? `Le CRA de ce mois est déjà validé. Rouvrez-le depuis le suivi pour le regénérer.`
+            : `Vous n'êtes pas affecté à cette prestation.`,
+        ),
+      )
+      return
+    }
+    setMessage(information(`CRA généré. Retrouvez-le dans le suivi.`))
+  }
+
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -330,6 +370,21 @@ export function SaisieClient(props: {
             <Button type="button" onClick={() => setConfirmationVidage(true)}>
               Vider le CRA
             </Button>
+            <Button
+              type="button"
+              onClick={async () => {
+                const previsionnel = await compterPrevisionnelDeLaLigne({
+                  lineId,
+                  month: props.month,
+                })
+                // Rien à trancher : on génère sans poser de question — une
+                // question sur zéro jour apprendrait à cliquer sans lire.
+                if (previsionnel === 0) await lancerGeneration('SUPPRIMER')
+                else setGeneration({ previsionnel })
+              }}
+            >
+              Générer le CRA
+            </Button>
           </div>
         )}
       </div>
@@ -362,6 +417,18 @@ export function SaisieClient(props: {
             </div>
           </Banner>
         </div>
+      )}
+
+      {generation !== null && ligne !== undefined && (
+        <PanneauGeneration
+          month={props.month}
+          missionLabel={`${ligne.clientName} · ${ligne.missionLabel}`}
+          previsionnel={generation.previsionnel}
+          onChoix={(choix) => {
+            void lancerGeneration(choix)
+          }}
+          onAnnuler={() => setGeneration(null)}
+        />
       )}
 
       {message !== null && (

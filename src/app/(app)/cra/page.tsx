@@ -1,13 +1,11 @@
 import { requireUser } from '@/auth'
 import { listCrasSuivi, listCrasEnSouffrance, type CraView } from '@/services/cra'
-import { listMissionsForUser } from '@/services/missions'
 import { parseEtats } from '@/core/cra/etat-suivi'
 import { FiltreEtats } from '@/components/cra/FiltreEtats'
 import { SuiviTable } from '@/components/cra/SuiviTable'
 import { PageShell } from '@/components/ui/PageShell'
 import { Button } from '@/components/ui/Button'
-import { Select } from '@/components/ui/Select'
-import { lancerRelances, openCra } from './actions'
+import { lancerRelances } from './actions'
 
 export default async function SuiviCraPage({
   searchParams,
@@ -19,29 +17,10 @@ export default async function SuiviCraPage({
   const etats = parseEtats(brut)
 
   const cras = await listCrasSuivi(user.id, { etats, ...(month === undefined ? {} : { month }) })
-  const missions = await listMissionsForUser(user.id)
   const souffrance = await listCrasEnSouffrance(user.id)
-
-  // Le mois du filtre n'est plus obligatoire : le suivi liste toutes les
-  // périodes tant qu'aucun `month` n'est demandé. Le formulaire d'ouverture a
-  // en revanche toujours besoin d'un mois précis pour créer un CRA — celui du
-  // filtre s'il est posé, sinon le mois courant.
-  const moisOuverture = month ?? new Date().toISOString().slice(0, 7)
 
   return (
     <PageShell title="Suivi CRA">
-      <form action={openCra} className="mb-8 flex flex-wrap items-end gap-2">
-        <input type="hidden" name="month" value={moisOuverture} />
-        <Select label="Mission" name="missionId" required>
-          {missions.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.clientName} · {m.label}
-            </option>
-          ))}
-        </Select>
-        <Button variant="primary">Ouvrir un CRA</Button>
-      </form>
-
       <FiltreEtats etats={etats} month={month} />
 
       {/* Zéro état coché n'est pas « aucun CRA » : c'est un filtre qui exclut

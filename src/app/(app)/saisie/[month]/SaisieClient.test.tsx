@@ -6,13 +6,29 @@ import { DEFAULT_SLOTS } from '@/services/settings'
 import type { LineForGrid } from '@/services/missions'
 import type { MonthEntry } from '@/services/time-entries'
 
-const { saveCell, appliquerCase, remplirMois, viderMois } = vi.hoisted(() => ({
+const {
+  saveCell,
+  appliquerCase,
+  remplirMois,
+  viderMois,
+  compterPrevisionnelDeLaLigne,
+  genererCraAction,
+} = vi.hoisted(() => ({
   saveCell: vi.fn(),
   appliquerCase: vi.fn(),
   remplirMois: vi.fn(),
   viderMois: vi.fn(),
+  compterPrevisionnelDeLaLigne: vi.fn(),
+  genererCraAction: vi.fn(),
 }))
-vi.mock('./actions', () => ({ saveCell, appliquerCase, remplirMois, viderMois }))
+vi.mock('./actions', () => ({
+  saveCell,
+  appliquerCase,
+  remplirMois,
+  viderMois,
+  compterPrevisionnelDeLaLigne,
+  genererCraAction,
+}))
 
 // `vi.mock` est hissé au-dessus des imports : les server actions ne sont
 // jamais chargées, seul le composant l'est.
@@ -356,6 +372,8 @@ describe('SaisieClient — calendrier', () => {
     appliquerCase.mockReset()
     remplirMois.mockReset()
     viderMois.mockReset()
+    compterPrevisionnelDeLaLigne.mockReset()
+    genererCraAction.mockReset()
     window.localStorage.clear()
   })
   afterEach(cleanup)
@@ -614,6 +632,116 @@ describe('SaisieClient — calendrier', () => {
           screen.getByText("Le CRA de ce mois est validé : aucune saisie n'a été retirée."),
         ).toBeDefined(),
       )
+    })
+  })
+
+  /**
+   * Tâche 9 — le bouton qui remplace le formulaire d'ouverture du suivi. Le
+   * porteur : « ça ne doit pas disparaître, mais ça doit être un choix
+   * humain et pas auto. » Ces tests couvrent ce choix, pas la génération
+   * elle-même — déjà éprouvée par les tests de `genererCra`.
+   */
+  describe('Générer le CRA', () => {
+    it('lit le prévisionnel au clic et pose la question, sans choix par défaut', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(7)
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      // Lu au clic, pas au rendu : un chiffre qui bouge à chaque saisie.
+      expect(compterPrevisionnelDeLaLigne).toHaveBeenCalledWith({ lineId: 'l1', month: '2026-03' })
+      await screen.findByText(/7 jours en prévisionnel/)
+      expect(genererCraAction).not.toHaveBeenCalled()
+    })
+
+    // Une boîte de dialogue qui demande quoi faire de zéro jour apprend à
+    // cliquer sans lire : ce mois génère directement, sans peindre le panneau.
+    it("génère sans poser de question quand il n'y a rien en prévisionnel", async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(0)
+      genererCraAction.mockResolvedValue({ ok: true, craId: 'c1', previsionnelTraite: 0 })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      await waitFor(() =>
+        expect(genererCraAction).toHaveBeenCalledWith({
+          lineId: 'l1',
+          month: '2026-03',
+          previsionnel: 'SUPPRIMER',
+        }),
+      )
+      expect(screen.queryByText(/prévisionnel/)).toBeNull()
+      await waitFor(() =>
+        expect(screen.getByText('CRA généré. Retrouvez-le dans le suivi.')).toBeDefined(),
+      )
+    })
+
+    it('renonce sans générer', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(7)
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+      await screen.findByText(/7 jours en prévisionnel/)
+      fireEvent.click(screen.getByRole('button', { name: 'Annuler' }))
+
+      expect(screen.queryByText(/prévisionnel/)).toBeNull()
+      expect(genererCraAction).not.toHaveBeenCalled()
+    })
+
+    it('valide le prévisionnel choisi, referme le panneau et rend compte du succès', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(7)
+      genererCraAction.mockResolvedValue({ ok: true, craId: 'c1', previsionnelTraite: 7 })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+      await screen.findByText(/7 jours en prévisionnel/)
+      fireEvent.click(screen.getByRole('button', { name: /Valider ces jours/ }))
+
+      await waitFor(() =>
+        expect(genererCraAction).toHaveBeenCalledWith({
+          lineId: 'l1',
+          month: '2026-03',
+          previsionnel: 'VALIDER',
+        }),
+      )
+      await waitFor(() =>
+        expect(screen.getByText('CRA généré. Retrouvez-le dans le suivi.')).toBeDefined(),
+      )
+      // L'écran reste sur la Saisie : pas de redirection, et le panneau se referme.
+      expect(screen.queryByText(/prévisionnel/)).toBeNull()
+    })
+
+    it('supprime le prévisionnel choisi', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(7)
+      genererCraAction.mockResolvedValue({ ok: true, craId: 'c1', previsionnelTraite: 7 })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+      await screen.findByText(/7 jours en prévisionnel/)
+      fireEvent.click(screen.getByRole('button', { name: /Les supprimer/ }))
+
+      await waitFor(() =>
+        expect(genererCraAction).toHaveBeenCalledWith({
+          lineId: 'l1',
+          month: '2026-03',
+          previsionnel: 'SUPPRIMER',
+        }),
+      )
+    })
+
+    // M5 — un refus n'est pas un avertissement, ici comme partout ailleurs.
+    it('refuse en tonalité danger un mois déjà validé, pas en avertissement', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(0)
+      genererCraAction.mockResolvedValue({ ok: false, raison: 'MOIS_VALIDE', craId: 'c1' })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      const message = await screen.findByText(/CRA de ce mois est déjà validé/)
+      const bandeau = message.closest('[role="alert"]')
+      expect(bandeau).not.toBeNull()
+      expect(bandeau!.className).toContain('bg-danger')
+      expect(bandeau!.className).not.toContain('bg-warning')
     })
   })
 

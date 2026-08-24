@@ -7,6 +7,13 @@ import { applyCellState, type CellResult } from '@/services/cells'
 import { clearMonth, fillMonth } from '@/services/month-fill'
 import { parseQuantity } from '@/core/time/units'
 import { listActiveLines } from '@/services/missions'
+import {
+  genererCra,
+  resoudreMissionAffectee,
+  type ChoixPrevisionnel,
+  type ResultatGeneration,
+} from '@/services/cra-generation'
+import { compterPrevisionnelParMission } from '@/services/cra-previsionnel'
 import type { CellState } from '@/core/saisie/cycle'
 import type { ClearReport, FillReport } from '@/core/saisie/report'
 
@@ -147,4 +154,55 @@ export async function validerJoursPasses(
   const resultat = await convertPastForecast(user.id, month, aujourdhui())
   revalidatePath(`/saisie/${month}`)
   return resultat
+}
+
+/**
+ * Combien de jours en prévisionnel la mission de cette prestation porte-t-elle
+ * sur ce mois ?
+ *
+ * Lu **au clic** et non au rendu : c'est un chiffre qui bouge à chaque saisie,
+ * et l'afficher figé depuis le rendu de la page ferait poser la question sur
+ * un nombre faux.
+ *
+ * `resoudreMissionAffectee` est la même vérification d'affectation que
+ * `genererCra` : un utilisateur qui n'est plus affecté à cette prestation n'a
+ * rien à en compter, `genererCra` le lui dira explicitement (`NON_AFFECTE`) au
+ * moment d'agir.
+ */
+export async function compterPrevisionnelDeLaLigne(args: {
+  lineId: string
+  month: string
+}): Promise<number> {
+  const user = await requireUser()
+
+  const missionId = await resoudreMissionAffectee(user.id, args.lineId)
+  if (missionId === null) return 0
+
+  const par = await compterPrevisionnelParMission({
+    userId: user.id,
+    missionIds: [missionId],
+    month: args.month,
+  })
+  return par.get(missionId) ?? 0
+}
+
+/**
+ * Génère le CRA du mois pour la mission de la prestation choisie.
+ *
+ * Le choix du prévisionnel vient de l'utilisateur, jamais d'un défaut : voir
+ * `PanneauGeneration`.
+ */
+export async function genererCraAction(args: {
+  lineId: string
+  month: string
+  previsionnel: ChoixPrevisionnel
+}): Promise<ResultatGeneration> {
+  const user = await requireUser()
+  const r = await genererCra(user.id, args)
+
+  if (r.ok) {
+    revalidatePath(`/saisie/${args.month}`)
+    revalidatePath('/cra')
+  }
+  return r
 }

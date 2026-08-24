@@ -5,9 +5,8 @@ import { render, screen, cleanup } from '@testing-library/react'
 // La page est un composant serveur : elle appelle la session et les services
 // avant de rendre. On leur substitue des doubles, le sujet du test étant le
 // contrat de la page (filtre, mois transmis, sections annexes), pas la base.
-const { cras, missions, souffrance, etatsRecus, monthRecu } = vi.hoisted(() => ({
+const { cras, souffrance, etatsRecus, monthRecu } = vi.hoisted(() => ({
   cras: [] as unknown[],
-  missions: [] as unknown[],
   souffrance: [] as unknown[],
   etatsRecus: [] as unknown[],
   monthRecu: { valeur: undefined as string | undefined },
@@ -25,9 +24,7 @@ vi.mock('@/services/cra', () => ({
   },
   listCrasEnSouffrance: async () => souffrance,
 }))
-vi.mock('@/services/missions', () => ({ listMissionsForUser: async () => missions }))
 vi.mock('./actions', () => ({
-  openCra: vi.fn(),
   lancerRelances: vi.fn(),
 }))
 // `FiltreEtats` est un composant client : il lit `next/navigation`, absent
@@ -81,15 +78,12 @@ function uneSignature(extra: Record<string, unknown> = {}): Record<string, unkno
 async function rendre(
   jeu: {
     cras?: unknown[]
-    missions?: unknown[]
     souffrance?: unknown[]
     searchParams?: { etats?: string; month?: string }
   } = {},
 ): Promise<ReturnType<typeof render>> {
   cras.length = 0
   cras.push(...(jeu.cras ?? []))
-  missions.length = 0
-  missions.push(...(jeu.missions ?? [{ id: 'm1', clientName: 'ACME', label: 'ITSM' }]))
   souffrance.length = 0
   souffrance.push(...(jeu.souffrance ?? []))
   return render(
@@ -173,37 +167,6 @@ describe('page Suivi CRA — le mois reste un parametre lu', () => {
     await rendre({ searchParams: { month: '2026-03' } })
 
     expect(monthRecu.valeur).toBe('2026-03')
-  })
-})
-
-describe('page Suivi CRA — ouvrir un CRA', () => {
-  // Retiré en tâche 9 seulement, quand son remplacement existe dans la
-  // Saisie : le laisser ici évite un dépôt où aucun CRA ne peut être créé.
-  it('garde le formulaire d ouverture d un CRA', async () => {
-    await rendre()
-
-    const choix = screen.getByLabelText('Mission') as HTMLSelectElement
-    expect(choix.required).toBe(true)
-    expect(choix.name).toBe('missionId')
-    expect(screen.getByRole('button', { name: 'Ouvrir un CRA' })).toBeTruthy()
-  })
-
-  it('transmet le mois courant au formulaire d ouverture quand l adresse n en porte pas', async () => {
-    const { container } = await rendre()
-    const mois = container.querySelector(
-      'form input[name="month"]',
-    ) as HTMLInputElement | null
-    expect(mois).not.toBeNull()
-    expect(mois!.value).toBe(new Date().toISOString().slice(0, 7))
-  })
-
-  it('transmet le mois de l adresse au formulaire d ouverture quand il y en a un', async () => {
-    const { container } = await rendre({ searchParams: { month: '2026-03' } })
-    const mois = container.querySelector(
-      'form input[name="month"]',
-    ) as HTMLInputElement | null
-    expect(mois).not.toBeNull()
-    expect(mois!.value).toBe('2026-03')
   })
 })
 
