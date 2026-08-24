@@ -254,10 +254,14 @@ export function MonthCalendar({
   /**
    * Le calibre de la grille.
    *
-   * `COMPACTE` sert la vue 3 mois : trois grilles dans l'emprise d'une seule
-   * ramènent la case de ~145 à ~55 points. Elle perd alors ce qui ne survit
-   * pas à la réduction — les libellés d'heures et de créneau — et garde ce qui
-   * porte l'information : l'aplat, le numéro du jour, les marqueurs.
+   * `COMPACTE` sert la vue 3 mois. Elle ne touche qu'aux libellés : elle
+   * retire ce qui ne survit pas à une case plus petite — les libellés
+   * d'heures et de créneau — et garde ce qui porte l'information : l'aplat,
+   * le numéro du jour, les marqueurs. **La réduction de taille elle-même
+   * n'est pas son fait** : c'est la grille à trois colonnes de `SaisieClient`
+   * (`grid-cols-3`), qui ramène la case de ~145 à ~55 points en tenant trois
+   * grilles côte à côte — cette prop ne touche ni taille, ni marge, ni
+   * espacement.
    *
    * **Une prop et non un second composant.** Deux dessins de la même grille
    * divergeraient au premier correctif, et une bascule de vue montrerait alors

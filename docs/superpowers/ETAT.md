@@ -300,7 +300,14 @@ restés en suspens :**
 l'ancien formulaire « Ouvrir un CRA », ni un « écran CRA » en cartes, ni la
 lecture automatique de l'agenda — c'est un manuel d'exploitation
 (installation, connecteurs, sauvegarde, variables d'environnement), pas une
-visite écran par écran, et il ne l'a jamais été. Rien à y corriger.
+visite écran par écran, et il ne l'a jamais été sur ces points-là. Il portait
+en revanche un vrai écart, repéré seulement à la revue finale de branche : la
+section « Prévoir, c'est déjà tenir la cadence » affirmait encore que valider
+un CRA efface tout le prévisionnel restant du mois sans qu'il compte jamais
+comme servi — vrai avant la tâche D, plus toute la vérité depuis : la
+génération peut désormais faire passer ces jours en réalisé avant que la
+validation n'ait quoi que ce soit à annuler pour cette mission. Corrigé dans
+la vague de correction finale, pas ici.
 
 Petite dette non bloquante notée au passage par l'implémenteur de la tâche 14 :
 la vue 3 mois affiche trois fois la légende du calendrier, une par grille —

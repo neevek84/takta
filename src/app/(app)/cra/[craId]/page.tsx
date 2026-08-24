@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import { requireUser } from '@/auth'
 import { getCra } from '@/services/cra'
 import { canTransition, type CraTransition } from '@/core/cra/state-machine'
+import { etatSuivi } from '@/core/cra/etat-suivi'
 import { formatJours, libelleMois } from '@/core/cra/document'
 import { SignatureCard } from '@/components/cra/SignatureCard'
 import { StatusBadge } from '@/components/cra/StatusBadge'
@@ -73,7 +74,7 @@ export default async function CraDetailPage({
               missions aux noms voisins et un mois implicite, et l'on ne sait
               plus quel CRA on vient d'engendrer. */}
           <span className="text-sm text-muted">{libelleMois(cra.month)}</span>
-          <StatusBadge status={cra.status} />
+          <StatusBadge status={etatSuivi(cra)} />
           <Origine
             dansDolibarr={cra.iraDansDolibarr}
             detail={

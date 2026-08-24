@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
+import { canTransition, type CraTransition } from '@/core/cra/state-machine'
+import { CRA_STATUSES } from '@/core/types'
 
 const { cra, introuvable } = vi.hoisted(() => ({
   cra: { valeur: null as unknown },
@@ -106,6 +108,62 @@ describe('page de detail du CRA', () => {
 
     expect(introuvable).toHaveBeenCalled()
   })
+
+  // Le tableau de suivi affiche l'état dérivé (`etatSuivi`), pas le statut
+  // brut : un CRA validé et facturé s'y lit « Facturé ». La page de détail
+  // doit dire la même chose — sans quoi les deux moitiés d'un même écran se
+  // contredisent sur le même CRA.
+  it('affiche Facture, pas Valide, sur un CRA valide portant une facture', async () => {
+    await rendre(unCra({ status: 'VALIDE', invoiceNumber: 'F-2026-042' }))
+
+    expect(screen.getByText('Facturé')).toBeTruthy()
+    expect(screen.queryByText('Validé')).toBeNull()
+  })
+})
+
+/**
+ * Minor 5 — cette matrice vivait sur l'ancienne page de liste
+ * (`cra/page.test.tsx`, décrite en cartes), retirée avec elle lors du passage
+ * au tableau de suivi. Le bloc de transitions qu'elle couvrait n'a pas bougé
+ * — c'est le même `ALL.filter((t) => canTransition(cra.status, t))`, rendu
+ * ici plutôt que sur une carte — mais seule sa couverture avait disparu.
+ * `transitionCra` refuse déjà toute transition illégale côté serveur : ce
+ * n'est pas un bug vivant, c'est un garde-fou de régression à restaurer.
+ */
+const LIBELLES: Record<CraTransition, string> = {
+  ENVOYER: 'Marquer envoyé',
+  VALIDER: 'Marquer validé',
+  REFUSER: 'Marquer refusé',
+  ROUVRIR: 'Rouvrir',
+}
+const TOUTES: CraTransition[] = ['ENVOYER', 'VALIDER', 'REFUSER', 'ROUVRIR']
+
+describe('transitions offertes', () => {
+  afterEach(cleanup)
+
+  for (const status of CRA_STATUSES) {
+    const autorisees = TOUTES.filter((t) => canTransition(status, t))
+    const refusees = TOUTES.filter((t) => !canTransition(status, t))
+
+    it(`n offre depuis ${status} que ${autorisees.join(', ') || 'rien'}`, async () => {
+      await rendre(unCra({ status }))
+
+      for (const t of autorisees) {
+        expect(screen.queryByRole('button', { name: LIBELLES[t] }), t).not.toBeNull()
+      }
+      for (const t of refusees) {
+        expect(screen.queryByRole('button', { name: LIBELLES[t] }), t).toBeNull()
+      }
+    })
+
+    it(`transmet la transition demandée depuis ${status}`, async () => {
+      const { container } = await rendre(unCra({ status }))
+      const valeurs = Array.from(container.querySelectorAll('input[name="transition"]')).map(
+        (n) => (n as HTMLInputElement).value,
+      )
+      expect(valeurs.sort()).toEqual([...autorisees].sort())
+    })
+  }
 })
 
 // Cette couverture vivait sur l'ancienne page de liste, retirée avec le

@@ -13,6 +13,7 @@ const {
   viderMois,
   compterPrevisionnelDeLaLigne,
   genererCraAction,
+  verifierAgenda,
 } = vi.hoisted(() => ({
   saveCell: vi.fn(),
   appliquerCase: vi.fn(),
@@ -20,6 +21,7 @@ const {
   viderMois: vi.fn(),
   compterPrevisionnelDeLaLigne: vi.fn(),
   genererCraAction: vi.fn(),
+  verifierAgenda: vi.fn(),
 }))
 vi.mock('./actions', () => ({
   saveCell,
@@ -28,6 +30,7 @@ vi.mock('./actions', () => ({
   viderMois,
   compterPrevisionnelDeLaLigne,
   genererCraAction,
+  verifierAgenda,
 }))
 
 // `vi.mock` est hissé au-dessus des imports : les server actions ne sont
@@ -747,6 +750,36 @@ describe('SaisieClient — calendrier', () => {
       )
     })
 
+    // Finding final 2 — la spec (§4) exige un lien vers le CRA produit, pas
+    // seulement une phrase qui promet de le retrouver « dans le suivi ».
+    // `ResultatGeneration.craId` était produit et jamais consommé.
+    it('porte le lien vers le CRA genere apres succes', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(0)
+      genererCraAction.mockResolvedValue({ ok: true, craId: 'cra-77', previsionnelTraite: 0 })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      const lien = await screen.findByRole('link', { name: /Ouvrir le CRA/ })
+      expect(lien.getAttribute('href')).toBe('/cra/cra-77')
+      // Le texte existant reste : le lien s'ajoute, il ne le remplace pas.
+      expect(screen.getByText(/CRA généré. Retrouvez-le dans le suivi./)).toBeDefined()
+    })
+
+    // Finding final 2, refus MOIS_VALIDE (spec §5) — « Le panneau le dit et
+    // propose le lien vers le CRA existant. »
+    it('porte le lien vers le CRA existant quand le mois est deja valide', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(0)
+      genererCraAction.mockResolvedValue({ ok: false, raison: 'MOIS_VALIDE', craId: 'cra-existant' })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      const lien = await screen.findByRole('link', { name: /Ouvrir le CRA/ })
+      expect(lien.getAttribute('href')).toBe('/cra/cra-existant')
+      expect(screen.getByText(/CRA de ce mois est déjà validé/)).toBeDefined()
+    })
+
     it('renonce sans générer', async () => {
       compterPrevisionnelDeLaLigne.mockResolvedValue(7)
       renderClient()
@@ -1226,5 +1259,49 @@ describe('la vue choisie vit dans l adresse', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
     expect(window.location.search).toBe('')
+  })
+})
+
+/**
+ * Finding final 3 — `occupations` est bien effacé par `doitEffacerOccupations`
+ * quand on bascule CALENDRIER -> TROIS_MOIS, mais `BoutonAgenda` reste monté
+ * au même endroit de l'arbre à travers cette bascule : son verdict interne
+ * (« n jours occupés… ») survivait, lui, au changement de plage — describant
+ * une vérification qui ne portait plus sur ce qui s'affiche.
+ */
+describe('le bouton agenda se reinitialise quand la plage verifiee change', () => {
+  beforeEach(() => {
+    verifierAgenda.mockReset()
+    window.history.replaceState(null, '', '/saisie/2026-03')
+  })
+  afterEach(cleanup)
+
+  it('efface le verdict du bouton en passant du calendrier a la vue 3 mois', async () => {
+    verifierAgenda.mockResolvedValue({ ok: true, jours: ['2026-03-04', '2026-03-12'] })
+    renderClient({ agendaConnecte: true })
+
+    fireEvent.click(screen.getByRole('button', { name: /Vérifier l’agenda/ }))
+    await screen.findByText(/2 jours occupés/)
+
+    ouvrirTroisMois()
+
+    // Pas de compte perime, pas de « aucune occupation » perime : le bouton
+    // fraichement remonte est de nouveau INACTIF, sans aucun `role="status"`.
+    expect(screen.queryByText(/jours occupés/)).toBeNull()
+    expect(screen.queryByText(/Aucune occupation/)).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('efface aussi un verdict « aucune occupation » perime au changement de vue', async () => {
+    verifierAgenda.mockResolvedValue({ ok: true, jours: [] })
+    renderClient({ agendaConnecte: true })
+
+    fireEvent.click(screen.getByRole('button', { name: /Vérifier l’agenda/ }))
+    await screen.findByText(/Aucune occupation/)
+
+    ouvrirTroisMois()
+
+    expect(screen.queryByText(/Aucune occupation/)).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
   })
 })

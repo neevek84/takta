@@ -46,7 +46,12 @@ avait posé avant qu'il commence.
 
 Et quand le mois se ferme, ce qui n'a pas eu lieu ne traîne pas : valider le CRA
 annule les jours restés à l'état de prévision. Ils ne comptent ni comme servis,
-ni comme perdus — ils disparaissent, parce qu'ils n'ont pas eu lieu.
+ni comme perdus — ils disparaissent, parce qu'ils n'ont pas eu lieu. Ce sort
+peut aussi se régler plus tôt : à la génération du CRA, vous choisissez de
+faire passer ces jours en réalisé ou de les supprimer, mission par mission —
+l'annulation à la validation reste le filet pour ce qui n'est pas passé par ce
+choix, prévisionnel ressaisi après coup ou mois dont le CRA n'a jamais été
+généré par cet écran.
 
 **takta ne facture pas.** C'est délibéré, et c'est ce qui le garde léger : la
 facture appartient à votre logiciel de gestion, avec toute sa charge

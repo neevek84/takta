@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { MonthGrid } from '@/components/grid/MonthGrid'
 import { MonthCalendar } from '@/components/calendar/MonthCalendar'
 import { EngagementBar } from '@/components/grid/EngagementBar'
@@ -98,11 +99,18 @@ function phraseCapacite(date: string, totalCentiemes: number, capacityCentiemes:
   return `Capacité dépassée le ${date} : le total dépasse la capacité de ${jours(capacityCentiemes)} j d'une fraction de journée trop petite pour s'y voir, l'affichage étant au centième de jour.`
 }
 
-/** Ce qui s'écrit dans le bandeau, et sur quel ton. */
-type Message = { texte: string; ton: 'info' | 'warning' | 'danger' }
+/**
+ * Ce qui s'écrit dans le bandeau, et sur quel ton.
+ *
+ * `craId`, quand il est porté, fait apparaître un lien vers `/cra/<id>` à la
+ * suite du texte — c'est ce que la génération du CRA utilise pour tenir la
+ * promesse de la spec (§4 et §5) : le message annonce le sort de la
+ * génération, le lien mène à ce qu'elle a produit ou à ce qui bloquait déjà.
+ */
+type Message = { texte: string; ton: 'info' | 'warning' | 'danger'; craId?: string }
 
-function avertissement(texte: string): Message {
-  return { texte, ton: 'warning' }
+function avertissement(texte: string, craId?: string): Message {
+  return { texte, ton: 'warning', craId }
 }
 
 /**
@@ -111,13 +119,13 @@ function avertissement(texte: string): Message {
  * autre chose. La tonalité `info` en fait un `role="status"`, annoncé au
  * moment opportun plutôt qu'en interrompant la frappe.
  */
-function information(texte: string): Message {
-  return { texte, ton: 'info' }
+function information(texte: string, craId?: string): Message {
+  return { texte, ton: 'info', craId }
 }
 
 /** Un refus n'est pas un avertissement : rien n'a été enregistré. */
-function refus(texte: string): Message {
-  return { texte, ton: 'danger' }
+function refus(texte: string, craId?: string): Message {
+  return { texte, ton: 'danger', craId }
 }
 
 /**
@@ -241,7 +249,14 @@ export function SaisieClient(props: {
    */
   function choisirVue(prochaine: Vue): void {
     setVue(prochaine)
-    if (doitEffacerOccupations(prochaine, plageVerifiee)) setOccupations([])
+    // `occupations` ET `plageVerifiee` tombent ensemble : laisser la seconde
+    // décrire une plage qu'on ne montre plus ferait tenir au bouton un
+    // verdict ("2 jours occupés…") que plus rien n'a vérifié pour la
+    // nouvelle portée.
+    if (doitEffacerOccupations(prochaine, plageVerifiee)) {
+      setOccupations([])
+      setPlageVerifiee(null)
+    }
     const parametres = new URLSearchParams(window.location.search)
     if (prochaine === 'TABLEAU') parametres.set('vue', 'tableau')
     else if (prochaine === 'TROIS_MOIS') parametres.set('vue', '3mois')
@@ -396,16 +411,19 @@ export function SaisieClient(props: {
 
     if (!r.ok) {
       // MOIS_VALIDE n'a rien posé : c'est un refus, pas un avertissement.
+      // Il porte `craId` : le CRA existant, déjà validé, reste à un clic —
+      // la spec (§5) demande explicitement ce lien sur ce refus-là.
       setMessage(
-        refus(
-          r.raison === 'MOIS_VALIDE'
-            ? `Le CRA de ce mois est déjà validé. Rouvrez-le depuis le suivi pour le regénérer.`
-            : `Vous n'êtes pas affecté à cette prestation.`,
-        ),
+        r.raison === 'MOIS_VALIDE'
+          ? refus(
+              `Le CRA de ce mois est déjà validé. Rouvrez-le depuis le suivi pour le regénérer.`,
+              r.craId,
+            )
+          : refus(`Vous n'êtes pas affecté à cette prestation.`),
       )
       return
     }
-    setMessage(information(`CRA généré. Retrouvez-le dans le suivi.`))
+    setMessage(information(`CRA généré. Retrouvez-le dans le suivi.`, r.craId))
   }
 
   return (
@@ -486,7 +504,14 @@ export function SaisieClient(props: {
           rien à personne. */}
       {props.agendaConnecte === true && (
         <div className="mb-3">
+          {/* `key` force un remontage — donc une remise à zéro de l'état
+              interne du bouton (`etat: 'INACTIF'`) — chaque fois que la plage
+              vérifiée change. `BoutonAgenda` reste monté au même endroit de
+              l'arbre à travers une bascule de vue : sans cette clé, son
+              verdict ("n jours occupés…") survivrait à un changement de plage
+              qu'il n'a jamais vérifiée. */}
           <BoutonAgenda
+            key={`${du}-${au}`}
             du={du}
             au={au}
             onResultat={(jours) => {
@@ -590,7 +615,17 @@ export function SaisieClient(props: {
 
       {message !== null && (
         <div className="mb-3">
-          <Banner tone={message.ton}>{message.texte}</Banner>
+          <Banner tone={message.ton}>
+            {message.texte}
+            {message.craId !== undefined && (
+              <>
+                {' '}
+                <Link href={`/cra/${message.craId}`} className="text-link underline">
+                  Ouvrir le CRA
+                </Link>
+              </>
+            )}
+          </Banner>
         </div>
       )}
 
