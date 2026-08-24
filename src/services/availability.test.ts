@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vites
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/db/client'
 import { saveCredential } from '@/services/credentials'
+import { saveGoogleOAuthClient } from '@/services/google/oauth-client'
 import { createFakeGoogleApi, type FakeGoogleApi } from '@/integrations/google/fake-google-api'
 import type { BusyInterval, CalendarConnector } from '@/core/calendar/connector'
 import { getBusyRange } from './availability'
@@ -167,6 +168,15 @@ describe('getBusyRange — pipeline reel', () => {
   beforeEach(async () => {
     api = createFakeGoogleApi()
     await prisma.providerCredential.deleteMany({})
+    // Le client OAuth de l'instance vit en base, comme les jetons personnels
+    // (seul `ownerScope` les separe) : sans lui, `resolveConnector` ne peut
+    // meme pas tenter un rafraichissement de jeton (`readGoogleOAuthClient`
+    // rend `null` avant tout appel a Google). Meme decor que `flush.test.ts`.
+    await saveGoogleOAuthClient({
+      clientId: 'client-id-de-test',
+      clientSecret: 'client-secret-de-test',
+      redirectUri: 'http://localhost:3000/api/google/callback',
+    })
   })
 
   afterAll(async () => {
@@ -217,8 +227,10 @@ describe('getBusyRange — pipeline reel', () => {
     })
 
     it('jeton expire en base et rafraichissement refuse par Google : PAS_DE_CONNECTEUR', async () => {
-      // `resolveConnector` voit l'echeance passee, tente de rafraichir, et
-      // Google la refuse (`invalid_grant`) : aucun connecteur n'en sort.
+      // `resolveConnector` voit l'echeance passee, lit le client OAuth de
+      // l'instance (seme au `beforeEach`, donc present), tente reellement de
+      // rafraichir aupres du double Google, qui le refuse (`invalid_grant`) :
+      // aucun connecteur n'en sort.
       await connecter(new Date('2020-01-01T00:00:00.000Z'))
       api.oauth.refusRefresh = true
 
@@ -226,6 +238,11 @@ describe('getBusyRange — pipeline reel', () => {
         ok: false,
         raison: 'PAS_DE_CONNECTEUR',
       })
+      // Preuve que le rafraichissement a bien ete tente, pas seulement
+      // suppose : sans cette ligne, un `resolveConnector` qui abandonnerait
+      // plus tot (faute de client OAuth, par exemple) rendrait la meme
+      // raison pour une toute autre cause, comme avant cette correction.
+      expect(api.appelsVers('oauth2.googleapis.com/token')).toHaveLength(1)
     })
 
     it('cle de chiffrement perdue : PAS_DE_CONNECTEUR, sans lever', async () => {
