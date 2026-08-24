@@ -4,7 +4,7 @@ import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { updateSettings } from './settings'
 import { createClient } from './clients'
 import { createMission, createLine } from './missions'
-import { saveEntry, getMonthEntries, getLineEngagementTotals } from './time-entries'
+import { saveEntry, getMonthEntries, getEntriesRange, getLineEngagementTotals } from './time-entries'
 import { listAuditEvents, readAuditSince } from './audit'
 import {
   listPastForecast,
@@ -812,5 +812,36 @@ describe('consignation des saisies', () => {
     await saveEntry({ userId, lineId: lineA, date: '2026-09-29', minutes: 480, kind: 'REALISE' })
     expect(await listAuditEvents(userId, { action: 'saisie.creee' })).toHaveLength(1)
     expect(await listAuditEvents(intrusId, { action: 'saisie.creee' })).toHaveLength(0)
+  })
+})
+
+describe('getEntriesRange', () => {
+  it('rend les saisies de toute la plage, bornes incluses', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-01', minutes: 240, kind: 'REALISE' })
+    await saveEntry({ userId, lineId: lineA, date: '2026-05-31', minutes: 240, kind: 'REALISE' })
+
+    const entries = await getEntriesRange(userId, { du: '2026-03-01', au: '2026-05-31' })
+
+    expect(entries.map((e) => e.date)).toContain('2026-05-31')
+    expect(entries.map((e) => e.date)).toContain('2026-03-01')
+  })
+
+  it('exclut le lendemain de la borne haute', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-31', minutes: 240, kind: 'REALISE' })
+    await saveEntry({ userId, lineId: lineA, date: '2026-04-01', minutes: 240, kind: 'REALISE' })
+
+    const entries = await getEntriesRange(userId, { du: '2026-03-01', au: '2026-03-31' })
+
+    expect(entries.map((e) => e.date)).not.toContain('2026-04-01')
+  })
+
+  // Une seule regle de bornes, pas deux : `getMonthEntries` s'y ramene plutot
+  // que d'en porter une copie.
+  it('getMonthEntries rend exactement la plage du mois', async () => {
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
+
+    expect(await getMonthEntries(userId, '2026-03')).toEqual(
+      await getEntriesRange(userId, { du: '2026-03-01', au: '2026-03-31' }),
+    )
   })
 })

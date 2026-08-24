@@ -6,17 +6,36 @@ import { DEFAULT_SLOTS } from '@/services/settings'
 import type { LineForGrid } from '@/services/missions'
 import type { MonthEntry } from '@/services/time-entries'
 
-const { saveCell, appliquerCase, remplirMois, viderMois } = vi.hoisted(() => ({
+const {
+  saveCell,
+  appliquerCase,
+  remplirMois,
+  viderMois,
+  compterPrevisionnelDeLaLigne,
+  genererCraAction,
+  verifierAgenda,
+} = vi.hoisted(() => ({
   saveCell: vi.fn(),
   appliquerCase: vi.fn(),
   remplirMois: vi.fn(),
   viderMois: vi.fn(),
+  compterPrevisionnelDeLaLigne: vi.fn(),
+  genererCraAction: vi.fn(),
+  verifierAgenda: vi.fn(),
 }))
-vi.mock('./actions', () => ({ saveCell, appliquerCase, remplirMois, viderMois }))
+vi.mock('./actions', () => ({
+  saveCell,
+  appliquerCase,
+  remplirMois,
+  viderMois,
+  compterPrevisionnelDeLaLigne,
+  genererCraAction,
+  verifierAgenda,
+}))
 
 // `vi.mock` est hissé au-dessus des imports : les server actions ne sont
 // jamais chargées, seul le composant l'est.
-import { SaisieClient } from './SaisieClient'
+import { SaisieClient, doitEffacerOccupations } from './SaisieClient'
 
 const lines: LineForGrid[] = [
   {
@@ -41,6 +60,38 @@ const lines: LineForGrid[] = [
   },
 ]
 
+/**
+ * Deux missions au libellé distinct, pour prouver que le panneau de
+ * génération fige la prestation à l'ouverture : `lines` ci-dessus porte deux
+ * lignes de la même mission ACME · ITSM, ce qui masquerait un mélange entre
+ * elles.
+ */
+const lignesDistinctes: LineForGrid[] = [
+  {
+    id: 'lA',
+    label: 'Consultant A',
+    missionLabel: 'Mission A',
+    clientName: 'ACME',
+    displayUnit: 'JOUR',
+    minutesParJour: 480,
+    soldCentiemes: 3000,
+    allowedSlotIds: [],
+  },
+  {
+    id: 'lB',
+    label: 'Consultant B',
+    missionLabel: 'Mission B',
+    clientName: 'BETA',
+    displayUnit: 'JOUR',
+    minutesParJour: 480,
+    soldCentiemes: 3000,
+    allowedSlotIds: [],
+  },
+]
+
+/** Les trois mois par défaut des tests : mars, avril, mai 2026. */
+const MOIS_PAR_DEFAUT = ['2026-03', '2026-04', '2026-05']
+
 function renderClient(
   overrides: Partial<React.ComponentProps<typeof SaisieClient>> = {},
 ): void {
@@ -48,6 +99,8 @@ function renderClient(
     <SaisieClient
       month="2026-03"
       days={buildMonthDays('2026-03', [1, 2, 3, 4, 5], [])}
+      mois={MOIS_PAR_DEFAUT}
+      joursParMois={MOIS_PAR_DEFAUT.map((m) => buildMonthDays(m, [1, 2, 3, 4, 5], []))}
       lines={lines}
       entries={[]}
       engagementTotals={{ l1: [], l2: [] }}
@@ -71,6 +124,43 @@ const deuxJournees: MonthEntry[] = [
 function ouvrirTableau(): void {
   fireEvent.click(screen.getByRole('button', { name: 'Tableau multi-CRA' }))
 }
+
+/** Idem pour la vue 3 mois. */
+function ouvrirTroisMois(): void {
+  fireEvent.click(screen.getByRole('button', { name: '3 mois' }))
+}
+
+/**
+ * La règle de portée du résultat d'agenda (tâche 11), extraite en fonction
+ * pure : testable seule, sans passer par `choisirVue` ni par un bouton « 3
+ * mois » qui n'existe pas encore (il arrive à la tâche 14).
+ */
+describe('doitEffacerOccupations', () => {
+  it('efface en passant à trois mois depuis une plage d un seul mois', () => {
+    expect(doitEffacerOccupations('TROIS_MOIS', '1MOIS')).toBe(true)
+  })
+
+  it('efface en passant à trois mois sans vérification préalable', () => {
+    expect(doitEffacerOccupations('TROIS_MOIS', null)).toBe(true)
+  })
+
+  it('conserve en passant à trois mois quand la plage vérifiée est déjà de trois mois', () => {
+    expect(doitEffacerOccupations('TROIS_MOIS', '3MOIS')).toBe(false)
+  })
+
+  it('conserve en quittant trois mois vers le calendrier', () => {
+    expect(doitEffacerOccupations('CALENDRIER', '3MOIS')).toBe(false)
+  })
+
+  it('conserve en quittant trois mois vers le tableau', () => {
+    expect(doitEffacerOccupations('TABLEAU', '3MOIS')).toBe(false)
+  })
+
+  it('conserve entre calendrier et tableau, quelle que soit la plage vérifiée', () => {
+    expect(doitEffacerOccupations('TABLEAU', '1MOIS')).toBe(false)
+    expect(doitEffacerOccupations('CALENDRIER', null)).toBe(false)
+  })
+})
 
 function saisir(valeur: string): HTMLInputElement {
   const input = screen.getByLabelText('Consultant ITSM 2026-03-12') as HTMLInputElement
@@ -356,6 +446,8 @@ describe('SaisieClient — calendrier', () => {
     appliquerCase.mockReset()
     remplirMois.mockReset()
     viderMois.mockReset()
+    compterPrevisionnelDeLaLigne.mockReset()
+    genererCraAction.mockReset()
     window.localStorage.clear()
   })
   afterEach(cleanup)
@@ -617,6 +709,187 @@ describe('SaisieClient — calendrier', () => {
     })
   })
 
+  /**
+   * Tâche 9 — le bouton qui remplace le formulaire d'ouverture du suivi. Le
+   * porteur : « ça ne doit pas disparaître, mais ça doit être un choix
+   * humain et pas auto. » Ces tests couvrent ce choix, pas la génération
+   * elle-même — déjà éprouvée par les tests de `genererCra`.
+   */
+  describe('Générer le CRA', () => {
+    it('lit le prévisionnel au clic et pose la question, sans choix par défaut', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(7)
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      // Lu au clic, pas au rendu : un chiffre qui bouge à chaque saisie.
+      expect(compterPrevisionnelDeLaLigne).toHaveBeenCalledWith({ lineId: 'l1', month: '2026-03' })
+      await screen.findByText(/7 jours en prévisionnel/)
+      expect(genererCraAction).not.toHaveBeenCalled()
+    })
+
+    // Une boîte de dialogue qui demande quoi faire de zéro jour apprend à
+    // cliquer sans lire : ce mois génère directement, sans peindre le panneau.
+    it("génère sans poser de question quand il n'y a rien en prévisionnel", async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(0)
+      genererCraAction.mockResolvedValue({ ok: true, craId: 'c1', previsionnelTraite: 0 })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      await waitFor(() =>
+        expect(genererCraAction).toHaveBeenCalledWith({
+          lineId: 'l1',
+          month: '2026-03',
+          previsionnel: 'SUPPRIMER',
+        }),
+      )
+      expect(screen.queryByText(/prévisionnel/)).toBeNull()
+      await waitFor(() =>
+        expect(screen.getByText('CRA généré. Retrouvez-le dans le suivi.')).toBeDefined(),
+      )
+    })
+
+    // Finding final 2 — la spec (§4) exige un lien vers le CRA produit, pas
+    // seulement une phrase qui promet de le retrouver « dans le suivi ».
+    // `ResultatGeneration.craId` était produit et jamais consommé.
+    it('porte le lien vers le CRA genere apres succes', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(0)
+      genererCraAction.mockResolvedValue({ ok: true, craId: 'cra-77', previsionnelTraite: 0 })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      const lien = await screen.findByRole('link', { name: /Ouvrir le CRA/ })
+      expect(lien.getAttribute('href')).toBe('/cra/cra-77')
+      // Le texte existant reste : le lien s'ajoute, il ne le remplace pas.
+      expect(screen.getByText(/CRA généré. Retrouvez-le dans le suivi./)).toBeDefined()
+    })
+
+    // Finding final 2, refus MOIS_VALIDE (spec §5) — « Le panneau le dit et
+    // propose le lien vers le CRA existant. »
+    it('porte le lien vers le CRA existant quand le mois est deja valide', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(0)
+      genererCraAction.mockResolvedValue({ ok: false, raison: 'MOIS_VALIDE', craId: 'cra-existant' })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      const lien = await screen.findByRole('link', { name: /Ouvrir le CRA/ })
+      expect(lien.getAttribute('href')).toBe('/cra/cra-existant')
+      expect(screen.getByText(/CRA de ce mois est déjà validé/)).toBeDefined()
+    })
+
+    it('renonce sans générer', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(7)
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+      await screen.findByText(/7 jours en prévisionnel/)
+      fireEvent.click(screen.getByRole('button', { name: 'Annuler' }))
+
+      expect(screen.queryByText(/prévisionnel/)).toBeNull()
+      expect(genererCraAction).not.toHaveBeenCalled()
+    })
+
+    it('valide le prévisionnel choisi, referme le panneau et rend compte du succès', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(7)
+      genererCraAction.mockResolvedValue({ ok: true, craId: 'c1', previsionnelTraite: 7 })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+      await screen.findByText(/7 jours en prévisionnel/)
+      fireEvent.click(screen.getByRole('button', { name: /Valider ces jours/ }))
+
+      await waitFor(() =>
+        expect(genererCraAction).toHaveBeenCalledWith({
+          lineId: 'l1',
+          month: '2026-03',
+          previsionnel: 'VALIDER',
+        }),
+      )
+      await waitFor(() =>
+        expect(screen.getByText('CRA généré. Retrouvez-le dans le suivi.')).toBeDefined(),
+      )
+      // L'écran reste sur la Saisie : pas de redirection, et le panneau se referme.
+      expect(screen.queryByText(/prévisionnel/)).toBeNull()
+    })
+
+    it('supprime le prévisionnel choisi', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(7)
+      genererCraAction.mockResolvedValue({ ok: true, craId: 'c1', previsionnelTraite: 7 })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+      await screen.findByText(/7 jours en prévisionnel/)
+      fireEvent.click(screen.getByRole('button', { name: /Les supprimer/ }))
+
+      await waitFor(() =>
+        expect(genererCraAction).toHaveBeenCalledWith({
+          lineId: 'l1',
+          month: '2026-03',
+          previsionnel: 'SUPPRIMER',
+        }),
+      )
+    })
+
+    // M5 — un refus n'est pas un avertissement, ici comme partout ailleurs.
+    it('refuse en tonalité danger un mois déjà validé, pas en avertissement', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(0)
+      genererCraAction.mockResolvedValue({ ok: false, raison: 'MOIS_VALIDE', craId: 'c1' })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      const message = await screen.findByText(/CRA de ce mois est déjà validé/)
+      const bandeau = message.closest('[role="alert"]')
+      expect(bandeau).not.toBeNull()
+      expect(bandeau!.className).toContain('bg-danger')
+      expect(bandeau!.className).not.toContain('bg-warning')
+    })
+
+    // Défaut trouvé en revue : `LineSelector` reste actif tant que le panneau
+    // est ouvert. Sans gel de la ligne visée, changer de prestation pendant
+    // que le panneau affiche encore le compte de l'ancienne ferait générer
+    // pour la nouvelle — un choix pris sur un nombre que l'utilisateur n'a
+    // jamais vu, exactement ce que ce panneau existe pour empêcher.
+    it('fige la prestation visée : changer de sélection pendant que le panneau est ouvert ne dévie pas la génération', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(7)
+      genererCraAction.mockResolvedValue({ ok: true, craId: 'c1', previsionnelTraite: 7 })
+      renderClient({ lines: lignesDistinctes })
+
+      // Ouvre le panneau pour la ligne A.
+      fireEvent.change(screen.getByLabelText('Prestation'), { target: { value: 'lA' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+      await screen.findByText(/ACME · Mission A/)
+      expect(compterPrevisionnelDeLaLigne).toHaveBeenCalledWith({ lineId: 'lA', month: '2026-03' })
+
+      // Le sélecteur reste utilisable pendant que le panneau est ouvert : on
+      // bascule sur la ligne B sans jamais fermer le panneau.
+      fireEvent.change(screen.getByLabelText('Prestation'), { target: { value: 'lB' } })
+
+      // Le panneau continue de nommer la mission pour laquelle la question a
+      // été posée, jamais celle que le sélecteur affiche maintenant.
+      expect(screen.getByText(/ACME · Mission A/)).toBeTruthy()
+      expect(screen.queryByText(/BETA · Mission B/)).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: /Valider ces jours/ }))
+
+      // Généré pour A — celle affichée et comptée —, jamais pour B, devenue
+      // courante entre-temps mais jamais montrée à l'utilisateur.
+      await waitFor(() =>
+        expect(genererCraAction).toHaveBeenCalledWith({
+          lineId: 'lA',
+          month: '2026-03',
+          previsionnel: 'VALIDER',
+        }),
+      )
+      expect(genererCraAction).not.toHaveBeenCalledWith(
+        expect.objectContaining({ lineId: 'lB' }),
+      )
+    })
+  })
+
   it('restaure la prestation mémorisée au montage', async () => {
     window.localStorage.setItem('cra.saisie.prestation', 'l2')
     renderClient()
@@ -673,6 +946,86 @@ describe('SaisieClient — calendrier', () => {
 })
 
 /**
+ * Tâche 14 — le mois choisi et les deux suivants, en trois grilles compactes.
+ * C'est une surface de saisie, pas un aperçu : même cinématique que le
+ * calendrier, une seule réglette d'engagement sous l'ensemble.
+ */
+describe('SaisieClient — vue 3 mois', () => {
+  beforeEach(() => {
+    appliquerCase.mockReset()
+    window.localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  it('montre trois grilles compactes plutôt qu une seule', () => {
+    renderClient()
+    ouvrirTroisMois()
+
+    expect(screen.getAllByTestId('grille-calendrier')).toHaveLength(3)
+  })
+
+  it('nomme chaque grille par son mois', () => {
+    renderClient()
+    ouvrirTroisMois()
+
+    expect(screen.getByText('mars 2026')).toBeTruthy()
+    expect(screen.getByText('avril 2026')).toBeTruthy()
+    expect(screen.getByText('mai 2026')).toBeTruthy()
+  })
+
+  it('applique la cinématique du calendrier dans la troisième grille', async () => {
+    appliquerCase.mockResolvedValue({ ok: true, state: { kind: 'JOURNEE' } })
+    renderClient()
+    ouvrirTroisMois()
+
+    fireEvent.click(screen.getByTestId('case-2026-05-12'))
+
+    await waitFor(() =>
+      expect(appliquerCase).toHaveBeenCalledWith({
+        lineId: 'l1',
+        date: '2026-05-12',
+        state: { kind: 'JOURNEE' },
+        month: '2026-03',
+      }),
+    )
+  })
+
+  // L'engagement se lit sur toute la durée de la ligne, pas sur un mois
+  // affiché : une seule réglette sous les trois grilles, jamais une par mois.
+  it('pose une seule réglette d engagement, pas une par mois', () => {
+    renderClient({
+      engagementTotals: {
+        l1: [{ kind: 'REALISE', minutes: 480 * 18, minutesParJour: 480 }],
+        l2: [],
+      },
+    })
+    ouvrirTroisMois()
+
+    expect(screen.getAllByTestId('engagement-l1')).toHaveLength(1)
+    expect(screen.getByTestId('piste-engagement-l1').className).toContain('w-full')
+  })
+
+  // Vingt et une colonnes ne tiennent pas sur un téléphone. Le calendrier
+  // reste la surface de saisie mobile.
+  it('reste inatteignable sous md', () => {
+    renderClient()
+
+    expect(screen.getByRole('button', { name: '3 mois' }).className).toContain('hidden')
+    expect(screen.getByRole('button', { name: '3 mois' }).className).toContain('md:inline-flex')
+  })
+
+  // Le formulaire d'heures est le même geste qu'au calendrier : Maj+Entrée
+  // sur une case de n'importe laquelle des trois grilles doit l'ouvrir.
+  it('ouvre le formulaire de case depuis la troisième grille', () => {
+    renderClient()
+    ouvrirTroisMois()
+
+    fireEvent.contextMenu(screen.getByTestId('case-2026-05-12'))
+    expect(screen.getByLabelText('Heure de début')).toBeTruthy()
+  })
+})
+
+/**
  * L'occupation de l'agenda est un repère, jamais un verrou : elle se marque
  * dans les deux vues et s'annonce sans rien refuser.
  */
@@ -700,8 +1053,9 @@ describe('SaisieClient — occupation de l agenda', () => {
   })
 
   it('ne marque rien quand la lecture d occupation a échoué', () => {
-    // `getBusyDays` ne lève jamais : elle rend une liste vide, et la page
-    // s'affiche exactement comme si l'agenda n'était pas connecté.
+    // Une liste vide est ce que `BoutonAgenda` retient d'une lecture qui a
+    // échoué (tâche 11) : la page s'affiche exactement comme si l'agenda
+    // n'était pas connecté.
     renderClient({ busyDates: [] })
     expect(screen.getByTestId('case-2026-03-12').getAttribute('data-busy')).toBeNull()
     ouvrirTableau()
@@ -882,5 +1236,72 @@ describe('la vue choisie vit dans l adresse', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
     expect(window.location.search).toBe('')
+  })
+
+  // Tâche 14 — même mécanisme que `?vue=tableau`, avec sa propre valeur.
+  it("s'ouvre sur la vue 3 mois quand l'adresse le demande", () => {
+    renderClient({ vueInitiale: 'TROIS_MOIS' })
+
+    expect(screen.getByRole('button', { name: '3 mois' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+  })
+
+  it("inscrit le choix 3 mois dans l'adresse sans recharger la page", () => {
+    renderClient()
+
+    fireEvent.click(screen.getByRole('button', { name: '3 mois' }))
+    expect(window.location.search).toBe('?vue=3mois')
+  })
+
+  it('retire le paramètre en revenant au calendrier depuis la vue 3 mois', () => {
+    renderClient({ vueInitiale: 'TROIS_MOIS' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
+    expect(window.location.search).toBe('')
+  })
+})
+
+/**
+ * Finding final 3 — `occupations` est bien effacé par `doitEffacerOccupations`
+ * quand on bascule CALENDRIER -> TROIS_MOIS, mais `BoutonAgenda` reste monté
+ * au même endroit de l'arbre à travers cette bascule : son verdict interne
+ * (« n jours occupés… ») survivait, lui, au changement de plage — describant
+ * une vérification qui ne portait plus sur ce qui s'affiche.
+ */
+describe('le bouton agenda se reinitialise quand la plage verifiee change', () => {
+  beforeEach(() => {
+    verifierAgenda.mockReset()
+    window.history.replaceState(null, '', '/saisie/2026-03')
+  })
+  afterEach(cleanup)
+
+  it('efface le verdict du bouton en passant du calendrier a la vue 3 mois', async () => {
+    verifierAgenda.mockResolvedValue({ ok: true, jours: ['2026-03-04', '2026-03-12'] })
+    renderClient({ agendaConnecte: true })
+
+    fireEvent.click(screen.getByRole('button', { name: /Vérifier l’agenda/ }))
+    await screen.findByText(/2 jours occupés/)
+
+    ouvrirTroisMois()
+
+    // Pas de compte perime, pas de « aucune occupation » perime : le bouton
+    // fraichement remonte est de nouveau INACTIF, sans aucun `role="status"`.
+    expect(screen.queryByText(/jours occupés/)).toBeNull()
+    expect(screen.queryByText(/Aucune occupation/)).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('efface aussi un verdict « aucune occupation » perime au changement de vue', async () => {
+    verifierAgenda.mockResolvedValue({ ok: true, jours: [] })
+    renderClient({ agendaConnecte: true })
+
+    fireEvent.click(screen.getByRole('button', { name: /Vérifier l’agenda/ }))
+    await screen.findByText(/Aucune occupation/)
+
+    ouvrirTroisMois()
+
+    expect(screen.queryByText(/Aucune occupation/)).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
   })
 })

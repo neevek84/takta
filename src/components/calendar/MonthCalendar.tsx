@@ -236,6 +236,7 @@ export function MonthCalendar({
   entries,
   autresLignes,
   toutLeMois,
+  densite = 'NORMALE',
   busyDates = AUCUNE_OCCUPATION,
   aujourdhui,
   onApply,
@@ -250,6 +251,24 @@ export function MonthCalendar({
   /** autres prestations, affichées en lecture seule quand `toutLeMois` */
   autresLignes: LineForGrid[]
   toutLeMois: boolean
+  /**
+   * Le calibre de la grille.
+   *
+   * `COMPACTE` sert la vue 3 mois. Elle ne touche qu'aux libellés : elle
+   * retire ce qui ne survit pas à une case plus petite — les libellés
+   * d'heures et de créneau — et garde ce qui porte l'information : l'aplat,
+   * le numéro du jour, les marqueurs. **La réduction de taille elle-même
+   * n'est pas son fait** : c'est la grille à trois colonnes de `SaisieClient`
+   * (`grid-cols-3`), qui ramène la case de ~145 à ~55 points en tenant trois
+   * grilles côte à côte — cette prop ne touche ni taille, ni marge, ni
+   * espacement.
+   *
+   * **Une prop et non un second composant.** Deux dessins de la même grille
+   * divergeraient au premier correctif, et une bascule de vue montrerait alors
+   * deux fois le même fait de deux façons — c'est ce que la note d'`Aplat` dit
+   * déjà du tableau et du calendrier.
+   */
+  densite?: 'NORMALE' | 'COMPACTE'
   /**
    * jours du mois porteurs d'une occupation dans l'agenda externe.
    *
@@ -648,6 +667,7 @@ export function MonthCalendar({
                 slots={slots}
                 line={line}
                 couleur={couleur}
+                densite={densite}
                 consommerGlissement={consommerGlissement}
                 onClick={() => void cliquer(jour.date)}
                 onFormulaire={() => onFormulaire(jour.date, etatDe(jour.date))}
@@ -743,6 +763,7 @@ function Case({
   slots,
   line,
   couleur,
+  densite,
   consommerGlissement,
   onClick,
   onFormulaire,
@@ -770,6 +791,8 @@ function Case({
   line: LineForGrid
   /** teinte de la prestation saisie, celle de l'aplat */
   couleur: LineColor
+  /** voir la documentation de la prop du même nom sur `MonthCalendar` */
+  densite: 'NORMALE' | 'COMPACTE'
   consommerGlissement: () => boolean
   onClick: () => void
   onFormulaire: () => void
@@ -808,6 +831,11 @@ function Case({
 
   const forme = formeDeLaCase(etat, saisies, slots)
   const remplie = forme.kind !== 'AUCUNE'
+
+  // La densité compacte perd le libellé — les valeurs en heures ou en
+  // créneau ne survivent pas à la réduction —, jamais l'aplat qui le remplace
+  // déjà à l'œil : `remplie` reste vrai, seul le chiffre disparaît.
+  const valeur = densite === 'COMPACTE' ? '' : contenu(etat, slots, line, saisies)
 
   // Le passé est froid, le futur est chaud : le prévisionnel prend sa teinte
   // au lieu d'emprunter celle de la prestation. Le tireté de la case porte la
@@ -957,7 +985,7 @@ function Case({
         {/* Le numéro du jour et la valeur sont deux nœuds distincts : les mêler
             rendrait « la case est vide » indistinguable de « la case affiche 10 ». */}
         <span data-testid={`valeur-${jour.date}`} className="relative leading-tight">
-          {contenu(etat, slots, line, saisies)}
+          {valeur}
         </span>
       </button>
       {autres.map((a) => {

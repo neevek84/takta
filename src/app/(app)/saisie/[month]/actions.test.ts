@@ -12,7 +12,16 @@ vi.mock('@/auth', () => ({
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 
 // eslint-disable-next-line import/first -- `vi.mock` est hissé au-dessus des imports.
-import { appliquerCase, remplirMois, saveCell, validerJoursPasses, viderMois } from './actions'
+import {
+  appliquerCase,
+  compterPrevisionnelDeLaLigne,
+  genererCraAction,
+  remplirMois,
+  saveCell,
+  validerJoursPasses,
+  verifierAgenda,
+  viderMois,
+} from './actions'
 import { updateSettings } from '@/services/settings'
 
 /** Mois précédent : ses jours sont échus quelle que soit la date d'exécution. */
@@ -305,5 +314,137 @@ describe('remplirMois et viderMois', () => {
       where: { userId: session.id, lineId: ligneVerrouillee, date: bornes(month) },
     })
     expect(apres).toBe(avant)
+  })
+})
+
+/**
+ * Tâche 9 — le bouton « Générer le CRA » de la Saisie. Les deux actions
+ * partagent la résolution ligne → mission (`resoudreMissionAffectee`, dans
+ * `cra-generation.ts`), déjà éprouvée par les tests de `genererCra` : ici on
+ * vérifie le branchement, pas la logique métier qu'il délègue.
+ */
+describe('compterPrevisionnelDeLaLigne', () => {
+  // `moisCase` porte déjà le prévisionnel d'autres tests de ce fichier, sur la
+  // même mission : on vérifie l'écart qu'une saisie de plus y ajoute, pas un
+  // total qu'un autre test ferait varier.
+  it('compte le prévisionnel de la mission derrière la ligne, sur le mois demandé', async () => {
+    const avant = await compterPrevisionnelDeLaLigne({ lineId: ligneOuverte, month: moisCase })
+
+    await prisma.timeEntry.create({
+      data: {
+        lineId: ligneOuverte,
+        userId: session.id,
+        date: new Date(`${moisCase}-20T00:00:00.000Z`),
+        minutes: 240,
+        kind: 'PREVISIONNEL',
+      },
+    })
+
+    expect(await compterPrevisionnelDeLaLigne({ lineId: ligneOuverte, month: moisCase })).toBe(
+      avant + 1,
+    )
+  })
+
+  // Le client ne décide pas seul sur quelle mission on lit : une ligne à
+  // laquelle l'utilisateur n'est pas affecté ne rend rien, comme `genererCra`
+  // refuserait d'y écrire.
+  it('ne compte rien pour une ligne à laquelle l utilisateur courant n est pas affecté', async () => {
+    const autre = await prisma.user.create({
+      data: { email: 'autre-actions@test.local', name: 'Autre', passwordHash: 'x' },
+    })
+    const c = await createClient('ACTIONS autre client')
+    const m = await createMission({ clientId: c.id, label: 'Mission autrui' })
+    const ligneAutrui = (
+      await createLine({
+        missionId: m.id,
+        userId: autre.id,
+        label: 'Autrui',
+        soldCentiemes: 3000,
+        tjmCents: 0,
+      })
+    ).id
+    await prisma.timeEntry.create({
+      data: {
+        lineId: ligneAutrui,
+        userId: autre.id,
+        date: new Date(`${moisCase}-21T00:00:00.000Z`),
+        minutes: 480,
+        kind: 'PREVISIONNEL',
+      },
+    })
+
+    expect(await compterPrevisionnelDeLaLigne({ lineId: ligneAutrui, month: moisCase })).toBe(0)
+  })
+})
+
+/**
+ * Tâche 11 — le seul point d'entrée par lequel la Saisie interroge l'agenda,
+ * et seulement au clic. La borne protège d'une plage forgée : aucune vue
+ * n'affiche plus de trois mois, une requête qui en réclame dix ans ne doit
+ * pas brûler le quota Google en un seul appel.
+ */
+describe('verifierAgenda', () => {
+  it('refuse une plage de plus de trois mois, sans interroger l agenda', async () => {
+    const resultat = await verifierAgenda({ du: '2020-01-01', au: '2020-12-31' })
+    expect(resultat).toEqual({ ok: false, raison: 'ECHEC' })
+  })
+
+  it('refuse une plage inversée', async () => {
+    const resultat = await verifierAgenda({ du: '2026-03-31', au: '2026-03-01' })
+    expect(resultat).toEqual({ ok: false, raison: 'ECHEC' })
+  })
+
+  // La plage passe la borne (trois mois pile) : l'action va bien jusqu'à
+  // l'agenda, qui dit ici qu'aucun connecteur n'est enregistré pour cet
+  // utilisateur de test.
+  it('interroge l agenda pour une plage de trois mois au plus', async () => {
+    const resultat = await verifierAgenda({ du: '2026-03-01', au: '2026-05-31' })
+    expect(resultat).toEqual({ ok: false, raison: 'PAS_DE_CONNECTEUR' })
+  })
+})
+
+describe('genererCraAction', () => {
+  const moisGeneration = moisDecale(3)
+
+  it('traite le prévisionnel selon le choix, et ouvre le CRA', async () => {
+    const date = `${moisGeneration}-05`
+    await prisma.timeEntry.create({
+      data: {
+        lineId: ligneOuverte,
+        userId: session.id,
+        date: new Date(`${date}T00:00:00.000Z`),
+        minutes: 480,
+        kind: 'PREVISIONNEL',
+      },
+    })
+    expect(await compterPrevisionnelDeLaLigne({ lineId: ligneOuverte, month: moisGeneration })).toBe(1)
+
+    const resultat = await genererCraAction({
+      lineId: ligneOuverte,
+      month: moisGeneration,
+      previsionnel: 'VALIDER',
+    })
+
+    expect(resultat.ok).toBe(true)
+    if (resultat.ok) expect(resultat.previsionnelTraite).toBe(1)
+
+    const ecrite = await prisma.timeEntry.findFirst({
+      where: { userId: session.id, lineId: ligneOuverte, date: new Date(`${date}T00:00:00.000Z`) },
+      select: { kind: true },
+    })
+    expect(ecrite?.kind).toBe('REALISE')
+  })
+
+  // M5 (le principe qui traverse tout le produit) : un mois déjà validé se
+  // refuse, il ne se régénère pas en silence.
+  it('refuse un mois déjà validé', async () => {
+    const resultat = await genererCraAction({
+      lineId: ligneVerrouillee,
+      month,
+      previsionnel: 'SUPPRIMER',
+    })
+
+    expect(resultat.ok).toBe(false)
+    if (!resultat.ok) expect(resultat.raison).toBe('MOIS_VALIDE')
   })
 })

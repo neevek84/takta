@@ -25,7 +25,7 @@ const TRAVAIL: { href: string; label: string; icone: Icone }[] = [
   { href: '/saisie', label: 'Saisie', icone: IconeSaisie },
   { href: '/charge', label: 'Charge', icone: IconeCharge },
   { href: '/missions', label: 'Missions', icone: IconeMissions },
-  { href: '/cra', label: 'CRA', icone: IconeCra },
+  { href: '/cra', label: 'Suivi CRA', icone: IconeCra },
 ]
 
 /**
@@ -95,7 +95,8 @@ export const RAIL_MEDIA = '(min-width: 48rem)'
  * points : posé à côté de l'icône, le libellé demandait 552 points de largeur
  * intrinsèque et se peignait hors de sa propre boîte de clic, sur l'onglet
  * voisin. Empilé, corps ramené à 10 points et rembourrage à un demi-pas, le
- * budget retombe à 302 points — mesuré par `NavRail.test.tsx`, pas supposé.
+ * budget retombe à 329,5 points — mesuré par `NavRail.test.tsx`, pas supposé.
+ * « Suivi CRA », le plus long des cinq libellés, y tient encore.
  */
 function classesDuLien(actif: boolean, onglet = false): string {
   return cn(

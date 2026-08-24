@@ -7,13 +7,16 @@ const AGENDA_PRINCIPAL = 'primary'
 
 const JOUR_MS = 86_400_000
 
-function monthBoundsIso(month: string): { startIso: string; endIso: string } {
-  const [y, m] = month.split('-').map(Number) as [number, number]
-  // `Date.UTC(y, 12, 1)` bascule sur janvier de l'année suivante : décembre
-  // n'a pas besoin d'un cas particulier, et n'en aura jamais.
+/**
+ * `startIso` au début du jour `du`, `endIso` au début du lendemain de `au` —
+ * borne ouverte à droite, comme le mois qu'elle remplace.
+ */
+function bornesIso(args: { du: string; au: string }): { startIso: string; endIso: string } {
+  const debutDu = new Date(`${args.du}T00:00:00.000Z`).getTime()
+  const debutAu = new Date(`${args.au}T00:00:00.000Z`).getTime()
   return {
-    startIso: new Date(Date.UTC(y, m - 1, 1)).toISOString(),
-    endIso: new Date(Date.UTC(y, m, 1)).toISOString(),
+    startIso: new Date(debutDu).toISOString(),
+    endIso: new Date(debutAu + JOUR_MS).toISOString(),
   }
 }
 
@@ -38,90 +41,85 @@ function joursCouverts(interval: BusyInterval): string[] {
 }
 
 /**
- * Les jours du mois porteurs d'une occupation dans l'agenda principal.
+ * Au-delà de ce délai, l'appel rend un échec plutôt que d'attendre.
  *
- * **Ne lève jamais.** Compte non connecté, appel en échec, appel expiré,
- * autorisation révoquée, clé de chiffrement perdue : la liste est vide et la
- * grille s'affiche sans marques. La détection de conflit est un confort, pas
- * une dépendance — la saisie doit continuer de fonctionner un jour où Google
- * est en panne.
- *
- * Les journées sont découpées en temps universel, comme les bornes du mois :
- * une occupation qui commence après 23 h locales en hiver — minuit UTC — se
- * lit donc sur le lendemain. Le repère reste juste à la journée près pour tout
- * ce qui se passe en journée de travail ; l'affiner demanderait de porter le
- * fuseau jusqu'ici, ce qui n'a pas été tranché pour ce lot.
- *
- * Aucun cache en v1 : un appel `freeBusy` est bon marché, et un cache
- * introduirait une fraîcheur à arbitrer.
- */
-/**
- * Au-delà de ce délai, la grille s'affiche sans marquage.
- *
- * Le `catch` ci-dessous protège d'un agenda **en panne**. Il ne protège de
- * rien contre un agenda **lent**, qui répondra — dans trente secondes — et
- * retiendra d'ici là l'affichage de la saisie. Une panne franche était le cas
- * facile ; la lenteur est celui qui se voit à l'usage.
- *
- * Le marquage est une information, jamais un blocage : il ne vaut pas d'être
- * attendu.
+ * Le `catch` de `getBusyRange` protège d'un agenda **en panne**. Il ne
+ * protège de rien contre un agenda **lent**, qui répondra — dans trente
+ * secondes — et retiendrait d'ici là l'appelant. Une panne franche était le
+ * cas facile ; la lenteur est celui qui se voit à l'usage.
  */
 export const DELAI_OCCUPATION_MS = 3000
 
-export async function getBusyDays(
+export type RaisonAgenda = 'PAS_DE_CONNECTEUR' | 'ECHEC'
+
+export type ResultatAgenda = { ok: true; jours: string[] } | { ok: false; raison: RaisonAgenda }
+
+/**
+ * Les jours d'une plage porteurs d'une occupation dans l'agenda principal.
+ *
+ * **Ne lève jamais** — la garantie n'a pas changé. Ce qui change, c'est
+ * qu'elle sait désormais dire *pourquoi* elle ne rend rien.
+ *
+ * Tant que la lecture était automatique, une liste vide se lisait « rien à
+ * signaler » et suffisait : le repère apparaissait ou non, et c'était un
+ * confort. Depuis qu'elle n'a lieu que si l'utilisateur **clique**, une liste
+ * vide qui signifie « Google n'a pas répondu » est un mensonge : il a demandé,
+ * il doit obtenir une réponse honnête.
+ *
+ * Les journées sont découpées en temps universel, comme les bornes de la
+ * plage : une occupation qui commence après 23 h locales en hiver — minuit
+ * UTC — se lit donc sur le lendemain. Le repère reste juste à la journée près
+ * pour tout ce qui se passe en journée de travail ; l'affiner demanderait de
+ * porter le fuseau jusqu'ici, ce qui n'a pas été tranché pour ce lot.
+ */
+export async function getBusyRange(
   userId: string,
-  month: string,
-  deps: {
-    connector?: CalendarConnector | null
-    fetchFn?: FetchLike
-    delaiMs?: number
-  } = {},
-): Promise<string[]> {
+  args: { du: string; au: string },
+  deps: { connector?: CalendarConnector | null; fetchFn?: FetchLike; delaiMs?: number } = {},
+): Promise<ResultatAgenda> {
   const delaiMs = deps.delaiMs ?? DELAI_OCCUPATION_MS
 
   try {
     return await Promise.race([
-      lireOccupation(userId, month, deps),
-      new Promise<string[]>((_, rejeter) =>
+      lireOccupation(userId, args, deps),
+      new Promise<ResultatAgenda>((_, rejeter) =>
         setTimeout(() => rejeter(new Error('Délai dépassé')), delaiMs).unref?.(),
       ),
     ])
   } catch {
-    // Le seul `catch` muet que ce service s'autorise, et la raison d'être de
-    // sa signature : l'appelant est une page de saisie qui doit s'afficher.
-    return []
+    // Le seul `catch` muet que ce service s'autorise — mais il ne rend plus
+    // une liste vide indistinguable d'une plage libre.
+    return { ok: false, raison: 'ECHEC' }
   }
 }
 
 async function lireOccupation(
   userId: string,
-  month: string,
+  args: { du: string; au: string },
   deps: { connector?: CalendarConnector | null; fetchFn?: FetchLike },
-): Promise<string[]> {
-  {
-    const connector =
-      deps.connector !== undefined
-        ? deps.connector
-        : await resolveConnector(userId, {
-            ...(deps.fetchFn === undefined ? {} : { fetchFn: deps.fetchFn }),
-          })
-    if (connector === null) return []
+): Promise<ResultatAgenda> {
+  const connector =
+    deps.connector !== undefined
+      ? deps.connector
+      : await resolveConnector(userId, {
+          ...(deps.fetchFn === undefined ? {} : { fetchFn: deps.fetchFn }),
+        })
+  if (connector === null) return { ok: false, raison: 'PAS_DE_CONNECTEUR' }
 
-    const { startIso, endIso } = monthBoundsIso(month)
-    const plages = await connector.freeBusy({
-      startIso,
-      endIso,
-      // Le calendrier dédié est passé explicitement pour que le connecteur
-      // l'écarte : l'exclusion est une propriété vérifiable, pas un oubli.
-      calendarIds: [AGENDA_PRINCIPAL, connector.dedicatedCalendarId],
-    })
+  const { startIso, endIso } = bornesIso(args)
+  const plages = await connector.freeBusy({
+    startIso,
+    endIso,
+    // Le calendrier dédié est passé explicitement pour que le connecteur
+    // l'écarte : l'exclusion est une propriété vérifiable, pas un oubli.
+    calendarIds: [AGENDA_PRINCIPAL, connector.dedicatedCalendarId],
+  })
 
-    const jours = new Set<string>()
-    for (const plage of plages) {
-      for (const jour of joursCouverts(plage)) {
-        if (jour.startsWith(month)) jours.add(jour)
-      }
+  const jours = new Set<string>()
+  for (const plage of plages) {
+    for (const jour of joursCouverts(plage)) {
+      if (args.du <= jour && jour <= args.au) jours.add(jour)
     }
-    return [...jours].sort()
   }
+  return { ok: true, jours: [...jours].sort() }
 }

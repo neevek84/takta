@@ -12,6 +12,7 @@ import {
   Hourglass,
   Info,
   Minus,
+  Receipt,
   Send,
   Settings,
   TriangleAlert,
@@ -80,6 +81,8 @@ export const IconeAbsence = fabrique(Minus, 'absence')
 export const IconeBrouillon = fabrique(CircleDashed, 'brouillon')
 /** Le CRA parti chez le client. */
 export const IconeEnvoye = fabrique(Send, 'envoye')
+/** Le CRA facturé — un fait saisi à la main, distinct du cycle du document. */
+export const IconeFacture = fabrique(Receipt, 'facture')
 
 /**
  * Les deux marqueurs de la case du calendrier. Plus petits : ils partagent la

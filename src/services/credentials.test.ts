@@ -8,6 +8,7 @@ import {
   updateAccessToken,
   setCalendarId,
   revokeCredential,
+  aUnConnecteurAgenda,
   saveInstanceCredential,
   getInstanceCredential,
   readInstanceSecret,
@@ -215,6 +216,34 @@ describe('credentials', () => {
     expect(await prisma.providerCredential.count({})).toBe(0)
 
     process.env.CREDENTIALS_KEY = ancienne
+  })
+})
+
+/**
+ * Tâche 11 — la lecture locale dont `page.tsx` se sert pour savoir si un
+ * bouton « Vérifier l'agenda » a quelque chose à vérifier, sans jamais parler
+ * au réseau.
+ */
+describe('aUnConnecteurAgenda', () => {
+  it('rend faux quand le compte n est pas connecté', async () => {
+    expect(await aUnConnecteurAgenda(userId)).toBe(false)
+  })
+
+  it('rend vrai quand un calendrier est enregistré', async () => {
+    await saveCredential(userId, 'GOOGLE', TOKENS)
+    expect(await aUnConnecteurAgenda(userId)).toBe(true)
+  })
+
+  // Jetons présents, agenda absent : rien ne partira jamais (voir
+  // `resolveConnector`), et ce bouton ne doit pas prétendre le contraire.
+  it('rend faux quand les jetons existent sans calendrier choisi', async () => {
+    await saveCredential(userId, 'GOOGLE', { ...TOKENS, calendarId: '' })
+    expect(await aUnConnecteurAgenda(userId)).toBe(false)
+  })
+
+  it('ne lit pas la connexion d un autre utilisateur', async () => {
+    await saveCredential(autreId, 'GOOGLE', TOKENS)
+    expect(await aUnConnecteurAgenda(userId)).toBe(false)
   })
 })
 

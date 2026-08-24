@@ -1,5 +1,6 @@
 import { prisma } from '@/db/client'
 import { decryptSecret, encryptSecret, parseKey, SecretBoxError } from '@/core/crypto/secret-box'
+import { PROVIDER_GOOGLE } from '@/core/sync/policy'
 import { journalAvertissement } from '@/services/log'
 
 export interface ProviderTokens {
@@ -119,6 +120,20 @@ export async function getCredential(
     })
     return null
   }
+}
+
+/**
+ * Un connecteur d'agenda est-il configuré pour cet utilisateur ?
+ *
+ * Une lecture locale, sans réseau : aucun jeton n'est rafraîchi, aucun appel
+ * ne part vers Google — juste la présence d'un identifiant de calendrier déjà
+ * enregistré. `BoutonAgenda` s'en sert pour se masquer quand il n'y a rien à
+ * vérifier : un bouton qui échouerait à tous les coups n'apprendrait rien à
+ * personne.
+ */
+export async function aUnConnecteurAgenda(userId: string): Promise<boolean> {
+  const creds = await getCredential(userId, PROVIDER_GOOGLE)
+  return creds !== null && creds.calendarId !== ''
 }
 
 export async function updateAccessToken(

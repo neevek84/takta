@@ -2,12 +2,12 @@ import { requireUser } from '@/auth'
 import { getSettings } from '@/services/settings'
 import { listActiveLines } from '@/services/missions'
 import {
+  getEntriesRange,
   getLineEngagementTotals,
-  getMonthEntries,
   getPastForecastWithLockStatus,
 } from '@/services/time-entries'
-import { getBusyDays } from '@/services/availability'
-import { buildMonthDays } from '@/core/month/build'
+import { aUnConnecteurAgenda } from '@/services/credentials'
+import { buildMonthDays, shiftMonth } from '@/core/month/build'
 import { MonthNav } from '@/components/MonthNav'
 import { PageShell } from '@/components/ui/PageShell'
 import { PastForecastNotice } from './PastForecastNotice'
@@ -29,17 +29,34 @@ export default async function SaisiePage({
 
   const settings = await getSettings()
   const lines = await listActiveLines(user.id)
-  const entries = await getMonthEntries(user.id, month)
+
+  // Les deux mois suivants, pour la vue 3 mois. Construits toujours — ils ne
+  // coûtent aucune requête, `buildMonthDays` est un calcul pur — et lus en une
+  // seule requête de plage plutôt qu'en trois. Les vues calendrier et tableau
+  // continuent d'afficher le premier mois seul (`days`) ; leurs composants
+  // filtrent déjà les saisies par date, donc leur passer la plage entière ne
+  // leur fait rien voir de plus.
+  const mois = [month, shiftMonth(month, 1), shiftMonth(month, 2)]
+  const joursParMois = mois.map((m) => buildMonthDays(m, settings.workingDays, settings.holidays))
+  const dernierMois = joursParMois[2]!
+  const entries = await getEntriesRange(user.id, {
+    du: `${mois[0]}-01`,
+    au: dernierMois[dernierMois.length - 1]!.date,
+  })
+
   // L'engagement se lit sur toute la durée de la ligne, pas sur le mois affiché.
   const engagementTotals = await getLineEngagementTotals(
     user.id,
     lines.map((l) => l.id),
   )
-  const days = buildMonthDays(month, settings.workingDays, settings.holidays)
+  const days = joursParMois[0]!
 
-  // Une lecture d'occupation à l'ouverture du mois. Elle ne lève jamais : un
-  // agenda injoignable rend une liste vide et la page s'affiche normalement.
-  const busyDates = await getBusyDays(user.id, month)
+  // Plus aucune lecture d'agenda ici : douze mois parcourus ne coûtaient pas
+  // moins de douze appels freeBusy, pour un repère qu'on ne regardait peut-être
+  // jamais. C'est désormais `BoutonAgenda` qui lit, à la demande, et seulement
+  // sur la plage affichée (voir `actions.ts`). Cette lecture-ci est locale —
+  // aucun réseau — et ne dit qu'une chose : y a-t-il quelque chose à vérifier.
+  const agendaConnecte = await aUnConnecteurAgenda(user.id)
 
   // Rappel du prévisionnel échu : un simple encart, jamais une conversion
   // automatique — voir PastForecastNotice. Les deux chiffres viennent du même
@@ -57,9 +74,11 @@ export default async function SaisiePage({
         lockedCount={pastForecast.lockedCount}
       />
       <SaisieClient
-        vueInitiale={vue === 'tableau' ? 'TABLEAU' : 'CALENDRIER'}
+        vueInitiale={vue === '3mois' ? 'TROIS_MOIS' : vue === 'tableau' ? 'TABLEAU' : 'CALENDRIER'}
         month={month}
         days={days}
+        mois={mois}
+        joursParMois={joursParMois}
         lines={lines}
         entries={entries}
         engagementTotals={engagementTotals}
@@ -75,9 +94,10 @@ export default async function SaisiePage({
         // saisie déjà écrite porte ses propres bornes, figées à l'écriture.
         journeeDebutMinute={settings.journeeDebutMinute}
         journeeFinMinute={settings.journeeFinMinute}
-        // Un repère, jamais un verrou : la liste est vide quand l'agenda n'est
-        // pas connecté ou pas joignable, et la saisie fonctionne à l'identique.
-        busyDates={busyDates}
+        // Une lecture locale, sans réseau : dit seulement si un connecteur
+        // existe, pour que `BoutonAgenda` sache s'effacer plutôt que d'offrir
+        // une vérification qui échouerait à tous les coups.
+        agendaConnecte={agendaConnecte}
         // Le même jour que celui du rappel de prévisionnel échu, et calculé
         // une seule fois : la case du jour marque la frontière entre le
         // réalisé et le prévisionnel, et les deux ne peuvent pas la placer

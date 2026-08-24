@@ -5,6 +5,7 @@ import { isLocked } from '@/core/cra/state-machine'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { entryBounds } from '@/core/time/slots'
 import { computeEngagement } from '@/core/engagement/compute'
+import { joursDuMois } from '@/core/cra/document'
 import { getSettings } from './settings'
 import { enqueueTimeEntry } from './sync/outbox'
 import { appendAudit, actorOf } from './audit'
@@ -26,27 +27,14 @@ export interface MonthEntry {
   minutesParJour: number
 }
 
-function monthBounds(month: string): { start: Date; end: Date } {
-  const [y, m] = month.split('-').map(Number) as [number, number]
-  return {
-    start: new Date(Date.UTC(y, m - 1, 1)),
-    end: new Date(Date.UTC(y, m, 1)),
-  }
-}
-
 export function toIsoDate(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
 
-export async function getMonthEntries(userId: string, month: string): Promise<MonthEntry[]> {
-  const { start, end } = monthBounds(month)
+type TimeEntryRow = Awaited<ReturnType<typeof prisma.timeEntry.findMany>>[number]
 
-  const rows = await prisma.timeEntry.findMany({
-    where: { userId, date: { gte: start, lt: end } },
-    orderBy: { date: 'asc' },
-  })
-
-  return rows.map((r) => ({
+function versMonthEntry(r: TimeEntryRow): MonthEntry {
+  return {
     id: r.id,
     lineId: r.lineId,
     date: toIsoDate(r.date),
@@ -58,7 +46,34 @@ export async function getMonthEntries(userId: string, month: string): Promise<Mo
     startMinute: r.startMinute,
     endMinute: r.endMinute,
     minutesParJour: r.minutesParJour,
-  }))
+  }
+}
+
+/**
+ * Les saisies d'une plage de dates, bornes incluses.
+ *
+ * La vue 3 mois lit 90 jours en **une** requête : trois lectures de mois
+ * feraient payer l'écran au nombre de mois affichés, à chaque bascule de vue.
+ */
+export async function getEntriesRange(
+  userId: string,
+  args: { du: string; au: string },
+): Promise<MonthEntry[]> {
+  const start = new Date(`${args.du}T00:00:00.000Z`)
+  // Borne ouverte à droite : le lendemain de `au`, à minuit.
+  const end = new Date(Date.parse(`${args.au}T00:00:00.000Z`) + 86_400_000)
+
+  const rows = await prisma.timeEntry.findMany({
+    where: { userId, date: { gte: start, lt: end } },
+    orderBy: { date: 'asc' },
+  })
+  return rows.map(versMonthEntry)
+}
+
+/** Le mois, exprimé dans la plage : une seule règle de bornes, pas deux. */
+export async function getMonthEntries(userId: string, month: string): Promise<MonthEntry[]> {
+  const jours = joursDuMois(month)
+  return await getEntriesRange(userId, { du: jours[0]!, au: jours[jours.length - 1]! })
 }
 
 export interface LineEngagementEntry {

@@ -5,16 +5,24 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 /**
  * La page est un composant serveur : elle appelle la session et les services
  * avant de rendre. On leur substitue des doubles — le sujet du test est le
- * câblage, et surtout ce qui se passe quand la lecture d'occupation ne rend
- * rien : la page doit s'afficher et la saisie fonctionner à l'identique.
+ * câblage, et surtout que la page ne parle plus jamais à Google d'elle-même
+ * (voir la tâche G) : la saisie doit s'afficher et fonctionner à l'identique.
+ *
+ * `agendaEspion` double `@/services/availability` **en entier** — si la page
+ * importe encore quoi que ce soit de ce module, un appel s'y voit, quelle que
+ * soit la fonction appelée.
  */
-const { getBusyDays, appliquerCase } = vi.hoisted(() => ({
-  getBusyDays: vi.fn(),
+const { agendaEspion, aUnConnecteurAgenda, appliquerCase } = vi.hoisted(() => ({
+  agendaEspion: vi.fn(),
+  aUnConnecteurAgenda: vi.fn(),
   appliquerCase: vi.fn(),
 }))
 
 vi.mock('@/auth', () => ({ requireUser: async () => ({ id: 'u1', role: 'USER' as const }) }))
-vi.mock('@/services/availability', () => ({ getBusyDays }))
+vi.mock('@/services/availability', () => ({ getBusyRange: agendaEspion }))
+// La lecture qui remplace l'ancien appel automatique : locale, sans réseau —
+// voir `src/services/credentials.ts`.
+vi.mock('@/services/credentials', () => ({ aUnConnecteurAgenda }))
 vi.mock('@/services/settings', () => ({
   getSettings: async () => ({
     minutesParJour: 480,
@@ -40,7 +48,10 @@ vi.mock('@/services/missions', () => ({
   ],
 }))
 vi.mock('@/services/time-entries', () => ({
-  getMonthEntries: async () => [],
+  // Remplace `getMonthEntries` : la page lit désormais une seule plage de
+  // trois mois plutôt qu'un seul mois, pour construire les trois vues sans
+  // tripler la requête.
+  getEntriesRange: async () => [],
   getLineEngagementTotals: async () => ({ l1: [] }),
   getPastForecastWithLockStatus: async () => ({ entries: [], lockedCount: 0 }),
 }))
@@ -50,8 +61,15 @@ vi.mock('./actions', () => ({
   remplirMois: vi.fn(),
   viderMois: vi.fn(),
   validerJoursPasses: vi.fn(),
+  verifierAgenda: vi.fn(),
 }))
-vi.mock('@/components/MonthNav', () => ({ MonthNav: () => null }))
+// `monthLabel` reste réel : la vue 3 mois de `SaisieClient` s'en sert pour
+// nommer chacune de ses trois grilles, et un mock complet le ferait
+// disparaître avec `MonthNav`.
+vi.mock('@/components/MonthNav', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/MonthNav')>()),
+  MonthNav: () => null,
+}))
 
 // eslint-disable-next-line import/first -- `vi.mock` est hissé au-dessus des imports.
 import SaisiePage from './page'
@@ -60,33 +78,29 @@ async function rendre(): Promise<void> {
   render(await SaisiePage({ params: Promise.resolve({ month: '2026-03' }), searchParams: Promise.resolve({}) }))
 }
 
-describe('page de saisie — occupation de l agenda', () => {
+describe('page de saisie — plus de lecture automatique de l agenda', () => {
   beforeEach(() => {
-    getBusyDays.mockReset()
+    agendaEspion.mockReset()
+    aUnConnecteurAgenda.mockReset().mockResolvedValue(false)
     appliquerCase.mockReset()
     window.localStorage.clear()
   })
   afterEach(cleanup)
 
-  it('lit l occupation du mois affiché, pour l utilisateur connecté', async () => {
-    getBusyDays.mockResolvedValue([])
-    await rendre()
-    expect(getBusyDays).toHaveBeenCalledWith('u1', '2026-03')
+  // Le test qui porte toute la section G. Parcourir douze mois coutait douze
+  // appels freeBusy, pour un repere qu'on ne regardait peut-etre pas.
+  it('n appelle pas Google en ouvrant le mois', async () => {
+    await SaisiePage({
+      params: Promise.resolve({ month: '2026-03' }),
+      searchParams: Promise.resolve({}),
+    })
+
+    expect(agendaEspion).not.toHaveBeenCalled()
   })
 
-  it('fait descendre le marquage jusqu à la surface de saisie', async () => {
-    getBusyDays.mockResolvedValue(['2026-03-12'])
-    await rendre()
-
-    expect(screen.getByTestId('case-2026-03-12').getAttribute('data-busy')).toBe('true')
-    expect(screen.getByTestId('case-2026-03-13').getAttribute('data-busy')).toBeNull()
-  })
-
-  // La promesse du lot : une panne de Google ne bloque jamais la saisie.
-  it('affiche la grille sans marques et laisse saisir quand l agenda est injoignable', async () => {
-    // Ce que `getBusyDays` rend en cas de panne : une liste vide, jamais une
-    // exception.
-    getBusyDays.mockResolvedValue([])
+  // La promesse du lot ne change pas : l'absence de marquage n'empêche jamais
+  // de saisir, seule sa source change (un clic, plus le rendu de la page).
+  it('affiche la grille sans marques et laisse saisir normalement', async () => {
     appliquerCase.mockResolvedValue({ ok: true, state: { kind: 'JOURNEE' } })
     await rendre()
 
@@ -105,6 +119,21 @@ describe('page de saisie — occupation de l agenda', () => {
     )
     expect(screen.getByTestId('valeur-2026-03-12').textContent).toBe('1')
   })
+
+  it('offre le bouton de vérification quand un connecteur est configuré', async () => {
+    aUnConnecteurAgenda.mockResolvedValue(true)
+    await rendre()
+
+    expect(screen.getByRole('button', { name: /Vérifier l’agenda/ })).toBeDefined()
+  })
+
+  // Un bouton qui échouerait à tous les coups n'apprendrait rien à personne.
+  it('n offre pas le bouton quand aucun connecteur n est configuré', async () => {
+    aUnConnecteurAgenda.mockResolvedValue(false)
+    await rendre()
+
+    expect(screen.queryByRole('button', { name: /Vérifier l’agenda/ })).toBeNull()
+  })
 })
 
 /**
@@ -114,7 +143,7 @@ describe('page de saisie — occupation de l agenda', () => {
  */
 describe('page de saisie — le gabarit commun', () => {
   beforeEach(() => {
-    getBusyDays.mockReset().mockResolvedValue([])
+    aUnConnecteurAgenda.mockReset().mockResolvedValue(false)
     window.localStorage.clear()
   })
   afterEach(cleanup)
@@ -138,7 +167,71 @@ describe('page de saisie — le gabarit commun', () => {
     // la lit dans `PageShell.tsx`, et un écran qui déclarerait la sienne
     // mesurerait un budget que personne n'applique.
     const principal = container.querySelector('main')!
-    expect(principal.className).toContain('max-w-5xl')
-    expect(principal.className).toContain('p-6')
+    expect(principal.className).toContain('max-w-[100rem]')
+    expect(principal.className).toContain('p-4')
+  })
+})
+
+/**
+ * Tâche 14 — la vue 3 mois : le mois choisi et les deux suivants, en grilles
+ * compactes côte à côte. Atteinte par `?vue=3mois`, exactement comme
+ * `?vue=tableau` l'est déjà.
+ */
+describe('page de saisie — la vue 3 mois', () => {
+  beforeEach(() => {
+    agendaEspion.mockReset()
+    aUnConnecteurAgenda.mockReset().mockResolvedValue(false)
+    appliquerCase.mockReset()
+    window.localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  async function rendreEnTroisMois(month: string): Promise<void> {
+    render(
+      await SaisiePage({
+        params: Promise.resolve({ month }),
+        searchParams: Promise.resolve({ vue: '3mois' }),
+      }),
+    )
+  }
+
+  it('resout la vue 3 mois depuis l adresse', async () => {
+    await rendreEnTroisMois('2026-03')
+
+    expect(screen.getByRole('button', { name: '3 mois' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+  })
+
+  it('montre le mois choisi et les deux suivants', async () => {
+    await rendreEnTroisMois('2026-11')
+
+    expect(screen.getByText('novembre 2026')).toBeTruthy()
+    expect(screen.getByText('décembre 2026')).toBeTruthy()
+    // Le passage d'année n'a pas de cas particulier : `shiftMonth` le gère.
+    expect(screen.getByText('janvier 2027')).toBeTruthy()
+  })
+
+  it('ecrit a la bonne date quand on clique dans le troisieme mois', async () => {
+    appliquerCase.mockResolvedValue({ ok: true, state: { kind: 'JOURNEE' } })
+    await rendreEnTroisMois('2026-03')
+
+    // La troisième grille est mai : cliquer là doit écrire sur mai, pas sur
+    // le mois choisi ni sur celui du milieu.
+    fireEvent.click(screen.getByTestId('case-2026-05-12'))
+
+    await waitFor(() =>
+      expect(appliquerCase).toHaveBeenCalledWith(
+        expect.objectContaining({ date: '2026-05-12' }),
+      ),
+    )
+  })
+
+  // Vingt et une colonnes ne tiennent pas sur un téléphone. Le calendrier
+  // reste la surface de saisie mobile.
+  it('n est pas atteignable sous md', async () => {
+    await rendreEnTroisMois('2026-03')
+
+    expect(screen.getByRole('button', { name: '3 mois' }).className).toContain('hidden md:')
   })
 })

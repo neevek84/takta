@@ -1,4 +1,5 @@
 import { prisma } from '@/db/client'
+import type { Prisma } from '@prisma/client'
 import {
   annulerPrevisionnelDuMois,
   compterPrevisionnelParMission,
@@ -9,6 +10,7 @@ import { applyTransition, type CraTransition } from '@/core/cra/state-machine'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import type { SignatureStatus } from '@/core/signature/connector'
 import type { CraStatus } from '@/core/types'
+import type { EtatSuivi } from '@/core/cra/etat-suivi'
 import type { AuditAction } from '@/core/audit/events'
 import { DOLIBARR } from './dolibarr/api'
 import { isDolibarrPushArmed } from './dolibarr/push'
@@ -134,10 +136,20 @@ type Row = {
   } | null
 }
 
-/** Identifiants des CRA dont le PDF signé est archivé, sans charger les octets. */
-async function craAvecArchive(craIds: string[]): Promise<Set<string>> {
+/**
+ * Identifiants des CRA dont le PDF signé est archivé, sans charger les octets.
+ *
+ * `client` par défaut sur `prisma` : le seul appelant qui a besoin d'y
+ * substituer une transaction empruntée est `getOrCreateCra`, pour rester sur
+ * la même connexion qu'elle tient déjà — les autres continuent de lire sur le
+ * client du module, sans y penser.
+ */
+async function craAvecArchive(
+  craIds: string[],
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<Set<string>> {
   if (craIds.length === 0) return new Set()
-  const lignes = await prisma.signatureRequest.findMany({
+  const lignes = await client.signatureRequest.findMany({
     where: { craId: { in: craIds }, NOT: { signedPdf: null } },
     select: { craId: true },
   })
@@ -190,40 +202,78 @@ function monthStart(month: string): Date {
  * s'il a créé. Consigner une ouverture à chaque affichage de la page noierait
  * le journal sous un événement qui ne raconte rien — le CRA n'est ouvert
  * qu'une fois.
+ *
+ * `tx` : `prisma` par défaut, pour tout appelant hors transaction — c'est le
+ * cas de tous les appelants historiques (l'écran CRA). `genererCra`
+ * (`cra-generation.ts`) est seul à passer une transaction à lui, la sienne :
+ * elle doit tomber avec le sort du prévisionnel qu'elle traite dans la même
+ * transaction, faute de quoi un prévisionnel supprimé sans CRA créé serait
+ * une perte que rien ne rattrape.
+ *
+ * **Pourquoi la même fonction, et pas deux.** Une seconde implémentation de
+ * « créer ou retrouver, en capturant la course sur le conflit d'unicité »
+ * divergerait de celle-ci au premier défaut corrigé d'un seul côté — c'est
+ * exactement ce qui a commencé à se produire (relu le 23 août 2026) : l'autre
+ * variante retentait l'insertion à l'aveugle, sans la lecture optimiste
+ * d'abord.
+ *
+ * **`sortie`, et pourquoi le journal ne s'écrit pas toujours ici.** Hors
+ * transaction empruntée, la création **est** la transaction : elle est déjà
+ * retenue au moment où `tx.cra.create` réussit, et le journal peut la
+ * consigner dans la foulée — c'est le comportement historique, inchangé.
+ * Mais dans une transaction empruntée, cette création n'est qu'une étape
+ * parmi d'autres et peut encore être annulée par la suite ; `appendAudit`
+ * passe en outre par `prisma`, jamais par `tx` — l'appeler pendant qu'une
+ * transaction tient encore la connexion la ferait attendre indéfiniment
+ * (rejoué nulle part ailleurs dans ce dépôt, où le journal s'écrit toujours
+ * **après** la transaction qu'il rapporte). La fonction ne consigne donc rien
+ * elle-même dans ce cas ; `sortie.cree`, rempli si fourni, dit à l'appelant
+ * s'il doit le faire lui-même, une fois SA transaction validée.
  */
 export async function getOrCreateCra(
   userId: string,
   missionId: string,
   month: string,
+  tx: Prisma.TransactionClient | typeof prisma = prisma,
+  sortie?: { cree: boolean },
 ): Promise<CraView> {
   const cle = { missionId_userId_month: { missionId, userId, month: monthStart(month) } }
 
-  const existant = await prisma.cra.findUnique({ where: cle, include: WITH_MISSION })
-  if (existant !== null) return toView(existant, await craAvecArchive([existant.id]))
+  const existant = await tx.cra.findUnique({ where: cle, include: WITH_MISSION })
+  if (existant !== null) {
+    if (sortie) sortie.cree = false
+    return toView(existant, await craAvecArchive([existant.id], tx))
+  }
 
   let row
   try {
-    row = await prisma.cra.create({
+    row = await tx.cra.create({
       data: { missionId, userId, month: monthStart(month) },
       include: WITH_MISSION,
     })
   } catch {
-    // Course avec un autre rendu de la même page : le CRA existe désormais,
-    // et il n'a été « ouvert » qu'une fois — c'est l'autre rendu qui l'a
-    // consigné.
-    const relu = await prisma.cra.findUniqueOrThrow({ where: cle, include: WITH_MISSION })
-    return toView(relu, await craAvecArchive([relu.id]))
+    // Course avec un autre rendu de la même page — ou, dans une transaction
+    // empruntée, avec un autre appel qui aurait créé entre-temps : dans les
+    // deux cas, le CRA existe désormais, et il n'a été « ouvert » qu'une
+    // fois — ce n'est pas cet appel-ci qui l'a consigné.
+    const relu = await tx.cra.findUniqueOrThrow({ where: cle, include: WITH_MISSION })
+    if (sortie) sortie.cree = false
+    return toView(relu, await craAvecArchive([relu.id], tx))
   }
 
-  await appendAudit({
-    ...(await actorOf(userId)),
-    action: 'cra.ouvert',
-    entityType: 'Cra',
-    entityId: row.id,
-    payload: { missionId, month, status: row.status },
-  })
+  if (sortie) sortie.cree = true
 
-  return toView(row, await craAvecArchive([row.id]))
+  if (tx === prisma) {
+    await appendAudit({
+      ...(await actorOf(userId)),
+      action: 'cra.ouvert',
+      entityType: 'Cra',
+      entityId: row.id,
+      payload: { missionId, month, status: row.status },
+    })
+  }
+
+  return toView(row, await craAvecArchive([row.id], tx))
 }
 
 /**
@@ -373,39 +423,153 @@ export async function updateInvoiceTracking(
   return toView(row, await craAvecArchive([row.id]))
 }
 
-export async function listCras(userId: string, month: string): Promise<CraView[]> {
-  const rows = await prisma.cra.findMany({
-    where: { userId, month: monthStart(month) },
+/**
+ * Un CRA, complet, pour sa page de détail.
+ *
+ * Les fonctions de lot sont appelées avec un seul identifiant plutôt que
+ * réécrites pour l'unité : un second chemin de calcul finirait par diverger du
+ * premier, et la liste et le détail afficheraient alors deux chiffres pour le
+ * même CRA.
+ *
+ * `findFirstOrThrow` et non `findUnique` : le scope par `userId` fait partie
+ * de la requête, il n'est pas vérifié après coup. C'est ce qui garantit qu'on
+ * ne sert jamais le CRA d'un autre, même en connaissant son identifiant.
+ */
+export async function getCra(userId: string, craId: string): Promise<CraView> {
+  const row = await prisma.cra.findFirstOrThrow({
+    where: { id: craId, userId },
     include: WITH_MISSION,
-    orderBy: { mission: { label: 'asc' } },
-  })
-  const archives = await craAvecArchive(rows.map((r) => r.id))
-  // Une seule requête pour toute la liste : une par CRA ferait payer l'écran
-  // au nombre de missions.
-  const previsionnel = await compterPrevisionnelParMission({
-    userId,
-    missionIds: rows.map((r) => r.missionId),
-    month,
-  })
-  // Une seule lecture des correspondances pour toute la liste : `isDolibarrPushArmed`
-  // en ferait une par CRA, et l'écran en affiche autant que de missions.
-  const armees = await missionsArmeesPourDolibarr(rows.map((r) => r.missionId))
-  const syntheses = await syntheseParMission({
-    userId,
-    missionIds: rows.map((r) => r.missionId),
-    month,
   })
 
-  return rows.map((row) =>
-    // Un CRA déjà validé n'a plus rien à annoncer : son prévisionnel a été
-    // emporté au moment où il l'a été.
-    toView(
-      row,
-      archives,
-      row.status === 'VALIDE' ? 0 : (previsionnel.get(row.missionId) ?? 0),
-      armees.has(row.missionId),
-      syntheses.get(row.missionId) ?? SYNTHESE_VIDE,
-    ),
+  const month = row.month.toISOString().slice(0, 7)
+  const archives = await craAvecArchive([row.id])
+  const previsionnel = await compterPrevisionnelParMission({
+    userId,
+    missionIds: [row.missionId],
+    month,
+  })
+  const armees = await missionsArmeesPourDolibarr([row.missionId])
+  const syntheses = await syntheseParMission({ userId, missionIds: [row.missionId], month })
+
+  return toView(
+    row,
+    archives,
+    row.status === 'VALIDE' ? 0 : (previsionnel.get(row.missionId) ?? 0),
+    armees.has(row.missionId),
+    syntheses.get(row.missionId) ?? SYNTHESE_VIDE,
+  )
+}
+
+/**
+ * Les clauses Prisma d'un jeu d'états de suivi.
+ *
+ * `VALIDE` et `FACTURE` désignent tous deux des CRA au statut `VALIDE` : ils
+ * ne peuvent donc pas entrer dans le même `status: { in: … }`, sans quoi
+ * cocher « Validé » ramènerait exactement ce que « Facturé » décoché venait de
+ * masquer. C'est le piège de cet écran, et c'est pour cela que les deux
+ * portent une clause à eux.
+ */
+function clausesDesEtats(etats: EtatSuivi[]): Prisma.CraWhereInput[] {
+  const clauses: Prisma.CraWhereInput[] = []
+
+  const simples = etats.filter((e) => e !== 'VALIDE' && e !== 'FACTURE')
+  if (simples.length > 0) clauses.push({ status: { in: simples } })
+
+  // Validé **et pas encore facturé** : ni numéro ni date de facturation — une
+  // chaîne vide vaut absence, exactement comme `estFacture`. Sans ce
+  // `OR`, un `invoiceNumber: ''` repris d'ailleurs (rien ne le normalise à
+  // l'écriture) tombait hors des deux clauses à la fois : ni VALIDE, ni
+  // FACTURE, disparu de l'écran.
+  if (etats.includes('VALIDE')) {
+    clauses.push({
+      status: 'VALIDE',
+      OR: [{ invoiceNumber: null }, { invoiceNumber: '' }],
+      invoicedAt: null,
+    })
+  }
+
+  // Facturé : validé, plus un numéro non vide ou une date. Le miroir exact
+  // d'`estFacture`, écrit en SQL — les deux règles doivent bouger ensemble,
+  // chaîne vide comprise : elle ne compte pas comme un numéro ici non plus.
+  if (etats.includes('FACTURE')) {
+    clauses.push({
+      status: 'VALIDE',
+      OR: [
+        { AND: [{ NOT: { invoiceNumber: null } }, { NOT: { invoiceNumber: '' } }] },
+        { NOT: { invoicedAt: null } },
+      ],
+    })
+  }
+
+  return clauses
+}
+
+/**
+ * Les CRA du suivi : toutes périodes par défaut, filtrés par état.
+ *
+ * Le filtre est appliqué **en base** et non après lecture : cet écran est fait
+ * pour le jour où il y aura des centaines de lignes, et tout charger pour en
+ * jeter les neuf dixièmes ferait payer l'écran au nombre de mois travaillés.
+ *
+ * Le tri met le mois le plus récent en tête : c'est celui sur lequel on agit.
+ */
+export async function listCrasSuivi(
+  userId: string,
+  args: { etats: EtatSuivi[]; month?: string },
+): Promise<CraView[]> {
+  const clauses = clausesDesEtats(args.etats)
+  // Aucun état coché : la réponse est « rien », et elle ne coûte pas un
+  // aller-retour à la base pour l'apprendre.
+  if (clauses.length === 0) return []
+
+  const rows = await prisma.cra.findMany({
+    where: {
+      userId,
+      ...(args.month === undefined ? {} : { month: monthStart(args.month) }),
+      OR: clauses,
+    },
+    include: WITH_MISSION,
+    orderBy: [{ month: 'desc' }, { mission: { label: 'asc' } }],
+  })
+
+  const archives = await craAvecArchive(rows.map((r) => r.id))
+
+  // Les trois lectures de lot sont désormais faites **par mois** : leurs
+  // signatures prennent un mois unique, et la liste en couvre plusieurs. Une
+  // passe par mois distinct, et non une par CRA — l'écran ne doit pas payer au
+  // nombre de lignes.
+  const parMois = new Map<string, Row[]>()
+  for (const row of rows) {
+    const mois = row.month.toISOString().slice(0, 7)
+    const seau = parMois.get(mois)
+    if (seau === undefined) parMois.set(mois, [row])
+    else seau.push(row)
+  }
+
+  const vues: CraView[] = []
+  for (const [mois, lignes] of parMois) {
+    const missionIds = lignes.map((l) => l.missionId)
+    const previsionnel = await compterPrevisionnelParMission({ userId, missionIds, month: mois })
+    const armees = await missionsArmeesPourDolibarr(missionIds)
+    const syntheses = await syntheseParMission({ userId, missionIds, month: mois })
+
+    for (const row of lignes) {
+      vues.push(
+        toView(
+          row,
+          archives,
+          row.status === 'VALIDE' ? 0 : (previsionnel.get(row.missionId) ?? 0),
+          armees.has(row.missionId),
+          syntheses.get(row.missionId) ?? SYNTHESE_VIDE,
+        ),
+      )
+    }
+  }
+
+  // Le regroupement par mois a défait l'ordre de la requête : on le rétablit.
+  return vues.sort(
+    (a, b) =>
+      b.month.localeCompare(a.month) || a.missionLabel.localeCompare(b.missionLabel, 'fr'),
   )
 }
 

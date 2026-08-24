@@ -235,6 +235,87 @@ encore toutes les missions et tous les clients de l'instance dans `/missions` �
 c'est le cloisonnement des données, pas celui des écrans, et il attend sa propre
 spec.
 
+## Suivi CRA, génération depuis la saisie, vue 3 mois, agenda à la demande : livrés (24 août 2026)
+
+Sept évolutions demandées ensemble, quatorze tâches, suite complète verte et
+`tsc` à zéro à chaque round de correction. Spec :
+`specs/2026-08-23-suivi-cra-et-vue-3-mois-design.md`.
+
+- **A — Suivi CRA.** `/cra` cesse d'être un lieu de travail : c'est un tableau
+  (`DataTable`), toutes périodes, trié mois décroissant puis mission, filtrable
+  par cinq états (`Brouillon · Envoyé · Validé · Refusé · Facturé`) via
+  `?etats=…&month=…` dans l'adresse. `FACTURE` est **dérivé** de
+  `invoiceNumber`/`invoicedAt` — jamais un vrai statut de `CraStatus`, jamais
+  de migration. Le filtre par défaut masque `VALIDE` et `FACTURE`. Le tableau
+  n'offre aucun bouton de transition : montrer et filtrer restent sur la
+  liste, agir reste sur le détail.
+- **B — Détail.** Ce que portait une carte vit désormais sur
+  `/cra/[craId]` : bandeaux d'avertissement, synthèse, signature, transitions,
+  suivi de facturation. `getCra(userId, craId)` scopé comme le reste, `notFound()`
+  sur un CRA d'un autre utilisateur.
+- **C — Génération depuis la Saisie.** Le formulaire « Ouvrir un CRA » et
+  l'action `openCra` ont disparu de l'écran de suivi. À leur place, dans
+  `SaisieClient`, un bouton **Générer le CRA** à côté de « Remplir » / « Vider »,
+  qui vise la mission de la prestation sélectionnée sur le mois affiché et
+  ouvre un panneau en ligne (jamais `window.confirm`).
+- **D — Le prévisionnel, un choix humain.** Générer un CRA pose désormais la
+  question de ce que devient le prévisionnel restant du mois pour cette
+  mission : le convertir en réalisé (`validerPrevisionnelDuMois`, nouvelle
+  fonction, scopée mission) ou le supprimer. Aucun défaut, aucune conversion
+  automatique. `genererCra` fait tenir le traitement du prévisionnel et
+  l'ouverture du CRA dans **une seule transaction** — un CRA déjà validé refuse
+  la génération sans toucher à rien.
+- **E — Vue 3 mois.** Troisième bascule de la Saisie (`?vue=3mois`), réservée
+  aux écrans `md` et plus : le mois affiché et les deux suivants, en grilles
+  compactes (`MonthCalendar` gagne une prop `densite`). Les saisies passent par
+  une lecture de plage (`getEntriesRange`) plutôt que trois lectures de mois.
+- **F — Gabarit élargi.** `PageShell` passe de `max-w-5xl` (1024 pt) à
+  `max-w-[100rem]` (1600 pt), marge mobile de `p-6` à `p-4`/`md:px-8 md:py-6` —
+  c'est ce qui donne à la vue 3 mois la place de tenir sans être à l'étroit.
+- **G — Agenda à la demande.** Fini la lecture automatique de Google Agenda à
+  chaque ouverture de mois. Un bouton **Vérifier l'agenda** dans la Saisie lit
+  la plage actuellement affichée sur un clic. `getBusyRange` distingue
+  désormais « aucune occupation » de « la lecture a échoué »
+  (`{ ok: true; jours }` vs `{ ok: false; raison }`) — avant, les deux
+  rendaient une liste vide, indiscernables. Passer du calendrier à la vue
+  3 mois efface le résultat vérifié ; l'inverse le garde, parce que la plage
+  vérifiée le couvre encore.
+
+**Les deux points laissés ouverts par l'auto-revue du plan sont refermés, pas
+restés en suspens :**
+
+- La tâche 8 (transaction de `genererCra`) a d'abord dupliqué la logique
+  d'ouverture de `getOrCreateCra` pour obtenir l'atomicité, avec un test qui ne
+  prouvait rien (il faisait échouer le mauvais maillon). Un round de correction
+  a refait échouer le test au bon endroit (violation de contrainte après le
+  traitement réel du prévisionnel, avant la création du CRA) et **unifié** les
+  deux implémentations : `getOrCreateCra` accepte désormais un `tx` et une
+  sortie `{ cree }` optionnels, sans changer ses appelants existants.
+- La tâche 6 (largeur des onglets de nav) : « Suivi CRA » est bien plus long
+  que « CRA », mais le budget mesuré à la main avec les constantes du test
+  (329,5 points) tient sous les 375 disponibles sur mobile. Aucun assouplissement
+  du test n'a été nécessaire.
+
+**Vérifié en plus, pour ce rapport :** `README.md` ne décrivait déjà ni
+l'ancien formulaire « Ouvrir un CRA », ni un « écran CRA » en cartes, ni la
+lecture automatique de l'agenda — c'est un manuel d'exploitation
+(installation, connecteurs, sauvegarde, variables d'environnement), pas une
+visite écran par écran, et il ne l'a jamais été sur ces points-là. Il portait
+en revanche un vrai écart, repéré seulement à la revue finale de branche : la
+section « Prévoir, c'est déjà tenir la cadence » affirmait encore que valider
+un CRA efface tout le prévisionnel restant du mois sans qu'il compte jamais
+comme servi — vrai avant la tâche D, plus toute la vérité depuis : la
+génération peut désormais faire passer ces jours en réalisé avant que la
+validation n'ait quoi que ce soit à annuler pour cette mission. Corrigé dans
+la vague de correction finale, pas ici.
+
+Petite dette non bloquante notée au passage par l'implémenteur de la tâche 14 :
+la vue 3 mois affiche trois fois la légende du calendrier, une par grille —
+comportement hérité de `MonthCalendar`, qui n'a pas de prop pour la masquer.
+Cosmétique, hors périmètre de ce plan.
+
+---
+
 ## 9. Environnement du porteur
 
 - **Dolibarr 23.0.1** joignable par API. Exercice fiscal : `SOCIETE_FISCAL_MONTH_START = 4` — **avril à mars**.

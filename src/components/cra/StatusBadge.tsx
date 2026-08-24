@@ -3,26 +3,32 @@ import {
   IconeBrouillon,
   IconeDanger,
   IconeEnvoye,
+  IconeFacture,
   IconeSucces,
   type Icone,
 } from '@/components/ui/icons'
-import type { CraStatus } from '@/core/types'
+import { libelleEtat, type EtatSuivi } from '@/core/cra/etat-suivi'
 
-const BADGES: Record<CraStatus, { tone: Tone; icone: Icone; label: string }> = {
-  BROUILLON: { tone: 'neutral', icone: IconeBrouillon, label: 'Brouillon' },
-  ENVOYE: { tone: 'info', icone: IconeEnvoye, label: 'Envoyé' },
-  VALIDE: { tone: 'success', icone: IconeSucces, label: 'Validé' },
-  REFUSE: { tone: 'danger', icone: IconeDanger, label: 'Refusé' },
+// Le libellé n'est pas dupliqué ici : `libelleEtat` le porte déjà, et c'est
+// lui que `craStatusBadge` interroge plus bas.
+const BADGES: Record<EtatSuivi, { tone: Tone; icone: Icone }> = {
+  BROUILLON: { tone: 'neutral', icone: IconeBrouillon },
+  ENVOYE: { tone: 'info', icone: IconeEnvoye },
+  VALIDE: { tone: 'success', icone: IconeSucces },
+  REFUSE: { tone: 'danger', icone: IconeDanger },
+  // Le cycle est allé jusqu'au bout : ni une alerte, ni une réussite de plus à
+  // fêter. `neutral` est la teinte de ce qui est classé.
+  FACTURE: { tone: 'neutral', icone: IconeFacture },
 }
 
-export function craStatusBadge(status: CraStatus): { tone: Tone; icone: Icone; label: string } {
-  return BADGES[status]
+export function craStatusBadge(status: EtatSuivi): { tone: Tone; icone: Icone; label: string } {
+  return { ...BADGES[status], label: libelleEtat(status) }
 }
 
-/** Quatre états qui doivent se distinguer d'un coup d'œil, sans dépendre de
+/** Cinq états qui doivent se distinguer d'un coup d'œil, sans dépendre de
  *  la seule teinte : chacun porte une icône qui lui est propre. */
-export function StatusBadge({ status }: { status: CraStatus }) {
-  const { tone, icone, label } = BADGES[status]
+export function StatusBadge({ status }: { status: EtatSuivi }) {
+  const { tone, icone, label } = craStatusBadge(status)
   return (
     <Badge tone={tone} icone={icone} testId="cra-statut">
       {label}

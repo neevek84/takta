@@ -7,6 +7,14 @@ import { applyCellState, type CellResult } from '@/services/cells'
 import { clearMonth, fillMonth } from '@/services/month-fill'
 import { parseQuantity } from '@/core/time/units'
 import { listActiveLines } from '@/services/missions'
+import {
+  genererCra,
+  resoudreMissionAffectee,
+  type ChoixPrevisionnel,
+  type ResultatGeneration,
+} from '@/services/cra-generation'
+import { compterPrevisionnelParMission } from '@/services/cra-previsionnel'
+import { getBusyRange, type ResultatAgenda } from '@/services/availability'
 import type { CellState } from '@/core/saisie/cycle'
 import type { ClearReport, FillReport } from '@/core/saisie/report'
 
@@ -147,4 +155,80 @@ export async function validerJoursPasses(
   const resultat = await convertPastForecast(user.id, month, aujourdhui())
   revalidatePath(`/saisie/${month}`)
   return resultat
+}
+
+/**
+ * Combien de jours en prévisionnel la mission de cette prestation porte-t-elle
+ * sur ce mois ?
+ *
+ * Lu **au clic** et non au rendu : c'est un chiffre qui bouge à chaque saisie,
+ * et l'afficher figé depuis le rendu de la page ferait poser la question sur
+ * un nombre faux.
+ *
+ * `resoudreMissionAffectee` est la même vérification d'affectation que
+ * `genererCra` : un utilisateur qui n'est plus affecté à cette prestation n'a
+ * rien à en compter, `genererCra` le lui dira explicitement (`NON_AFFECTE`) au
+ * moment d'agir.
+ */
+export async function compterPrevisionnelDeLaLigne(args: {
+  lineId: string
+  month: string
+}): Promise<number> {
+  const user = await requireUser()
+
+  const missionId = await resoudreMissionAffectee(user.id, args.lineId)
+  if (missionId === null) return 0
+
+  const par = await compterPrevisionnelParMission({
+    userId: user.id,
+    missionIds: [missionId],
+    month: args.month,
+  })
+  return par.get(missionId) ?? 0
+}
+
+/**
+ * Génère le CRA du mois pour la mission de la prestation choisie.
+ *
+ * Le choix du prévisionnel vient de l'utilisateur, jamais d'un défaut : voir
+ * `PanneauGeneration`.
+ */
+export async function genererCraAction(args: {
+  lineId: string
+  month: string
+  previsionnel: ChoixPrevisionnel
+}): Promise<ResultatGeneration> {
+  const user = await requireUser()
+  const r = await genererCra(user.id, args)
+
+  if (r.ok) {
+    revalidatePath(`/saisie/${args.month}`)
+    revalidatePath('/cra')
+  }
+  return r
+}
+
+/** Ce qu'une vue peut afficher au plus : trois mois. */
+const PLAGE_MAX_JOURS = 93
+
+/**
+ * Lit l'occupation de l'agenda sur la plage affichée — **à la demande de
+ * l'utilisateur, jamais au chargement**.
+ *
+ * La plage vient du client. Elle est bornée ici : un appel forgé demandant dix
+ * ans brûlerait le quota Google d'un seul coup, et aucune vue n'affiche plus
+ * de trois mois.
+ */
+export async function verifierAgenda(args: {
+  du: string
+  au: string
+}): Promise<ResultatAgenda> {
+  const user = await requireUser()
+
+  const jours = (Date.parse(`${args.au}T00:00:00Z`) - Date.parse(`${args.du}T00:00:00Z`)) / 86_400_000
+  if (!Number.isFinite(jours) || jours < 0 || jours > PLAGE_MAX_JOURS) {
+    return { ok: false, raison: 'ECHEC' }
+  }
+
+  return await getBusyRange(user.id, args)
 }
