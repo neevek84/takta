@@ -12,13 +12,29 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
 import { PageShell } from '@/components/ui/PageShell'
-import {
-  ERREURS,
-  envoyerPourSignature,
-  moveCra,
-  rafraichirSignature,
-  saveTracking,
-} from './actions'
+import { envoyerPourSignature, moveCra, rafraichirSignature, saveTracking } from './actions'
+
+/**
+ * Les motifs d'échec que les services de signature savent rendre, traduits en
+ * une phrase. Le motif transite par l'URL parce qu'une server action qui
+ * redirige ne rend rien : la page est le seul endroit qui puisse encore parler
+ * à l'utilisateur.
+ *
+ * Vit ici et non dans `./actions.ts` : un fichier `'use server'` ne peut
+ * exporter que des fonctions asynchrones — Next.js refuse la construction de
+ * production sinon (« A "use server" file can only export async functions »),
+ * une règle que ni `tsc` ni les tests ne vérifient.
+ */
+const ERREURS: Record<string, string> = {
+  PAS_DE_CONNECTEUR:
+    'Aucun outil de signature n’est configuré. Le CRA reste téléchargeable et les transitions manuelles restent disponibles.',
+  PAS_DE_SIGNATAIRE:
+    'Renseignez le signataire de la mission (nom et adresse électronique) avant d’envoyer le CRA.',
+  TRANSITION_IMPOSSIBLE: 'Ce CRA ne peut pas être envoyé dans son état actuel.',
+  CONNECTEUR_EN_ECHEC:
+    'L’outil de signature n’a pas accepté le document. Le CRA n’a pas changé d’état.',
+  PAS_DE_DEMANDE: 'Ce CRA n’a jamais été envoyé pour signature.',
+}
 
 const LABELS: Record<CraTransition, string> = {
   ENVOYER: 'Marquer envoyé',

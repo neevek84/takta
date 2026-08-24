@@ -9,23 +9,6 @@ import { refreshSignatureStatus } from '@/services/signature/refresh'
 import type { CraTransition } from '@/core/cra/state-machine'
 
 /**
- * Les motifs d'échec que les services de signature savent rendre, traduits en
- * une phrase. Le motif transite par l'URL parce qu'une server action qui
- * redirige ne rend rien : la page est le seul endroit qui puisse encore parler
- * à l'utilisateur.
- */
-export const ERREURS: Record<string, string> = {
-  PAS_DE_CONNECTEUR:
-    'Aucun outil de signature n’est configuré. Le CRA reste téléchargeable et les transitions manuelles restent disponibles.',
-  PAS_DE_SIGNATAIRE:
-    'Renseignez le signataire de la mission (nom et adresse électronique) avant d’envoyer le CRA.',
-  TRANSITION_IMPOSSIBLE: 'Ce CRA ne peut pas être envoyé dans son état actuel.',
-  CONNECTEUR_EN_ECHEC:
-    'L’outil de signature n’a pas accepté le document. Le CRA n’a pas changé d’état.',
-  PAS_DE_DEMANDE: 'Ce CRA n’a jamais été envoyé pour signature.',
-}
-
-/**
  * Les server actions de signature ne rendent rien : le motif d'échec repasse
  * par l'URL, et la page le traduit en bandeau. Elle pointe désormais vers le
  * détail — c'est là que l'action a été déclenchée, et c'est là que l'utilisateur
