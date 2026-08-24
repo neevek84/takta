@@ -898,8 +898,9 @@ describe('SaisieClient — occupation de l agenda', () => {
   })
 
   it('ne marque rien quand la lecture d occupation a échoué', () => {
-    // `getBusyDays` ne lève jamais : elle rend une liste vide, et la page
-    // s'affiche exactement comme si l'agenda n'était pas connecté.
+    // Une liste vide est ce que `BoutonAgenda` retient d'une lecture qui a
+    // échoué (tâche 11) : la page s'affiche exactement comme si l'agenda
+    // n'était pas connecté.
     renderClient({ busyDates: [] })
     expect(screen.getByTestId('case-2026-03-12').getAttribute('data-busy')).toBeNull()
     ouvrirTableau()

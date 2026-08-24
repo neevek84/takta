@@ -19,6 +19,7 @@ import {
   remplirMois,
   saveCell,
   validerJoursPasses,
+  verifierAgenda,
   viderMois,
 } from './actions'
 import { updateSettings } from '@/services/settings'
@@ -373,6 +374,32 @@ describe('compterPrevisionnelDeLaLigne', () => {
     })
 
     expect(await compterPrevisionnelDeLaLigne({ lineId: ligneAutrui, month: moisCase })).toBe(0)
+  })
+})
+
+/**
+ * Tâche 11 — le seul point d'entrée par lequel la Saisie interroge l'agenda,
+ * et seulement au clic. La borne protège d'une plage forgée : aucune vue
+ * n'affiche plus de trois mois, une requête qui en réclame dix ans ne doit
+ * pas brûler le quota Google en un seul appel.
+ */
+describe('verifierAgenda', () => {
+  it('refuse une plage de plus de trois mois, sans interroger l agenda', async () => {
+    const resultat = await verifierAgenda({ du: '2020-01-01', au: '2020-12-31' })
+    expect(resultat).toEqual({ ok: false, raison: 'ECHEC' })
+  })
+
+  it('refuse une plage inversée', async () => {
+    const resultat = await verifierAgenda({ du: '2026-03-31', au: '2026-03-01' })
+    expect(resultat).toEqual({ ok: false, raison: 'ECHEC' })
+  })
+
+  // La plage passe la borne (trois mois pile) : l'action va bien jusqu'à
+  // l'agenda, qui dit ici qu'aucun connecteur n'est enregistré pour cet
+  // utilisateur de test.
+  it('interroge l agenda pour une plage de trois mois au plus', async () => {
+    const resultat = await verifierAgenda({ du: '2026-03-01', au: '2026-05-31' })
+    expect(resultat).toEqual({ ok: false, raison: 'PAS_DE_CONNECTEUR' })
   })
 })
 

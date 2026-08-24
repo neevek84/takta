@@ -7,16 +7,6 @@ const AGENDA_PRINCIPAL = 'primary'
 
 const JOUR_MS = 86_400_000
 
-/** Les bornes `du`/`au` (incluses) d'un mois, au format `YYYY-MM-DD`. */
-function bornesDuMois(month: string): { du: string; au: string } {
-  const [y, m] = month.split('-').map(Number) as [number, number]
-  // `Date.UTC(y, 12, 1)` bascule sur janvier de l'année suivante : décembre
-  // n'a pas besoin d'un cas particulier, et n'en aura jamais.
-  const lendemainDuMois = new Date(Date.UTC(y, m, 1))
-  const dernierJour = new Date(lendemainDuMois.getTime() - JOUR_MS)
-  return { du: `${month}-01`, au: dernierJour.toISOString().slice(0, 10) }
-}
-
 /**
  * `startIso` au début du jour `du`, `endIso` au début du lendemain de `au` —
  * borne ouverte à droite, comme le mois qu'elle remplace.
@@ -101,25 +91,6 @@ export async function getBusyRange(
     // une liste vide indistinguable d'une plage libre.
     return { ok: false, raison: 'ECHEC' }
   }
-}
-
-/**
- * Wrapper de compatibilité — sera supprimé une fois la page de saisie migrée
- * vers `getBusyRange` (tâche 11). Traduit l'échec en liste vide, comme
- * `getBusyDays` le faisait déjà : son seul appelant restant ne sait pas
- * encore distinguer « rien à signaler » de « Google n'a pas répondu ».
- */
-export async function getBusyDays(
-  userId: string,
-  month: string,
-  deps: {
-    connector?: CalendarConnector | null
-    fetchFn?: FetchLike
-    delaiMs?: number
-  } = {},
-): Promise<string[]> {
-  const resultat = await getBusyRange(userId, bornesDuMois(month), deps)
-  return resultat.ok ? resultat.jours : []
 }
 
 async function lireOccupation(

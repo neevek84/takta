@@ -5,16 +5,24 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 /**
  * La page est un composant serveur : elle appelle la session et les services
  * avant de rendre. On leur substitue des doubles — le sujet du test est le
- * câblage, et surtout ce qui se passe quand la lecture d'occupation ne rend
- * rien : la page doit s'afficher et la saisie fonctionner à l'identique.
+ * câblage, et surtout que la page ne parle plus jamais à Google d'elle-même
+ * (voir la tâche G) : la saisie doit s'afficher et fonctionner à l'identique.
+ *
+ * `agendaEspion` double `@/services/availability` **en entier** — si la page
+ * importe encore quoi que ce soit de ce module, un appel s'y voit, quelle que
+ * soit la fonction appelée.
  */
-const { getBusyDays, appliquerCase } = vi.hoisted(() => ({
-  getBusyDays: vi.fn(),
+const { agendaEspion, aUnConnecteurAgenda, appliquerCase } = vi.hoisted(() => ({
+  agendaEspion: vi.fn(),
+  aUnConnecteurAgenda: vi.fn(),
   appliquerCase: vi.fn(),
 }))
 
 vi.mock('@/auth', () => ({ requireUser: async () => ({ id: 'u1', role: 'USER' as const }) }))
-vi.mock('@/services/availability', () => ({ getBusyDays }))
+vi.mock('@/services/availability', () => ({ getBusyRange: agendaEspion }))
+// La lecture qui remplace l'ancien appel automatique : locale, sans réseau —
+// voir `src/services/credentials.ts`.
+vi.mock('@/services/credentials', () => ({ aUnConnecteurAgenda }))
 vi.mock('@/services/settings', () => ({
   getSettings: async () => ({
     minutesParJour: 480,
@@ -50,6 +58,7 @@ vi.mock('./actions', () => ({
   remplirMois: vi.fn(),
   viderMois: vi.fn(),
   validerJoursPasses: vi.fn(),
+  verifierAgenda: vi.fn(),
 }))
 vi.mock('@/components/MonthNav', () => ({ MonthNav: () => null }))
 
@@ -60,33 +69,29 @@ async function rendre(): Promise<void> {
   render(await SaisiePage({ params: Promise.resolve({ month: '2026-03' }), searchParams: Promise.resolve({}) }))
 }
 
-describe('page de saisie — occupation de l agenda', () => {
+describe('page de saisie — plus de lecture automatique de l agenda', () => {
   beforeEach(() => {
-    getBusyDays.mockReset()
+    agendaEspion.mockReset()
+    aUnConnecteurAgenda.mockReset().mockResolvedValue(false)
     appliquerCase.mockReset()
     window.localStorage.clear()
   })
   afterEach(cleanup)
 
-  it('lit l occupation du mois affiché, pour l utilisateur connecté', async () => {
-    getBusyDays.mockResolvedValue([])
-    await rendre()
-    expect(getBusyDays).toHaveBeenCalledWith('u1', '2026-03')
+  // Le test qui porte toute la section G. Parcourir douze mois coutait douze
+  // appels freeBusy, pour un repere qu'on ne regardait peut-etre pas.
+  it('n appelle pas Google en ouvrant le mois', async () => {
+    await SaisiePage({
+      params: Promise.resolve({ month: '2026-03' }),
+      searchParams: Promise.resolve({}),
+    })
+
+    expect(agendaEspion).not.toHaveBeenCalled()
   })
 
-  it('fait descendre le marquage jusqu à la surface de saisie', async () => {
-    getBusyDays.mockResolvedValue(['2026-03-12'])
-    await rendre()
-
-    expect(screen.getByTestId('case-2026-03-12').getAttribute('data-busy')).toBe('true')
-    expect(screen.getByTestId('case-2026-03-13').getAttribute('data-busy')).toBeNull()
-  })
-
-  // La promesse du lot : une panne de Google ne bloque jamais la saisie.
-  it('affiche la grille sans marques et laisse saisir quand l agenda est injoignable', async () => {
-    // Ce que `getBusyDays` rend en cas de panne : une liste vide, jamais une
-    // exception.
-    getBusyDays.mockResolvedValue([])
+  // La promesse du lot ne change pas : l'absence de marquage n'empêche jamais
+  // de saisir, seule sa source change (un clic, plus le rendu de la page).
+  it('affiche la grille sans marques et laisse saisir normalement', async () => {
     appliquerCase.mockResolvedValue({ ok: true, state: { kind: 'JOURNEE' } })
     await rendre()
 
@@ -105,6 +110,21 @@ describe('page de saisie — occupation de l agenda', () => {
     )
     expect(screen.getByTestId('valeur-2026-03-12').textContent).toBe('1')
   })
+
+  it('offre le bouton de vérification quand un connecteur est configuré', async () => {
+    aUnConnecteurAgenda.mockResolvedValue(true)
+    await rendre()
+
+    expect(screen.getByRole('button', { name: /Vérifier l’agenda/ })).toBeDefined()
+  })
+
+  // Un bouton qui échouerait à tous les coups n'apprendrait rien à personne.
+  it('n offre pas le bouton quand aucun connecteur n est configuré', async () => {
+    aUnConnecteurAgenda.mockResolvedValue(false)
+    await rendre()
+
+    expect(screen.queryByRole('button', { name: /Vérifier l’agenda/ })).toBeNull()
+  })
 })
 
 /**
@@ -114,7 +134,7 @@ describe('page de saisie — occupation de l agenda', () => {
  */
 describe('page de saisie — le gabarit commun', () => {
   beforeEach(() => {
-    getBusyDays.mockReset().mockResolvedValue([])
+    aUnConnecteurAgenda.mockReset().mockResolvedValue(false)
     window.localStorage.clear()
   })
   afterEach(cleanup)

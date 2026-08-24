@@ -6,7 +6,7 @@ import {
   getMonthEntries,
   getPastForecastWithLockStatus,
 } from '@/services/time-entries'
-import { getBusyDays } from '@/services/availability'
+import { aUnConnecteurAgenda } from '@/services/credentials'
 import { buildMonthDays } from '@/core/month/build'
 import { MonthNav } from '@/components/MonthNav'
 import { PageShell } from '@/components/ui/PageShell'
@@ -37,9 +37,12 @@ export default async function SaisiePage({
   )
   const days = buildMonthDays(month, settings.workingDays, settings.holidays)
 
-  // Une lecture d'occupation à l'ouverture du mois. Elle ne lève jamais : un
-  // agenda injoignable rend une liste vide et la page s'affiche normalement.
-  const busyDates = await getBusyDays(user.id, month)
+  // Plus aucune lecture d'agenda ici : douze mois parcourus ne coûtaient pas
+  // moins de douze appels freeBusy, pour un repère qu'on ne regardait peut-être
+  // jamais. C'est désormais `BoutonAgenda` qui lit, à la demande, et seulement
+  // sur la plage affichée (voir `actions.ts`). Cette lecture-ci est locale —
+  // aucun réseau — et ne dit qu'une chose : y a-t-il quelque chose à vérifier.
+  const agendaConnecte = await aUnConnecteurAgenda(user.id)
 
   // Rappel du prévisionnel échu : un simple encart, jamais une conversion
   // automatique — voir PastForecastNotice. Les deux chiffres viennent du même
@@ -75,9 +78,10 @@ export default async function SaisiePage({
         // saisie déjà écrite porte ses propres bornes, figées à l'écriture.
         journeeDebutMinute={settings.journeeDebutMinute}
         journeeFinMinute={settings.journeeFinMinute}
-        // Un repère, jamais un verrou : la liste est vide quand l'agenda n'est
-        // pas connecté ou pas joignable, et la saisie fonctionne à l'identique.
-        busyDates={busyDates}
+        // Une lecture locale, sans réseau : dit seulement si un connecteur
+        // existe, pour que `BoutonAgenda` sache s'effacer plutôt que d'offrir
+        // une vérification qui échouerait à tous les coups.
+        agendaConnecte={agendaConnecte}
         // Le même jour que celui du rappel de prévisionnel échu, et calculé
         // une seule fois : la case du jour marque la frontière entre le
         // réalisé et le prévisionnel, et les deux ne peuvent pas la placer

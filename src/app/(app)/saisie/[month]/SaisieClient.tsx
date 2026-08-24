@@ -28,7 +28,17 @@ import {
   saveCell,
   viderMois,
 } from './actions'
+import { BoutonAgenda } from './BoutonAgenda'
 import { PanneauGeneration } from './PanneauGeneration'
+
+/**
+ * Les bornes `du`/`au` (incluses) du mois affiché, telles que `props.days`
+ * les porte déjà — `days[0]` est le premier jour du mois, le dernier élément
+ * le dernier. Aucun calcul de calendrier à refaire ici.
+ */
+function bornesAffichees(days: MonthDay[]): { du: string; au: string } {
+  return { du: days[0]?.date ?? '', au: days[days.length - 1]?.date ?? '' }
+}
 
 /**
  * Constante de module et non littéral au point d'appel : un `[]` écrit dans le
@@ -88,7 +98,13 @@ function refus(texte: string): Message {
   return { texte, ton: 'danger' }
 }
 
-type Vue = 'CALENDRIER' | 'TABLEAU'
+/**
+ * `TROIS_MOIS` n'a pas encore de bouton ni de rendu — ils arrivent avec la vue
+ * 3 mois elle-même. Elle entre dans le type ici parce que la règle de portée
+ * de `choisirVue`, ci-dessous, doit déjà savoir la reconnaître : sans quoi la
+ * tâche qui l'ajoutera devrait revenir modifier cette règle en même temps.
+ */
+type Vue = 'CALENDRIER' | 'TROIS_MOIS' | 'TABLEAU'
 
 export function SaisieClient(props: {
   month: string
@@ -109,12 +125,20 @@ export function SaisieClient(props: {
   journeeDebutMinute: number
   journeeFinMinute: number
   /**
-   * jours du mois déjà occupés dans l'agenda externe.
+   * jours déjà occupés dans l'agenda externe, connus au premier rendu.
    *
-   * Vide par défaut, et vide aussi quand la lecture a échoué : une panne de
-   * Google retire le repère, jamais la saisie.
+   * La prop reste : elle sert aux tests à ensemencer des occupations. La
+   * page, elle, ne la passe plus — l'agenda ne se lit qu'au clic sur
+   * `BoutonAgenda`, jamais au chargement (voir `page.tsx`). C'est la graine
+   * de l'état `occupations`, pas la valeur affichée : voir plus bas.
    */
   busyDates?: string[]
+  /**
+   * Un connecteur d'agenda est-il configuré ? Une lecture locale, faite par
+   * la page, sans réseau. `BoutonAgenda` s'efface quand elle est fausse : un
+   * bouton qui échouerait à tous les coups n'apprendrait rien à personne.
+   */
+  agendaConnecte?: boolean
   /**
    * le jour courant, 'YYYY-MM-DD'.
    *
@@ -137,14 +161,31 @@ export function SaisieClient(props: {
   const [vue, setVue] = useState<Vue>(props.vueInitiale ?? 'CALENDRIER')
 
   /**
+   * Les jours occupés, tels que `BoutonAgenda` les a rapportés — ou tels que
+   * les tests les ont ensemencés via `props.busyDates`. Purement local : ni
+   * cache serveur, ni persistance. Le résultat d'un clic **remplace** cette
+   * liste, il ne s'y ajoute pas.
+   */
+  const [occupations, setOccupations] = useState<string[]>(props.busyDates ?? [])
+  /**
+   * La largeur de la dernière vérification réussie, `null` avant tout clic.
+   *
+   * `'1MOIS'` est la seule valeur que ce lot produit — `BoutonAgenda` ne
+   * vérifie jamais que le mois affiché ici. `'3MOIS'` existe déjà pour que la
+   * règle de portée, juste en dessous, sache l'attendre sans que la tâche qui
+   * l'introduira doive revenir la modifier.
+   */
+  const [plageVerifiee, setPlageVerifiee] = useState<'1MOIS' | '3MOIS' | null>(null)
+
+  /**
    * Choisir une vue, et l'inscrire dans l'adresse.
    *
    * **Par l'API d'historique du navigateur, pas par le routeur.** Un
    * `router.replace` refait le rendu serveur de la page : il rejouerait toutes
-   * ses lectures — dont l'occupation de l'agenda Google — à chaque bascule,
-   * pour un changement qui est entièrement local. Next tient `useSearchParams`
-   * à jour après un `replaceState` natif, et c'est ce dont `MonthNav` a besoin
-   * pour reporter le choix sur les mois voisins.
+   * ses lectures à chaque bascule, pour un changement qui est entièrement
+   * local. Next tient `useSearchParams` à jour après un `replaceState` natif,
+   * et c'est ce dont `MonthNav` a besoin pour reporter le choix sur les mois
+   * voisins.
    *
    * Le calendrier ne laisse rien derrière lui : c'est le défaut, et un
    * paramètre qui ne dit rien de plus que son absence encombrerait tous les
@@ -152,6 +193,11 @@ export function SaisieClient(props: {
    */
   function choisirVue(prochaine: Vue): void {
     setVue(prochaine)
+    // Passer du calendrier à la vue 3 mois efface le résultat : la plage
+    // vérifiée ne couvre plus ce qu'on montre, et laisser des mois non
+    // vérifiés sans marqueur les ferait croire libres. L'inverse le conserve
+    // — la plage vérifiée contient ce qu'on affiche.
+    if (prochaine === 'TROIS_MOIS' && plageVerifiee !== '3MOIS') setOccupations([])
     const parametres = new URLSearchParams(window.location.search)
     if (prochaine === 'TABLEAU') parametres.set('vue', 'tableau')
     else parametres.delete('vue')
@@ -194,6 +240,11 @@ export function SaisieClient(props: {
 
   const ligne = props.lines.find((l) => l.id === lineId)
 
+  // La plage que `BoutonAgenda` vérifie : exactement le mois affiché ici,
+  // tel que `props.days` le porte déjà — inutile de refaire un calcul de
+  // calendrier pour retrouver ce que la page a déjà construit.
+  const { du, au } = bornesAffichees(props.days)
+
   /**
    * Le signalement d'occupation, quand il n'y a rien de plus important à dire.
    *
@@ -202,7 +253,7 @@ export function SaisieClient(props: {
    * contexte. Aucun des trois ne bloque quoi que ce soit.
    */
   function messageDOccupation(date: string): Message | null {
-    return (props.busyDates ?? []).includes(date) ? information(phraseOccupation(date)) : null
+    return occupations.includes(date) ? information(phraseOccupation(date)) : null
   }
 
   /**
@@ -370,6 +421,23 @@ export function SaisieClient(props: {
         )}
       </div>
 
+      {/* Un clic, un appel, sur exactement la plage affichée ici — jamais au
+          chargement (voir `page.tsx`). Absent quand aucun connecteur n'est
+          configuré : un bouton qui échouerait à tous les coups n'apprendrait
+          rien à personne. */}
+      {props.agendaConnecte === true && (
+        <div className="mb-3">
+          <BoutonAgenda
+            du={du}
+            au={au}
+            onResultat={(jours) => {
+              setOccupations(jours)
+              setPlageVerifiee('1MOIS')
+            }}
+          />
+        </div>
+      )}
+
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <LineSelector lines={props.lines} lineId={lineId} onChange={setLineId} />
 
@@ -479,7 +547,7 @@ export function SaisieClient(props: {
             // Le calendrier est la seule surface de saisie sous la largeur
             // `md` : un marquage réservé au tableau n'existerait pas pour un
             // usage au téléphone.
-            busyDates={props.busyDates}
+            busyDates={occupations}
             // La frontière entre réalisé et prévisionnel passe exactement là.
             aujourdhui={props.aujourdhui}
             onApply={handleApply}
@@ -546,7 +614,7 @@ export function SaisieClient(props: {
             engagementTotals={props.engagementTotals}
             capacityCentiemes={props.capacityCentiemes}
             capacityMode={props.capacityMode}
-            busyDates={props.busyDates}
+            busyDates={occupations}
             // Les créneaux réglés en administration : le tableau les propose
             // cellule par cellule, comme le formulaire du calendrier le fait déjà.
             slots={props.slots}

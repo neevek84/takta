@@ -14,6 +14,7 @@ import {
   type ResultatGeneration,
 } from '@/services/cra-generation'
 import { compterPrevisionnelParMission } from '@/services/cra-previsionnel'
+import { getBusyRange, type ResultatAgenda } from '@/services/availability'
 import type { CellState } from '@/core/saisie/cycle'
 import type { ClearReport, FillReport } from '@/core/saisie/report'
 
@@ -205,4 +206,29 @@ export async function genererCraAction(args: {
     revalidatePath('/cra')
   }
   return r
+}
+
+/** Ce qu'une vue peut afficher au plus : trois mois. */
+const PLAGE_MAX_JOURS = 93
+
+/**
+ * Lit l'occupation de l'agenda sur la plage affichée — **à la demande de
+ * l'utilisateur, jamais au chargement**.
+ *
+ * La plage vient du client. Elle est bornée ici : un appel forgé demandant dix
+ * ans brûlerait le quota Google d'un seul coup, et aucune vue n'affiche plus
+ * de trois mois.
+ */
+export async function verifierAgenda(args: {
+  du: string
+  au: string
+}): Promise<ResultatAgenda> {
+  const user = await requireUser()
+
+  const jours = (Date.parse(`${args.au}T00:00:00Z`) - Date.parse(`${args.du}T00:00:00Z`)) / 86_400_000
+  if (!Number.isFinite(jours) || jours < 0 || jours > PLAGE_MAX_JOURS) {
+    return { ok: false, raison: 'ECHEC' }
+  }
+
+  return await getBusyRange(user.id, args)
 }
