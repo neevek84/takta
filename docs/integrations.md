@@ -381,6 +381,20 @@ En échec : Toléré — l'état visé est déjà atteint. Rien. Un événement 
 
 > Le connecteur avale NOT_FOUND — 404 comme 410. Toute autre erreur remonte.
 
+### Relire le partage déjà posé sur le calendrier dédié
+
+`GET /calendars/{calendarId}/acl` — émis par `src/integrations/google/calendar.ts · assurerLibreOccupePublic (appelée par ensureDedicatedCalendar)`
+
+| Paramètre | Source | D'où vient la valeur | Exemple |
+|---|---|---|---|
+| `calendarId` | identifiant externe | `calendrier dédié résolu par ensureDedicatedCalendar dans le même appel` | `cal-exemple@group.calendar.google.com` |
+
+Prouvé contre Google Calendar API v3 le 2026-08-16, contre le double d’API.
+
+En échec : Abandonné — le rejouer donnerait le même refus. Le retour de consentement annule la connexion et invite à recommencer.
+
+> Relue avant d’écrire : une portée `default` déjà présente ne doit pas être reposée à chaque connexion.
+
 ### Relire un bloc pour savoir s il a été touché à la main
 
 `GET /calendars/{calendarId}/events/{eventId}` — émis par `src/integrations/google/calendar.ts · getEvent`
@@ -395,6 +409,16 @@ Prouvé contre Google Calendar API v3 le 2026-08-16, contre le double d’API.
 En échec : Rejoué par la file de synchronisation. L'écran de synchronisation compte l'échec ; la file rejoue.
 
 > Un événement `status: cancelled` revient en 200 ; le connecteur le traite en NOT_FOUND, sans quoi une suppression passerait pour une simple modification.
+
+### Retrouver l adresse du compte connecté, pour l inviter à ses propres blocs
+
+`GET /calendars/primary` — émis par `src/integrations/google/calendar.ts · getPrimaryCalendarEmail`
+
+Prouvé contre Google Calendar API v3 le 2026-08-16, contre le double d’API.
+
+En échec : Abandonné — le rejouer donnerait le même refus. Le retour de consentement annule la connexion et invite à recommencer.
+
+> L'identifiant du calendrier `primary` est littéralement l'adresse du compte — aucun scope supplémentaire à demander, `calendar` la couvre déjà. Sans cette adresse, les blocs partent sans invité et le libre/occupé du compte ne les porte jamais.
 
 ### Retrouver le calendrier dédié parmi ceux de l utilisateur
 
@@ -448,6 +472,22 @@ En échec : Abandonné — le rejouer donnerait le même refus. Le retour de con
 
 > Jamais l'agenda principal : le calendrier dédié est masquable d'un clic et effaçable d'un geste, ce qui est la condition pour que l'application ait le droit d'y écrire.
 
+### Ouvrir la disponibilité du calendrier dédié à tout le monde, y compris hors du domaine
+
+`POST /calendars/{calendarId}/acl` — émis par `src/integrations/google/calendar.ts · assurerLibreOccupePublic (appelée par ensureDedicatedCalendar)`
+
+| Paramètre | Source | D'où vient la valeur | Exemple |
+|---|---|---|---|
+| `calendarId` | identifiant externe | `calendrier dédié résolu par ensureDedicatedCalendar dans le même appel` | `cal-exemple@group.calendar.google.com` |
+| `role` | constante | `src/integrations/google/calendar.ts — freeBusyReader, jamais davantage` | `freeBusyReader` |
+| `scope.type` | constante | `src/integrations/google/calendar.ts — default, pour couvrir l’extérieur du domaine` | `default` |
+
+Prouvé contre Google Calendar API v3 le 2026-08-16, contre le double d’API.
+
+En échec : Abandonné — le rejouer donnerait le même refus. Le retour de consentement annule la connexion et invite à recommencer.
+
+> Sans cette règle, un calendrier secondaire fraîchement créé reste privé : les blocs qu’il porte, même marqués `opaque`, restent invisibles à quiconque d’autre que son propriétaire — vidant de son sens l’intention du lot 0.
+
 ### Poser un bloc de disponibilité dans le calendrier dédié
 
 `POST /calendars/{calendarId}/events` — émis par `src/integrations/google/calendar.ts · createEvent`
@@ -461,12 +501,14 @@ En échec : Abandonné — le rejouer donnerait le même refus. Le retour de con
 | `transparency` | constante | `src/core/calendar/event.ts` | `opaque` |
 | `colorId` | calcul | `src/core/calendar/event.ts — COULEUR_REALISE ou COULEUR_PREVISIONNEL` | `9` |
 | `extendedProperties.private.craEntryId` | identifiant externe | `identifiant de la saisie locale — sert à retrouver le bloc` | `entry-exemple` |
+| `attendees[].email` | identifiant externe | `ProviderCredential.ownerEmail, lu au consentement par getPrimaryCalendarEmail` | `compte-exemple@gmail.com` |
+| `sendUpdates (paramètre de requête)` | constante | `src/integrations/google/calendar.ts — none, l’invité est le compte qui écrit` | `none` |
 
 Prouvé contre Google Calendar API v3 le 2026-08-16, contre le double d’API.
 
 En échec : Rejoué par la file de synchronisation. L'écran de synchronisation compte l'échec ; la file rejoue.
 
-> Une heure locale naïve sans `timeZone` est refusée par Google : l'instant n'existe pas sans fuseau.
+> Une heure locale naïve sans `timeZone` est refusée par Google : l'instant n'existe pas sans fuseau. L'invité n'est autre que le compte connecté : un calendrier secondaire ne fusionne jamais dans le libre/occupé interrogé sous `primary`, mais un événement où ce compte figure comme invité y compte, quel que soit le calendrier organisateur.
 
 ### Interroger les plages occupées des agendas de l utilisateur
 
@@ -516,12 +558,14 @@ Réglage tiers : `Scopes accordés au client OAuth dans la console Google Cloud`
 | `summary` | calcul | `src/core/calendar/event.ts · buildCalendarEvent` | `Client Exemple · Conseil` |
 | `start.dateTime` | calcul | `src/core/calendar/event.ts — heure locale naïve, sans décalage` | `2026-04-13T09:00:00` |
 | `start.timeZone` | réglage | `Settings.timeZone, lu par src/services/sync/flush.ts` | `Europe/Paris` |
+| `attendees[].email` | identifiant externe | `ProviderCredential.ownerEmail, lu au consentement par getPrimaryCalendarEmail` | `compte-exemple@gmail.com` |
+| `sendUpdates (paramètre de requête)` | constante | `src/integrations/google/calendar.ts — none, l’invité est le compte qui écrit` | `none` |
 
 Prouvé contre Google Calendar API v3 le 2026-08-16, contre le double d’API.
 
 En échec : Rejoué par la file de synchronisation. L'écran de synchronisation compte l'échec ; la file rejoue.
 
-> Mise à jour plutôt que suppression puis recréation, pour garder l’identifiant (arbitrage du porteur du 16 août). L’etag rendu sert à détecter une divergence.
+> Mise à jour plutôt que suppression puis recréation, pour garder l’identifiant (arbitrage du porteur du 16 août). L’etag rendu sert à détecter une divergence. Porte les mêmes invités que la création : sans quoi une mise à jour retirerait silencieusement le compte connecté de ses propres blocs.
 
 ## Suivre les évolutions d'un système tiers
 

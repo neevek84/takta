@@ -9,6 +9,8 @@ export interface ProviderTokens {
   expiresAt: Date
   scope: string
   calendarId: string
+  /** adresse du calendrier `primary` du compte connecté ; vide pour Dolibarr */
+  ownerEmail: string
 }
 
 /**
@@ -71,6 +73,7 @@ export async function saveCredential(
     expiresAt: tokens.expiresAt,
     scope: tokens.scope,
     calendarId: tokens.calendarId,
+    ownerEmail: tokens.ownerEmail,
   }
 
   await prisma.providerCredential.upsert({
@@ -108,6 +111,7 @@ export async function getCredential(
       expiresAt: row.expiresAt ?? new Date(0),
       scope: row.scope,
       calendarId: row.calendarId,
+      ownerEmail: row.ownerEmail,
     }
   } catch (err) {
     // Le `null` reste le contrat — l'application continue sans agenda — mais
@@ -156,6 +160,17 @@ export async function setCalendarId(
   await prisma.providerCredential.update({
     where: { ownerScope_userId_provider: { ownerScope: OWNER_SCOPE_USER, userId, provider } },
     data: { calendarId },
+  })
+}
+
+export async function setOwnerEmail(
+  userId: string,
+  provider: string,
+  ownerEmail: string,
+): Promise<void> {
+  await prisma.providerCredential.update({
+    where: { ownerScope_userId_provider: { ownerScope: OWNER_SCOPE_USER, userId, provider } },
+    data: { ownerEmail },
   })
 }
 

@@ -103,6 +103,7 @@ describe('le client OAuth Google vit en base, pas dans un fichier', () => {
       expiresAt: new Date('2026-08-15T12:00:00.000Z'),
       scope: 'https://www.googleapis.com/auth/calendar',
       calendarId: 'cra@group.calendar.google.com',
+      ownerEmail: 'compte@exemple.test',
     })
     await saveGoogleOAuthClient(CLIENT)
 
@@ -117,6 +118,7 @@ describe('le client OAuth Google vit en base, pas dans un fichier', () => {
       expiresAt: new Date('2026-08-15T12:00:00.000Z'),
       scope: 'calendar',
       calendarId: 'cra@group.calendar.google.com',
+      ownerEmail: 'compte@exemple.test',
     })
     await saveGoogleOAuthClient(CLIENT)
 

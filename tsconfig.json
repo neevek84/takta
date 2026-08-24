@@ -17,6 +17,7 @@
     "skipLibCheck": true,
     "incremental": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "plugins": [
       {
         "name": "next"

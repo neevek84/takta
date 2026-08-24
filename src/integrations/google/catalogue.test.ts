@@ -17,9 +17,12 @@ describe('catalogue Google', () => {
         .sort(),
     ).toEqual([
       'DELETE /calendars/{calendarId}/events/{eventId}',
+      'GET /calendars/primary',
+      'GET /calendars/{calendarId}/acl',
       'GET /calendars/{calendarId}/events/{eventId}',
       'GET /users/me/calendarList',
       'POST /calendars',
+      'POST /calendars/{calendarId}/acl',
       'POST /calendars/{calendarId}/events',
       'POST /freeBusy',
       'POST https://oauth2.googleapis.com/token',

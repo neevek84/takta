@@ -60,6 +60,10 @@ export interface FakeGoogleApi {
   busy: Map<string, Array<{ start: string; end: string }>>
   /** calendriers créés, par identifiant */
   calendars: Map<string, { id: string; summary: string }>
+  /** règles ACL posées, par identifiant de calendrier */
+  acl: Map<string, Array<{ role: string; scope: { type: string } }>>
+  /** adresse rendue par `GET /calendars/primary`, mutable pour les tests */
+  primaryEmail: string
   /** jetons acceptés par l'échange OAuth, pour les tâches 7 et 10 */
   oauth: { accessToken: string; refreshToken: string; expiresIn: number; refusRefresh: boolean }
   /** gabarits du catalogue réellement frappés, dans l'ordre */
@@ -131,6 +135,16 @@ function verifierEvenement(body: unknown): string | null {
     return `Invalid color id: ${String(body.colorId)}`
   }
 
+  if (body.attendees !== undefined) {
+    const invites = body.attendees
+    if (!Array.isArray(invites)) return 'Invalid value for: attendees'
+    for (const invite of invites) {
+      if (!estObjet(invite) || typeof invite.email !== 'string' || invite.email === '') {
+        return 'Invalid value for: attendees'
+      }
+    }
+  }
+
   if (body.extendedProperties !== undefined) {
     const proprietes = body.extendedProperties
     if (!estObjet(proprietes)) return 'Invalid value for: extendedProperties'
@@ -169,7 +183,9 @@ export function createFakeGoogleApi(): FakeGoogleApi {
   const events = new Map<string, FakeEvent>()
   const busy = new Map<string, Array<{ start: string; end: string }>>()
   const calendars = new Map<string, { id: string; summary: string }>()
+  const acl = new Map<string, Array<{ role: string; scope: { type: string } }>>()
   const gone = new Set<string>()
+  let primaryEmail = 'utilisateur@exemple.test'
   const oauth = {
     accessToken: 'ya29.nouveau',
     refreshToken: '1//rafraichissement',
@@ -265,6 +281,10 @@ export function createFakeGoogleApi(): FakeGoogleApi {
       return json({ calendars: calendriers })
     }
 
+    if (url === `${BASE}/calendars/primary` && init.method === 'GET') {
+      return json({ id: primaryEmail })
+    }
+
     if (url === `${BASE}/calendars` && init.method === 'POST') {
       if (!estObjet(body) || typeof body.summary !== 'string' || body.summary === '') {
         return erreur(400, 'Missing summary.')
@@ -277,6 +297,27 @@ export function createFakeGoogleApi(): FakeGoogleApi {
 
     if (url.startsWith(`${BASE}/users/me/calendarList`)) {
       return json({ items: [...calendars.values()] })
+    }
+
+    const regleAcl = /\/calendars\/([^/]+)\/acl$/.exec(url)
+    if (regleAcl !== null) {
+      const calendarId = decodeURIComponent(regleAcl[1] ?? '')
+
+      if (init.method === 'GET') {
+        return json({ items: acl.get(calendarId) ?? [] })
+      }
+      if (init.method === 'POST') {
+        if (!estObjet(body) || typeof body.role !== 'string' || !estObjet(body.scope)) {
+          return erreur(400, 'Invalid ACL rule.')
+        }
+        const scope = body.scope
+        if (typeof scope.type !== 'string') return erreur(400, 'Invalid ACL rule.')
+
+        const regles = acl.get(calendarId) ?? []
+        regles.push({ role: body.role, scope: { type: scope.type } })
+        acl.set(calendarId, regles)
+        return json({ role: body.role, scope: { type: scope.type } })
+      }
     }
 
     const evenements = /\/calendars\/[^/]+\/events(?:\/([^/?]+))?/.exec(url)
@@ -341,6 +382,13 @@ export function createFakeGoogleApi(): FakeGoogleApi {
     events,
     busy,
     calendars,
+    acl,
+    get primaryEmail() {
+      return primaryEmail
+    },
+    set primaryEmail(v: string) {
+      primaryEmail = v
+    },
     oauth,
 
     failNext(mode) {

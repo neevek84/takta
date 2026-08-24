@@ -77,6 +77,19 @@ export const CATALOGUE_GOOGLE: CatalogueSysteme = {
           origine: 'identifiant de la saisie locale — sert à retrouver le bloc',
           exemple: 'entry-exemple',
         },
+        {
+          nom: 'attendees[].email',
+          source: 'IDENTIFIANT',
+          origine:
+            'ProviderCredential.ownerEmail, lu au consentement par getPrimaryCalendarEmail',
+          exemple: 'compte-exemple@gmail.com',
+        },
+        {
+          nom: 'sendUpdates (paramètre de requête)',
+          source: 'CONSTANTE',
+          origine: 'src/integrations/google/calendar.ts — none, l’invité est le compte qui écrit',
+          exemple: 'none',
+        },
       ],
       preuve: PAR_LE_DOUBLE,
       echec: {
@@ -86,7 +99,9 @@ export const CATALOGUE_GOOGLE: CatalogueSysteme = {
       reglagesTiers: [],
       note:
         "Une heure locale naïve sans `timeZone` est refusée par Google : l'instant n'existe pas " +
-        'sans fuseau.',
+        "sans fuseau. L'invité n'est autre que le compte connecté : un calendrier secondaire " +
+        'ne fusionne jamais dans le libre/occupé interrogé sous `primary`, mais un événement où ' +
+        'ce compte figure comme invité y compte, quel que soit le calendrier organisateur.',
     },
     {
       operation: 'Corriger un bloc déjà posé, sans changer son identifiant',
@@ -125,6 +140,19 @@ export const CATALOGUE_GOOGLE: CatalogueSysteme = {
           origine: 'Settings.timeZone, lu par src/services/sync/flush.ts',
           exemple: 'Europe/Paris',
         },
+        {
+          nom: 'attendees[].email',
+          source: 'IDENTIFIANT',
+          origine:
+            'ProviderCredential.ownerEmail, lu au consentement par getPrimaryCalendarEmail',
+          exemple: 'compte-exemple@gmail.com',
+        },
+        {
+          nom: 'sendUpdates (paramètre de requête)',
+          source: 'CONSTANTE',
+          origine: 'src/integrations/google/calendar.ts — none, l’invité est le compte qui écrit',
+          exemple: 'none',
+        },
       ],
       preuve: PAR_LE_DOUBLE,
       echec: {
@@ -134,7 +162,9 @@ export const CATALOGUE_GOOGLE: CatalogueSysteme = {
       reglagesTiers: [],
       note:
         'Mise à jour plutôt que suppression puis recréation, pour garder l’identifiant ' +
-        '(arbitrage du porteur du 16 août). L’etag rendu sert à détecter une divergence.',
+        '(arbitrage du porteur du 16 août). L’etag rendu sert à détecter une divergence. ' +
+        'Porte les mêmes invités que la création : sans quoi une mise à jour retirerait ' +
+        'silencieusement le compte connecté de ses propres blocs.',
     },
     {
       operation: 'Relire un bloc pour savoir s il a été touché à la main',
@@ -229,6 +259,24 @@ export const CATALOGUE_GOOGLE: CatalogueSysteme = {
       note:
         "L'exclusion du calendrier dédié vit dans le connecteur, sans quoi les blocs posés " +
         'entreraient en conflit avec eux-mêmes.',
+    },
+    {
+      operation: 'Retrouver l adresse du compte connecté, pour l inviter à ses propres blocs',
+      methode: 'GET',
+      gabarit: '/calendars/primary',
+      emis: true,
+      emisPar: 'src/integrations/google/calendar.ts · getPrimaryCalendarEmail',
+      parametres: [],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible: "Le retour de consentement annule la connexion et invite à recommencer.",
+      },
+      reglagesTiers: [],
+      note:
+        "L'identifiant du calendrier `primary` est littéralement l'adresse du compte — aucun " +
+        'scope supplémentaire à demander, `calendar` la couvre déjà. Sans cette adresse, les ' +
+        'blocs partent sans invité et le libre/occupé du compte ne les porte jamais.',
     },
     {
       operation: 'Retrouver le calendrier dédié parmi ceux de l utilisateur',
@@ -333,6 +381,71 @@ export const CATALOGUE_GOOGLE: CatalogueSysteme = {
         'Corps de formulaire obligatoire : du JSON sur cette route reçoit un `invalid_request`. ' +
         "Une seule entrée pour les deux `grant_type` — l'identité d'une entrée est le couple " +
         'méthode et chemin (D2).',
+    },
+    {
+      operation: 'Relire le partage déjà posé sur le calendrier dédié',
+      methode: 'GET',
+      gabarit: '/calendars/{calendarId}/acl',
+      emis: true,
+      emisPar:
+        'src/integrations/google/calendar.ts · assurerLibreOccupePublic (appelée par ' +
+        'ensureDedicatedCalendar)',
+      parametres: [
+        {
+          nom: 'calendarId',
+          source: 'IDENTIFIANT',
+          origine: 'calendrier dédié résolu par ensureDedicatedCalendar dans le même appel',
+          exemple: 'cal-exemple@group.calendar.google.com',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible: "Le retour de consentement annule la connexion et invite à recommencer.",
+      },
+      reglagesTiers: [],
+      note:
+        'Relue avant d’écrire : une portée `default` déjà présente ne doit pas être reposée à ' +
+        'chaque connexion.',
+    },
+    {
+      operation: 'Ouvrir la disponibilité du calendrier dédié à tout le monde, y compris hors du domaine',
+      methode: 'POST',
+      gabarit: '/calendars/{calendarId}/acl',
+      emis: true,
+      emisPar:
+        'src/integrations/google/calendar.ts · assurerLibreOccupePublic (appelée par ' +
+        'ensureDedicatedCalendar)',
+      parametres: [
+        {
+          nom: 'calendarId',
+          source: 'IDENTIFIANT',
+          origine: 'calendrier dédié résolu par ensureDedicatedCalendar dans le même appel',
+          exemple: 'cal-exemple@group.calendar.google.com',
+        },
+        {
+          nom: 'role',
+          source: 'CONSTANTE',
+          origine: 'src/integrations/google/calendar.ts — freeBusyReader, jamais davantage',
+          exemple: 'freeBusyReader',
+        },
+        {
+          nom: 'scope.type',
+          source: 'CONSTANTE',
+          origine: 'src/integrations/google/calendar.ts — default, pour couvrir l’extérieur du domaine',
+          exemple: 'default',
+        },
+      ],
+      preuve: PAR_LE_DOUBLE,
+      echec: {
+        comportement: 'ABANDONNE',
+        visible: "Le retour de consentement annule la connexion et invite à recommencer.",
+      },
+      reglagesTiers: [],
+      note:
+        'Sans cette règle, un calendrier secondaire fraîchement créé reste privé : les blocs ' +
+        'qu’il porte, même marqués `opaque`, restent invisibles à quiconque d’autre que son ' +
+        'propriétaire — vidant de son sens l’intention du lot 0.',
     },
     {
       operation: "Envoyer l utilisateur donner son consentement",
