@@ -104,7 +104,30 @@ function refus(texte: string): Message {
  * de `choisirVue`, ci-dessous, doit déjà savoir la reconnaître : sans quoi la
  * tâche qui l'ajoutera devrait revenir modifier cette règle en même temps.
  */
-type Vue = 'CALENDRIER' | 'TROIS_MOIS' | 'TABLEAU'
+export type Vue = 'CALENDRIER' | 'TROIS_MOIS' | 'TABLEAU'
+
+/**
+ * La largeur de la dernière vérification d'agenda réussie, `null` avant tout
+ * clic. `'1MOIS'` est la seule valeur que ce lot produit — `BoutonAgenda` ne
+ * vérifie jamais que le mois affiché. `'3MOIS'` existe déjà pour que la règle
+ * de portée ci-dessous sache l'attendre, sans que la tâche qui introduira la
+ * vue 3 mois doive revenir la modifier.
+ */
+export type PlageVerifiee = '1MOIS' | '3MOIS' | null
+
+/**
+ * Le résultat d'une vérification d'agenda porte la plage qu'il couvre : passer
+ * du calendrier à la vue 3 mois doit effacer le résultat quand cette plage ne
+ * couvrait qu'un mois — laisser des mois non vérifiés sans marqueur les
+ * ferait croire libres. L'inverse (revenir à une vue plus étroite ou égale)
+ * le conserve, puisque la plage vérifiée continue de couvrir ce qu'on montre.
+ *
+ * Fonction pure, indépendante de tout état de composant : testable seule,
+ * avant même que la vue 3 mois n'ait de bouton pour l'atteindre.
+ */
+export function doitEffacerOccupations(prochaine: Vue, plageVerifiee: PlageVerifiee): boolean {
+  return prochaine === 'TROIS_MOIS' && plageVerifiee !== '3MOIS'
+}
 
 export function SaisieClient(props: {
   month: string
@@ -167,15 +190,8 @@ export function SaisieClient(props: {
    * liste, il ne s'y ajoute pas.
    */
   const [occupations, setOccupations] = useState<string[]>(props.busyDates ?? [])
-  /**
-   * La largeur de la dernière vérification réussie, `null` avant tout clic.
-   *
-   * `'1MOIS'` est la seule valeur que ce lot produit — `BoutonAgenda` ne
-   * vérifie jamais que le mois affiché ici. `'3MOIS'` existe déjà pour que la
-   * règle de portée, juste en dessous, sache l'attendre sans que la tâche qui
-   * l'introduira doive revenir la modifier.
-   */
-  const [plageVerifiee, setPlageVerifiee] = useState<'1MOIS' | '3MOIS' | null>(null)
+  // Voir `PlageVerifiee` : `'1MOIS'` est la seule valeur que ce lot produit.
+  const [plageVerifiee, setPlageVerifiee] = useState<PlageVerifiee>(null)
 
   /**
    * Choisir une vue, et l'inscrire dans l'adresse.
@@ -193,11 +209,7 @@ export function SaisieClient(props: {
    */
   function choisirVue(prochaine: Vue): void {
     setVue(prochaine)
-    // Passer du calendrier à la vue 3 mois efface le résultat : la plage
-    // vérifiée ne couvre plus ce qu'on montre, et laisser des mois non
-    // vérifiés sans marqueur les ferait croire libres. L'inverse le conserve
-    // — la plage vérifiée contient ce qu'on affiche.
-    if (prochaine === 'TROIS_MOIS' && plageVerifiee !== '3MOIS') setOccupations([])
+    if (doitEffacerOccupations(prochaine, plageVerifiee)) setOccupations([])
     const parametres = new URLSearchParams(window.location.search)
     if (prochaine === 'TABLEAU') parametres.set('vue', 'tableau')
     else parametres.delete('vue')

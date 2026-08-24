@@ -32,7 +32,7 @@ vi.mock('./actions', () => ({
 
 // `vi.mock` est hissé au-dessus des imports : les server actions ne sont
 // jamais chargées, seul le composant l'est.
-import { SaisieClient } from './SaisieClient'
+import { SaisieClient, doitEffacerOccupations } from './SaisieClient'
 
 const lines: LineForGrid[] = [
   {
@@ -116,6 +116,38 @@ const deuxJournees: MonthEntry[] = [
 function ouvrirTableau(): void {
   fireEvent.click(screen.getByRole('button', { name: 'Tableau multi-CRA' }))
 }
+
+/**
+ * La règle de portée du résultat d'agenda (tâche 11), extraite en fonction
+ * pure : testable seule, sans passer par `choisirVue` ni par un bouton « 3
+ * mois » qui n'existe pas encore (il arrive à la tâche 14).
+ */
+describe('doitEffacerOccupations', () => {
+  it('efface en passant à trois mois depuis une plage d un seul mois', () => {
+    expect(doitEffacerOccupations('TROIS_MOIS', '1MOIS')).toBe(true)
+  })
+
+  it('efface en passant à trois mois sans vérification préalable', () => {
+    expect(doitEffacerOccupations('TROIS_MOIS', null)).toBe(true)
+  })
+
+  it('conserve en passant à trois mois quand la plage vérifiée est déjà de trois mois', () => {
+    expect(doitEffacerOccupations('TROIS_MOIS', '3MOIS')).toBe(false)
+  })
+
+  it('conserve en quittant trois mois vers le calendrier', () => {
+    expect(doitEffacerOccupations('CALENDRIER', '3MOIS')).toBe(false)
+  })
+
+  it('conserve en quittant trois mois vers le tableau', () => {
+    expect(doitEffacerOccupations('TABLEAU', '3MOIS')).toBe(false)
+  })
+
+  it('conserve entre calendrier et tableau, quelle que soit la plage vérifiée', () => {
+    expect(doitEffacerOccupations('TABLEAU', '1MOIS')).toBe(false)
+    expect(doitEffacerOccupations('CALENDRIER', null)).toBe(false)
+  })
+})
 
 function saisir(valeur: string): HTMLInputElement {
   const input = screen.getByLabelText('Consultant ITSM 2026-03-12') as HTMLInputElement
