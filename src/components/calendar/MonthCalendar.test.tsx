@@ -1752,9 +1752,13 @@ describe('MonthCalendar — la plage plutôt que la case', () => {
     return caseDu(date).getAttribute('data-plage')
   }
 
-  it('rend les cases carrées', () => {
+  // La hauteur reste asservie à la largeur de colonne — jamais une valeur
+  // fixe, qui se déréglerait à la première grille compacte — mais divisée par
+  // deux : `aspect-square` rendait des cases aussi hautes que larges, bien
+  // au-delà de ce qu'une case a besoin d'afficher sur un écran large.
+  it('rend les cases deux fois plus larges que hautes', () => {
     renderCalendar()
-    expect(classes(caseDu('2026-03-10'))).toContain('aspect-square')
+    expect(classes(caseDu('2026-03-10'))).toContain('aspect-[2/1]')
   })
 
   it('aligne les chiffres d une case sur l autre', () => {
@@ -2249,9 +2253,10 @@ describe('MonthCalendar — la grille compacte tient-elle a la largeur de la vue
   /**
    * Le test ci-dessus mesure le confort sur un moniteur large — 100 rem
    * pleinement déployés. Mais ce n'est pas la largeur à laquelle la vue 3
-   * mois devient *atteignable* : c'est `md` (`SaisieClient.tsx`, le bouton
-   * « 3 mois » en `hidden md:inline-flex`), et `md` vaut 768 px — le seuil
-   * par défaut de Tailwind v4, que ce projet ne redéclare nulle part
+   * mois devient *atteignable* : c'est `md` (`SaisieClient.tsx`, l'option
+   * « 3 mois » n'apparaît dans le champ de vue qu'à partir de ce seuil), et
+   * `md` vaut 768 px — le seuil par défaut de Tailwind v4, que ce projet ne
+   * redéclare nulle part
    * (`globals.css` ne porte aucun `--breakpoint-md` dans son bloc `@theme`).
    * Pas de regex ici : ce n'est pas un jeton du projet à extraire d'un
    * fichier source, mais une constante du framework — documentée comme

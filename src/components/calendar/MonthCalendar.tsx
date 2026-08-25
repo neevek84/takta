@@ -928,7 +928,7 @@ function Case({
         // au-dessus. Les poser deux fois laisserait l'ordre d'insertion CSS
         // trancher — précisément ce que `cn()` existe pour empêcher.
         className={cn(
-          'touch-target relative flex aspect-square flex-col items-center justify-center text-sm tabular-nums',
+          'touch-target relative flex aspect-[2/1] flex-col items-center justify-center text-sm tabular-nums',
           FOND_JOUR[jourDit],
           aujourdhui ? 'border-2 border-ink' : 'border border-rule',
           // Le tireté dit le prévisionnel sans la teinte : deux aplats opaques

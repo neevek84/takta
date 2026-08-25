@@ -19,6 +19,13 @@ model User {
   /// l'attribution de tout ce qui a été poussé chez Dolibarr.
   disabled     Boolean  @default(false)
 
+  /// La vue ouverte par défaut sur `/saisie` — `CALENDRIER`, `TROIS_MOIS` ou
+  /// `TABLEAU` (voir `core/saisie/vue.ts`), `null` tant que la personne n'a
+  /// rien réglé dans son profil. Une chaîne libre et non un enum Prisma :
+  /// le schéma reste dans l'intersection SQLite/Postgres (voir README,
+  /// section « Portabilité SQLite / Postgres »).
+  defaultVue   String?
+
   createdAt    DateTime @default(now())
 
   timeEntries TimeEntry[]

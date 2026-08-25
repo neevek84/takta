@@ -12,10 +12,11 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
  * importe encore quoi que ce soit de ce module, un appel s'y voit, quelle que
  * soit la fonction appelée.
  */
-const { agendaEspion, aUnConnecteurAgenda, appliquerCase } = vi.hoisted(() => ({
+const { agendaEspion, aUnConnecteurAgenda, appliquerCase, vueParDefautDe } = vi.hoisted(() => ({
   agendaEspion: vi.fn(),
   aUnConnecteurAgenda: vi.fn(),
   appliquerCase: vi.fn(),
+  vueParDefautDe: vi.fn(),
 }))
 
 vi.mock('@/auth', () => ({ requireUser: async () => ({ id: 'u1', role: 'USER' as const }) }))
@@ -23,6 +24,7 @@ vi.mock('@/services/availability', () => ({ getBusyRange: agendaEspion }))
 // La lecture qui remplace l'ancien appel automatique : locale, sans réseau —
 // voir `src/services/credentials.ts`.
 vi.mock('@/services/credentials', () => ({ aUnConnecteurAgenda }))
+vi.mock('@/services/saisie/vue-par-defaut', () => ({ vueParDefautDe }))
 vi.mock('@/services/settings', () => ({
   getSettings: async () => ({
     minutesParJour: 480,
@@ -77,6 +79,36 @@ import SaisiePage from './page'
 async function rendre(): Promise<void> {
   render(await SaisiePage({ params: Promise.resolve({ month: '2026-03' }), searchParams: Promise.resolve({}) }))
 }
+
+/**
+ * Un écran de largeur donnée, vu par `matchMedia` — même mécanique que
+ * `SaisieClient.test.tsx` et `NavRail.test.tsx`.
+ */
+function ecranDe(largeur: number): void {
+  vi.spyOn(window, 'matchMedia').mockImplementation((requete: string) => {
+    const trouve = /min-width:\s*([\d.]+)(rem|px)/.exec(requete)
+    if (trouve === null) throw new Error(`requête média inattendue : ${requete}`)
+    const seuil = trouve[2] === 'rem' ? Number(trouve[1]) * 16 : Number(trouve[1])
+    return {
+      matches: largeur >= seuil,
+      media: requete,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    } as MediaQueryList
+  })
+}
+
+beforeEach(() => {
+  vueParDefautDe.mockReset().mockResolvedValue(null)
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('page de saisie — plus de lecture automatique de l agenda', () => {
   beforeEach(() => {
@@ -198,9 +230,7 @@ describe('page de saisie — la vue 3 mois', () => {
   it('resout la vue 3 mois depuis l adresse', async () => {
     await rendreEnTroisMois('2026-03')
 
-    expect(screen.getByRole('button', { name: '3 mois' }).getAttribute('aria-pressed')).toBe(
-      'true',
-    )
+    expect((screen.getByLabelText('Vue') as HTMLSelectElement).value).toBe('TROIS_MOIS')
   })
 
   it('montre le mois choisi et les deux suivants', async () => {
@@ -230,8 +260,57 @@ describe('page de saisie — la vue 3 mois', () => {
   // Vingt et une colonnes ne tiennent pas sur un téléphone. Le calendrier
   // reste la surface de saisie mobile.
   it('n est pas atteignable sous md', async () => {
+    ecranDe(375)
     await rendreEnTroisMois('2026-03')
 
-    expect(screen.getByRole('button', { name: '3 mois' }).className).toContain('hidden md:')
+    expect(screen.queryByRole('option', { name: '3 mois' })).toBeNull()
+  })
+})
+
+/**
+ * La vue par défaut vit désormais dans le profil, pas seulement dans
+ * l'adresse : `?vue=` reste prioritaire (un lien partagé doit rester fiable),
+ * mais son absence retombe sur la préférence du compte plutôt que sur
+ * `CALENDRIER` en dur.
+ */
+describe('page de saisie — la vue par défaut du profil', () => {
+  beforeEach(() => {
+    aUnConnecteurAgenda.mockReset().mockResolvedValue(false)
+    window.localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  it("utilise la préférence de profil quand l'adresse ne dit rien", async () => {
+    vueParDefautDe.mockResolvedValue('TABLEAU')
+
+    render(
+      await SaisiePage({
+        params: Promise.resolve({ month: '2026-03' }),
+        searchParams: Promise.resolve({}),
+      }),
+    )
+
+    expect((screen.getByLabelText('Vue') as HTMLSelectElement).value).toBe('TABLEAU')
+  })
+
+  it("l'adresse l'emporte sur la préférence de profil", async () => {
+    vueParDefautDe.mockResolvedValue('TROIS_MOIS')
+
+    render(
+      await SaisiePage({
+        params: Promise.resolve({ month: '2026-03' }),
+        searchParams: Promise.resolve({ vue: 'tableau' }),
+      }),
+    )
+
+    expect((screen.getByLabelText('Vue') as HTMLSelectElement).value).toBe('TABLEAU')
+  })
+
+  it("retombe sur Calendrier quand ni l'adresse ni le profil ne disent rien", async () => {
+    vueParDefautDe.mockResolvedValue(null)
+
+    await rendre()
+
+    expect((screen.getByLabelText('Vue') as HTMLSelectElement).value).toBe('CALENDRIER')
   })
 })

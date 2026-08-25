@@ -120,15 +120,47 @@ const deuxJournees: MonthEntry[] = [
   { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
 ]
 
+/** Les trois boutons de vue ont fusionné en un seul champ liste de choix. */
+function choisirVueDansLeSelect(valeur: string): void {
+  fireEvent.change(screen.getByLabelText('Vue'), { target: { value: valeur } })
+}
+
 /** La vue tableau n'est plus la vue par défaut : ces tests l'ouvrent d'abord. */
 function ouvrirTableau(): void {
-  fireEvent.click(screen.getByRole('button', { name: 'Tableau multi-CRA' }))
+  choisirVueDansLeSelect('TABLEAU')
 }
 
 /** Idem pour la vue 3 mois. */
 function ouvrirTroisMois(): void {
-  fireEvent.click(screen.getByRole('button', { name: '3 mois' }))
+  choisirVueDansLeSelect('TROIS_MOIS')
 }
+
+/**
+ * Un écran de largeur donnée, vu par `matchMedia` — même mécanique que
+ * `NavRail.test.tsx` : la requête est interprétée, pas ignorée, pour que le
+ * seuil testé reste celui que le composant écrit.
+ */
+function ecranDe(largeur: number): void {
+  vi.spyOn(window, 'matchMedia').mockImplementation((requete: string) => {
+    const trouve = /min-width:\s*([\d.]+)(rem|px)/.exec(requete)
+    if (trouve === null) throw new Error(`requête média inattendue : ${requete}`)
+    const seuil = trouve[2] === 'rem' ? Number(trouve[1]) * 16 : Number(trouve[1])
+    return {
+      matches: largeur >= seuil,
+      media: requete,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    } as MediaQueryList
+  })
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 /**
  * La règle de portée du résultat d'agenda (tâche 11), extraite en fonction
@@ -464,21 +496,28 @@ describe('SaisieClient — calendrier', () => {
     expect(screen.getByLabelText('Consultant ITSM 2026-03-12')).toBeDefined()
     expect(screen.queryByTestId('grille-calendrier')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
+    choisirVueDansLeSelect('CALENDRIER')
     expect(screen.getByTestId('grille-calendrier')).toBeDefined()
     expect(screen.queryByLabelText('Consultant ITSM 2026-03-12')).toBeNull()
   })
 
-  it('réserve la vue tableau au poste', () => {
+  it('réserve les vues 3 mois et tableau au poste', () => {
+    // Sept colonnes tiennent sur un téléphone ; trente et une, non — et le
+    // tableau montre toutes les missions et prestations à la fois.
+    ecranDe(375)
     renderClient()
-    // Sept colonnes tiennent sur un téléphone ; trente et une, non.
-    expect(screen.getByRole('button', { name: 'Tableau multi-CRA' }).className).toContain('hidden')
-    expect(screen.getByRole('button', { name: 'Tableau multi-CRA' }).className).toContain(
-      'md:inline-flex',
-    )
+    expect(screen.queryByRole('option', { name: 'Tableau multi-CRA' })).toBeNull()
+    expect(screen.queryByRole('option', { name: '3 mois' })).toBeNull()
     // La vue calendrier, elle, reste offerte partout : la reléguer aussi au
     // poste ne laisserait aucune vue au téléphone.
-    expect(screen.getByRole('button', { name: 'Calendrier' }).className).not.toContain('hidden')
+    expect(screen.getByRole('option', { name: 'Calendrier' })).toBeDefined()
+  })
+
+  it('propose les trois vues au poste', () => {
+    ecranDe(1280)
+    renderClient()
+    expect(screen.getByRole('option', { name: 'Tableau multi-CRA' })).toBeDefined()
+    expect(screen.getByRole('option', { name: '3 mois' })).toBeDefined()
   })
 
   // Le mode et le seuil traversent la page, le client et la grille avant
@@ -592,7 +631,7 @@ describe('SaisieClient — calendrier', () => {
     expect(screen.queryByRole('button', { name: 'Cette prestation' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Toutes les prestations' })).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
+    choisirVueDansLeSelect('CALENDRIER')
     expect(screen.getByRole('button', { name: 'Cette prestation' })).toBeDefined()
   })
 
@@ -600,7 +639,7 @@ describe('SaisieClient — calendrier', () => {
   // affecté : c'est sa nature, et son nom doit le dire.
   it('nomme le tableau comme la vue multi-CRA', () => {
     renderClient()
-    expect(screen.getByRole('button', { name: /multi-CRA/ })).toBeDefined()
+    expect(screen.getByRole('option', { name: /multi-CRA/ })).toBeDefined()
 
     ouvrirTableau()
     expect(screen.getByTestId('nature-tableau').textContent).toContain(
@@ -1008,10 +1047,10 @@ describe('SaisieClient — vue 3 mois', () => {
   // Vingt et une colonnes ne tiennent pas sur un téléphone. Le calendrier
   // reste la surface de saisie mobile.
   it('reste inatteignable sous md', () => {
+    ecranDe(375)
     renderClient()
 
-    expect(screen.getByRole('button', { name: '3 mois' }).className).toContain('hidden')
-    expect(screen.getByRole('button', { name: '3 mois' }).className).toContain('md:inline-flex')
+    expect(screen.queryByRole('option', { name: '3 mois' })).toBeNull()
   })
 
   // Le formulaire d'heures est le même geste qu'au calendrier : Maj+Entrée
@@ -1191,7 +1230,7 @@ describe('SaisieClient — la réglette du mois', () => {
   it('laisse au tableau sa barre compacte', () => {
     // La vue tableau ne bouge pas : `pleineLargeur` y reste à `false`.
     renderClient()
-    fireEvent.click(screen.getByRole('button', { name: 'Tableau multi-CRA' }))
+    choisirVueDansLeSelect('TABLEAU')
 
     expect(screen.getByTestId('piste-engagement-l1').className).toContain('w-40')
     expect(screen.getByTestId('piste-engagement-l1').className).not.toContain('w-full')
@@ -1225,7 +1264,7 @@ describe('la vue choisie vit dans l adresse', () => {
   it("inscrit le choix dans l'adresse sans recharger la page", () => {
     renderClient()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tableau multi-CRA' }))
+    choisirVueDansLeSelect('TABLEAU')
     expect(window.location.search).toBe('?vue=tableau')
   })
 
@@ -1234,7 +1273,7 @@ describe('la vue choisie vit dans l adresse', () => {
   it("retire le paramètre en revenant au calendrier", () => {
     renderClient({ vueInitiale: 'TABLEAU' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
+    choisirVueDansLeSelect('CALENDRIER')
     expect(window.location.search).toBe('')
   })
 
@@ -1242,22 +1281,20 @@ describe('la vue choisie vit dans l adresse', () => {
   it("s'ouvre sur la vue 3 mois quand l'adresse le demande", () => {
     renderClient({ vueInitiale: 'TROIS_MOIS' })
 
-    expect(screen.getByRole('button', { name: '3 mois' }).getAttribute('aria-pressed')).toBe(
-      'true',
-    )
+    expect((screen.getByLabelText('Vue') as HTMLSelectElement).value).toBe('TROIS_MOIS')
   })
 
   it("inscrit le choix 3 mois dans l'adresse sans recharger la page", () => {
     renderClient()
 
-    fireEvent.click(screen.getByRole('button', { name: '3 mois' }))
+    choisirVueDansLeSelect('TROIS_MOIS')
     expect(window.location.search).toBe('?vue=3mois')
   })
 
   it('retire le paramètre en revenant au calendrier depuis la vue 3 mois', () => {
     renderClient({ vueInitiale: 'TROIS_MOIS' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Calendrier' }))
+    choisirVueDansLeSelect('CALENDRIER')
     expect(window.location.search).toBe('')
   })
 })
