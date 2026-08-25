@@ -111,6 +111,22 @@ describe('administration des comptes', () => {
       where: { entityType: LIEN_UTILISATEUR, entityId: { in: anciens.map((u) => u.id) } },
     })
     await prisma.user.deleteMany({ where: { email: { startsWith: 'roles-' } } })
+    // `autresAdministrateurs` compte volontairement tous les administrateurs
+    // actifs de la base, pas seulement ceux de ce décor : c'est ce qui rend la
+    // garde correcte en production. Mais la suite entière partage un seul
+    // fichier SQLite (`vitest.globalSetup.ts`), et `role` vaut `ADMIN` par
+    // défaut sur `User` : tout fichier de test antérieur qui crée un
+    // utilisateur sans préciser `role` — et il en existe plusieurs — laisse un
+    // administrateur actif derrière lui. Comme les fichiers s'exécutent
+    // intégralement les uns après les autres (`fileParallelism: false`), un
+    // administrateur actif trouvé ici appartient forcément à un fichier déjà
+    // terminé : le neutraliser ne peut donc perturber aucune assertion à
+    // venir, et rend « dernier administrateur » vrai pour ce décor plutôt que
+    // pour toute la base.
+    await prisma.user.updateMany({
+      where: { role: 'ADMIN', disabled: false },
+      data: { disabled: true },
+    })
     const a = await prisma.user.create({
       data: { email: 'roles-patron@test.local', name: 'Patron', passwordHash: '', role: 'ADMIN' },
     })
