@@ -41,14 +41,12 @@ const REPRISE = { ...MANUELLE, engagementSource: 'DOLIBARR_PROPALE' as const }
 const DEPUIS_COMMANDE = { ...MANUELLE, engagementSource: 'DOLIBARR_COMMANDE' as const }
 
 /**
- * Le formulaire est replié par défaut : le volet de détail portait autant de
- * formulaires ouverts que la mission a de prestations. Les tests qui portent
- * sur les champs l'ouvrent d'abord.
+ * La visibilité du panneau est décidée par `LigneRow`, pas par ce composant :
+ * il rend directement ses champs, et `onClose` est le seul geste de
+ * fermeture qui lui reste.
  */
-function rendreOuvert(line: Parameters<typeof LigneForm>[0]['line']) {
-  const rendu = render(<LigneForm line={line} />)
-  fireEvent.click(screen.getByRole('button', { name: /^Modifier/ }))
-  return rendu
+function rendre(line: Parameters<typeof LigneForm>[0]['line'], onClose = vi.fn()) {
+  return { onClose, ...render(<LigneForm line={line} onClose={onClose} />) }
 }
 
 function soumettre(): void {
@@ -58,20 +56,11 @@ function soumettre(): void {
 }
 
 describe('LigneForm', () => {
-  it('reste replié tant qu on ne demande pas à modifier', () => {
-    // Le défaut : cinq prestations affichaient cinq formulaires ouverts, alors
-    // qu'on n'en modifie qu'une à la fois, et rarement.
-    render(<LigneForm line={MANUELLE} />)
-
-    expect(document.querySelector('form')).toBeNull()
-    expect(screen.getByRole('button', { name: /Modifier « Consultant ITSM »/ })).toBeTruthy()
-  })
-
-  it('se referme sans rien enregistrer', () => {
-    rendreOuvert(MANUELLE)
+  it('appelle onClose sans rien enregistrer', () => {
+    const { onClose } = rendre(MANUELLE)
     fireEvent.click(screen.getByRole('button', { name: 'Fermer' }))
 
-    expect(document.querySelector('form')).toBeNull()
+    expect(onClose).toHaveBeenCalledOnce()
     expect(modifierLigne).not.toHaveBeenCalled()
   })
 
@@ -79,7 +68,7 @@ describe('LigneForm', () => {
     // Le verrou testait « est-ce une propale ? ». Une prestation reprise d'une
     // commande redevenait donc modifiable, et ses jours vendus pouvaient
     // diverger du document — sur les chiffres qui seront facturés.
-    const { container } = rendreOuvert(DEPUIS_COMMANDE)
+    const { container } = rendre(DEPUIS_COMMANDE)
 
     expect(screen.getByLabelText('Jours vendus')).toHaveProperty('readOnly', true)
     expect(container.querySelector('input[name="joursVendus"]')).toBeNull()
@@ -88,18 +77,18 @@ describe('LigneForm', () => {
   })
 
   it('affiche les chiffres vendus dans leurs unités lisibles', () => {
-    rendreOuvert(MANUELLE)
+    rendre(MANUELLE)
     expect(screen.getByLabelText('Jours vendus')).toHaveProperty('value', '30')
     expect(screen.getByLabelText('TJM (€)')).toHaveProperty('value', '800')
   })
 
   it('transporte la prestation concernée, sans quoi l écriture viserait une autre', () => {
-    const { container } = rendreOuvert({ ...MANUELLE, id: 'l-42' })
+    const { container } = rendre({ ...MANUELLE, id: 'l-42' })
     expect(container.querySelector('input[name="lineId"]')).toHaveProperty('value', 'l-42')
   })
 
   it('laisse modifier les chiffres d une ligne manuelle', () => {
-    const { container } = rendreOuvert(MANUELLE)
+    const { container } = rendre(MANUELLE)
     expect(screen.getByLabelText('Jours vendus')).toHaveProperty('readOnly', false)
     expect(screen.getByLabelText('TJM (€)')).toHaveProperty('readOnly', false)
     expect(container.querySelector('input[name="joursVendus"]')).not.toBeNull()
@@ -109,7 +98,7 @@ describe('LigneForm', () => {
   it('ne propose pas de modifier des chiffres repris de la propale', () => {
     // Un champ qu'on peut remplir mais dont l'enregistrement sera refusé est
     // pire que pas de champ du tout.
-    const { container } = rendreOuvert(REPRISE)
+    const { container } = rendre(REPRISE)
     expect(screen.getByLabelText('Jours vendus')).toHaveProperty('readOnly', true)
     expect(screen.getByLabelText('TJM (€)')).toHaveProperty('readOnly', true)
     // Et rien n'est soumis : le formulaire n'envoie pas ce qu'il sait refusé.
@@ -120,18 +109,20 @@ describe('LigneForm', () => {
   it('dit en toutes lettres d où viennent ces chiffres', () => {
     // Aucune information portée par la seule couleur, ni par le seul grisé
     // d'un champ.
-    rendreOuvert(REPRISE)
+    rendre(REPRISE)
     expect(screen.getByText(/propale Dolibarr/i)).not.toBeNull()
   })
 
   it('ne mentionne aucune propale sur une ligne manuelle', () => {
-    rendreOuvert(MANUELLE)
+    rendre(MANUELLE)
     expect(screen.queryByText(/propale Dolibarr/i)).toBeNull()
   })
 
-  it('laisse modifier le libellé et l unité, même sur une ligne reprise', () => {
-    const { container } = rendreOuvert(REPRISE)
-    expect(screen.getByLabelText('Libellé')).toHaveProperty('readOnly', false)
+  it('laisse modifier l unité, même sur une ligne reprise', () => {
+    // Le libellé, lui, se renomme depuis `RenamePrestation` — plus depuis ce
+    // formulaire, qui ne porte plus que les chiffres.
+    const { container } = rendre(REPRISE)
+    expect(screen.queryByLabelText('Libellé')).toBeNull()
     expect(container.querySelector('select[name="displayUnit"]')).not.toBeNull()
   })
 
@@ -140,7 +131,7 @@ describe('LigneForm', () => {
       ok: false,
       message: 'Les jours vendus proviennent de la propale Dolibarr.',
     })
-    rendreOuvert(REPRISE)
+    rendre(REPRISE)
 
     soumettre()
 
@@ -152,7 +143,7 @@ describe('LigneForm', () => {
   })
 
   it('confirme l enregistrement quand le service accepte', async () => {
-    rendreOuvert(MANUELLE)
+    rendre(MANUELLE)
     soumettre()
 
     await waitFor(() => {
@@ -164,11 +155,7 @@ describe('LigneForm', () => {
   // Le geste manquait : une prestation créée par erreur, ou terminée, restait
   // dans la grille de saisie pour toujours.
   it('donne accès à l archivage et à la suppression de la prestation', () => {
-    render(<LigneForm line={MANUELLE} />)
-    expect(screen.queryByRole('button', { name: /Archiver ou supprimer/ })).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /^Modifier/ }))
-
+    rendre(MANUELLE)
     expect(
       screen.getByRole('button', { name: /Archiver ou supprimer « Consultant ITSM »/ }),
     ).toBeTruthy()
@@ -177,12 +164,12 @@ describe('LigneForm', () => {
   // Le verrou d'engagement porte sur les jours vendus et le TJM, pas sur le
   // rangement : une prestation reprise se range comme une autre.
   it('le propose aussi sur une prestation reprise de Dolibarr', () => {
-    rendreOuvert(REPRISE)
+    rendre(REPRISE)
     expect(screen.getByRole('button', { name: /Archiver ou supprimer/ })).toBeTruthy()
   })
 
   it('ne confirme rien tant que rien n a été soumis', () => {
-    rendreOuvert(MANUELLE)
+    rendre(MANUELLE)
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
   })
