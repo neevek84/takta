@@ -8,6 +8,9 @@ vi.mock('./actions', () => ({
   addMission: vi.fn(),
   addLine: vi.fn(),
   creerMissionDepuisCommande: vi.fn(),
+  // `RenamePrestation` s'en sert directement, sans passer par `LigneForm` :
+  // c'est le seul autre appel de ce module que la page atteint.
+  modifierLigne: vi.fn().mockResolvedValue({ ok: true }),
 }))
 // Les deux formulaires ont leurs propres tests ; ici on vérifie le câblage.
 vi.mock('./LigneForm', () => ({ LigneForm: () => <div data-testid="ligne-form" /> }))

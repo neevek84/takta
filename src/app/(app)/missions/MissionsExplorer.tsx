@@ -1,16 +1,16 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { libelleEngagement } from '@/core/dolibarr/engagement'
 import type { MissionForUser } from '@/services/missions'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
+import { DataTable } from '@/components/ui/DataTable'
 import { Field } from '@/components/ui/Field'
 import { Origine } from '@/components/ui/Origine'
 import { Select } from '@/components/ui/Select'
 import { addClient, addMission, addLine, creerMissionDepuisCommande } from './actions'
-import { LigneForm } from './LigneForm'
+import { LigneRow } from './LigneRow'
 import { RepriseTaches } from './RepriseTaches'
 import { RepriseTemps } from './RepriseTemps'
 import { GestionMission } from './GestionMission'
@@ -220,6 +220,16 @@ export function MissionsExplorer({
   )
 }
 
+/** Une case de la bande de chiffres-clés, en tête du détail. */
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-off px-4 py-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</p>
+      <p className="text-lg font-bold tabular-nums text-ink">{value}</p>
+    </div>
+  )
+}
+
 function Detail({
   mission,
   projetRef,
@@ -228,98 +238,145 @@ function Detail({
   /** référence du projet Dolibarr, `null` quand la mission est locale */
   projetRef: string | null
 }) {
+  // La somme des prestations : ce qu'on vient lire en premier en ouvrant une
+  // mission, avant d'aller chercher le détail ligne par ligne.
+  const joursVendus = mission.lines.reduce((n, l) => n + l.soldCentiemes, 0) / 100
+  const valorisation = mission.lines.reduce(
+    (n, l) => n + (l.soldCentiemes / 100) * (l.tjmCents / 100),
+    0,
+  )
+
   return (
-    <Card>
-      <h2 className="mb-3 flex flex-wrap items-center gap-2 font-medium">
-        <span>
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="flex flex-wrap items-center gap-2 text-lg font-medium">
           {mission.clientName} · {mission.label}
-        </span>
-        <span className="text-xs font-normal text-muted">
-          {mission.minutesParJourEffectif / 60} h
-          {mission.minutesParJourSurcharge === null ? ' (hérité)' : ''}
-        </span>
-        <Origine
-          dansDolibarr={mission.dolibarrProjectId !== null}
-          detail={
-            projetRef === null
-              ? 'aucun projet Dolibarr : les temps de cette mission ne partiront pas'
-              : `projet ${projetRef}`
-          }
-        />
-      </h2>
+        </h2>
+        <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
+          <span>
+            {mission.minutesParJourEffectif / 60} h
+            {mission.minutesParJourSurcharge === null ? ' (hérité)' : ''}
+          </span>
+          <Origine
+            dansDolibarr={mission.dolibarrProjectId !== null}
+            detail={
+              projetRef === null
+                ? 'aucun projet Dolibarr : les temps de cette mission ne partiront pas'
+                : `projet ${projetRef}`
+            }
+          />
+        </p>
+      </div>
 
-      <ul className="mb-4 text-sm">
-        {mission.lines.map((l) => (
-          <li key={l.id} className="border-b border-rule py-2 last:border-0">
-            <div className="flex flex-wrap gap-4">
-              <span className="flex-1">{l.label}</span>
-              <span>{l.soldCentiemes / 100} j</span>
-              <span>{l.tjmCents / 100} €</span>
-              <span className="text-muted">{l.displayUnit}</span>
-              {/* La source est écrite, jamais seulement teintée. Et elle vient
-                  d'une table exhaustive : un ternaire affichait « saisi ici »
-                  pour un engagement repris d'une commande. */}
-              <span className="text-muted">Engagement : {libelleEngagement(l.engagementSource)}</span>
-              <Origine
-                dansDolibarr={l.dolibarrTaskId !== null}
-                detail={
-                  l.dolibarrTaskId === null
-                    ? 'aucune tâche Dolibarr : les temps de cette prestation ne partiront pas'
-                    : `tâche n° ${l.dolibarrTaskId}`
-                }
-              />
-            </div>
-            <LigneForm line={l} />
-          </li>
-        ))}
-        {mission.lines.length === 0 && <li className="text-muted">Aucune prestation</li>}
-      </ul>
+      <div className="grid grid-cols-3 gap-3">
+        <Stat label="Vendu" value={`${joursVendus} j`} />
+        <Stat label="Valorisation" value={`${valorisation.toLocaleString('fr-FR')} €`} />
+        <Stat label="Prestations" value={String(mission.lines.length)} />
+      </div>
 
-      <form action={addLine} className="flex flex-wrap items-end gap-2">
-        <input type="hidden" name="missionId" value={mission.id} />
-        <Field label="Prestation" name="label" required />
-        <Field
-          label="Jours vendus"
-          name="joursVendus"
-          type="number"
-          step="0.5"
-          required
-          className="w-28"
-        />
-        <Field label="TJM (€)" name="tjm" type="number" step="1" defaultValue={0} className="w-28" />
-        <Select label="Unité d’affichage" name="displayUnit">
-          <option value="JOUR">Jour</option>
-          <option value="DEMI_JOUR">Demi-journée</option>
-          <option value="HEURE">Heure</option>
-        </Select>
-        <Button type="submit" variant="primary">
-          Ajouter
-        </Button>
-      </form>
+      <Card>
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Prestations</p>
+
+        {mission.lines.length === 0 ? (
+          <p className="text-sm text-muted">Aucune prestation</p>
+        ) : (
+          <DataTable caption={`Prestations de ${mission.label}`}>
+            <thead>
+              <tr className="border-b border-rule text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                <th className="py-2 pr-3 font-semibold">Prestation</th>
+                <th className="py-2 pr-3 text-right font-semibold">Vendu</th>
+                <th className="py-2 pr-3 text-right font-semibold">TJM</th>
+                <th className="py-2 pr-3 font-semibold">Unité</th>
+                <th className="py-2 pr-3 font-semibold">Origine</th>
+                <th className="py-2">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {mission.lines.map((l) => (
+                <LigneRow key={l.id} line={l} />
+              ))}
+            </tbody>
+          </DataTable>
+        )}
+
+        <details className="group mt-4 [&::-webkit-details-marker]:hidden">
+          <summary className="inline-flex cursor-pointer items-center gap-1 text-sm font-medium text-link">
+            + Ajouter une prestation
+          </summary>
+          <form action={addLine} className="mt-3 flex flex-wrap items-end gap-2">
+            <input type="hidden" name="missionId" value={mission.id} />
+            <Field label="Prestation" name="label" required />
+            <Field
+              label="Jours vendus"
+              name="joursVendus"
+              type="number"
+              step="0.5"
+              required
+              className="w-28"
+            />
+            <Field
+              label="TJM (€)"
+              name="tjm"
+              type="number"
+              step="1"
+              defaultValue={0}
+              className="w-28"
+            />
+            <Select label="Unité d’affichage" name="displayUnit">
+              <option value="JOUR">Jour</option>
+              <option value="DEMI_JOUR">Demi-journée</option>
+              <option value="HEURE">Heure</option>
+            </Select>
+            <Button type="submit" variant="primary">
+              Ajouter
+            </Button>
+          </form>
+        </details>
+      </Card>
 
       {/* Seulement quand la mission suit un projet : sans projet il n'y a
           aucune tâche à reprendre, et le bouton mentirait. */}
       {mission.dolibarrProjectId !== null && (
-        <>
-          <RepriseTaches missionId={mission.id} />
-          {/* Après les tâches, et pas avant : un temps se pose sur une
-              prestation, qui n'existe qu'une fois la tâche reprise. */}
-          <RepriseTemps missionId={mission.id} />
-        </>
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Dolibarr</p>
+          <div className="rounded-lg border border-rule bg-surface p-4 [&>:first-child]:mt-0 [&>:first-child]:border-t-0 [&>:first-child]:pt-0">
+            <RepriseTaches missionId={mission.id} />
+            {/* Après les tâches, et pas avant : un temps se pose sur une
+                prestation, qui n'existe qu'une fois la tâche reprise. */}
+            <RepriseTemps missionId={mission.id} />
+          </div>
+        </div>
       )}
 
-      <SignataireForm
-        missionId={mission.id}
-        signataireNom={mission.signataireNom}
-        signataireEmail={mission.signataireEmail}
-      />
+      <details className="group rounded-lg border border-rule bg-surface [&::-webkit-details-marker]:hidden">
+        <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
+          Signataire du CRA
+          <span aria-hidden="true" className="transition-transform group-open:rotate-90">
+            ▸
+          </span>
+        </summary>
+        <div className="px-4 pb-4 [&>form]:mt-0">
+          <SignataireForm
+            missionId={mission.id}
+            signataireNom={mission.signataireNom}
+            signataireEmail={mission.signataireEmail}
+          />
+        </div>
+      </details>
 
-      <GestionMission
-        missionId={mission.id}
-        label={mission.label}
-        dansDolibarr={mission.dolibarrProjectId !== null}
-      />
-    </Card>
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Gestion</p>
+        <div className="rounded-lg border border-rule bg-surface p-4">
+          <GestionMission
+            missionId={mission.id}
+            label={mission.label}
+            dansDolibarr={mission.dolibarrProjectId !== null}
+          />
+        </div>
+      </div>
+    </div>
   )
 }
 
