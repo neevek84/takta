@@ -3,11 +3,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-const { enregistrerIdentifiantDolibarr, deconnecterGoogle } = vi.hoisted(() => ({
-  enregistrerIdentifiantDolibarr: vi.fn(),
-  deconnecterGoogle: vi.fn(),
+const { enregistrerIdentifiantDolibarr, deconnecterGoogle, enregistrerVueParDefaut } = vi.hoisted(
+  () => ({
+    enregistrerIdentifiantDolibarr: vi.fn(),
+    deconnecterGoogle: vi.fn(),
+    enregistrerVueParDefaut: vi.fn(),
+  }),
+)
+vi.mock('./actions', () => ({
+  enregistrerIdentifiantDolibarr,
+  deconnecterGoogle,
+  enregistrerVueParDefaut,
 }))
-vi.mock('./actions', () => ({ enregistrerIdentifiantDolibarr, deconnecterGoogle }))
 
 import { ProfilClient } from './ProfilClient'
 
@@ -17,12 +24,13 @@ const ABSENT = { connected: false, calendarId: '', scope: '', connectedAt: null 
 beforeEach(() => {
   enregistrerIdentifiantDolibarr.mockReset()
   deconnecterGoogle.mockReset().mockResolvedValue(undefined)
+  enregistrerVueParDefaut.mockReset()
 })
 afterEach(cleanup)
 
 describe('l identifiant Dolibarr', () => {
   it('montre celui de la personne quand elle en a un', () => {
-    render(<ProfilClient identifiant={3} suggestion={null} connection={ABSENT} />)
+    render(<ProfilClient identifiant={3} suggestion={null} connection={ABSENT} vueParDefaut={null} />)
 
     const champ = screen.getByLabelText('Identifiant utilisateur Dolibarr') as HTMLInputElement
     expect(champ.value).toBe('3')
@@ -32,7 +40,7 @@ describe('l identifiant Dolibarr', () => {
   // La lui redemander sans la lui montrer serait lui faire chercher un nombre
   // que l'application connaît.
   it("propose l'ancien réglage d'instance, en disant d'où il vient", () => {
-    render(<ProfilClient identifiant={null} suggestion={4} connection={ABSENT} />)
+    render(<ProfilClient identifiant={null} suggestion={4} connection={ABSENT} vueParDefaut={null} />)
 
     const champ = screen.getByLabelText('Identifiant utilisateur Dolibarr') as HTMLInputElement
     expect(champ.value).toBe('4')
@@ -42,7 +50,7 @@ describe('l identifiant Dolibarr', () => {
   // Une suggestion n'est pas un réglage : tant qu'elle n'est pas confirmée, rien
   // ne part. L'écran doit donc dire que le geste reste à faire.
   it('ne fait pas passer la suggestion pour un réglage enregistré', () => {
-    render(<ProfilClient identifiant={null} suggestion={4} connection={ABSENT} />)
+    render(<ProfilClient identifiant={null} suggestion={4} connection={ABSENT} vueParDefaut={null} />)
 
     expect(document.body.textContent).toMatch(/n’est pas encore enregistré/i)
   })
@@ -52,14 +60,14 @@ describe('l identifiant Dolibarr', () => {
   // vous est proposé » au-dessus d'un champ qui porte 3, et rien ne dirait
   // lequel des deux part réellement chez Dolibarr.
   it('se tait sur la suggestion quand la personne a déjà le sien', () => {
-    render(<ProfilClient identifiant={3} suggestion={4} connection={ABSENT} />)
+    render(<ProfilClient identifiant={3} suggestion={4} connection={ABSENT} vueParDefaut={null} />)
 
     expect(document.body.textContent).not.toMatch(/réglages de l’instance/i)
     expect(document.body.textContent).not.toMatch(/n’est pas encore enregistré/i)
   })
 
   it('dit quand rien n est renseigné, et ce que ça empêche', () => {
-    render(<ProfilClient identifiant={null} suggestion={null} connection={ABSENT} />)
+    render(<ProfilClient identifiant={null} suggestion={null} connection={ABSENT} vueParDefaut={null} />)
 
     const champ = screen.getByLabelText('Identifiant utilisateur Dolibarr') as HTMLInputElement
     expect(champ.value).toBe('')
@@ -69,7 +77,7 @@ describe('l identifiant Dolibarr', () => {
 
 describe("l'agenda Google", () => {
   it('propose de connecter quand aucun agenda ne l est', () => {
-    render(<ProfilClient identifiant={null} suggestion={null} connection={ABSENT} />)
+    render(<ProfilClient identifiant={null} suggestion={null} connection={ABSENT} vueParDefaut={null} />)
 
     expect(screen.getByRole('link', { name: /Connecter Google Calendar/ }).getAttribute('href')).toBe(
       '/api/google/connect',
@@ -77,7 +85,7 @@ describe("l'agenda Google", () => {
   })
 
   it('affiche le calendrier dédié et propose de se déconnecter', () => {
-    render(<ProfilClient identifiant={null} suggestion={null} connection={CONNECTE} />)
+    render(<ProfilClient identifiant={null} suggestion={null} connection={CONNECTE} vueParDefaut={null} />)
 
     expect(screen.getByText('cal-1')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Déconnecter' })).toBeTruthy()
@@ -87,10 +95,43 @@ describe("l'agenda Google", () => {
   // cette phrase, la personne croit avoir tout coupé alors que l'application
   // reste autorisée dans son compte Google.
   it("dit que l'autorisation reste active côté Google", async () => {
-    render(<ProfilClient identifiant={null} suggestion={null} connection={CONNECTE} />)
+    render(<ProfilClient identifiant={null} suggestion={null} connection={CONNECTE} vueParDefaut={null} />)
 
     await userEvent.click(screen.getByRole('button', { name: 'Déconnecter' }))
 
     expect(document.body.textContent).toMatch(/reste autorisée/i)
+  })
+})
+
+describe('la vue par défaut', () => {
+  it("propose Calendrier quand rien n'est réglé", () => {
+    render(
+      <ProfilClient identifiant={null} suggestion={null} connection={ABSENT} vueParDefaut={null} />,
+    )
+
+    expect((screen.getByLabelText('Vue par défaut') as HTMLSelectElement).value).toBe('CALENDRIER')
+  })
+
+  it('montre la vue déjà réglée', () => {
+    render(
+      <ProfilClient
+        identifiant={null}
+        suggestion={null}
+        connection={ABSENT}
+        vueParDefaut="TABLEAU"
+      />,
+    )
+
+    expect((screen.getByLabelText('Vue par défaut') as HTMLSelectElement).value).toBe('TABLEAU')
+  })
+
+  it('propose les trois vues', () => {
+    render(
+      <ProfilClient identifiant={null} suggestion={null} connection={ABSENT} vueParDefaut={null} />,
+    )
+
+    expect(screen.getByRole('option', { name: 'Calendrier' })).toBeDefined()
+    expect(screen.getByRole('option', { name: '3 mois' })).toBeDefined()
+    expect(screen.getByRole('option', { name: 'Tableau multi-CRA' })).toBeDefined()
   })
 })

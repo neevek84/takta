@@ -15,7 +15,9 @@ import { phraseOccupation } from '@/core/saisie/occupation'
 import { phraseCreneauNonPrevu } from '@/core/saisie/slot-labels'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
+import { Select } from '@/components/ui/Select'
 import type { CellState } from '@/core/saisie/cycle'
+import type { Vue } from '@/core/saisie/vue'
 import type { MonthDay } from '@/core/month/build'
 import type { Slot } from '@/core/time/slots'
 import type { CapacityMode } from '@/core/types'
@@ -131,12 +133,13 @@ function refus(texte: string, craId?: string): Message {
 /**
  * Trois vues : le calendrier — la seule surface de saisie mobile —, le
  * tableau multi-CRA, et la vue 3 mois : le mois choisi et les deux suivants,
- * en grilles compactes côte à côte (voir le rendu plus bas). `TROIS_MOIS` est
- * entré dans ce type dans un lot antérieur, avant même d'avoir son bouton : la
- * règle de portée de `choisirVue`, ci-dessous, devait déjà savoir la
- * reconnaître.
+ * en grilles compactes côte à côte (voir le rendu plus bas).
+ *
+ * Le type vit dans `core/saisie/vue.ts` — et non ici — parce que la
+ * préférence de profil (`services/saisie/vue-par-defaut.ts`) doit reconnaître
+ * exactement les mêmes valeurs sans dépendre d'un composant client.
  */
-export type Vue = 'CALENDRIER' | 'TROIS_MOIS' | 'TABLEAU'
+export type { Vue }
 
 /**
  * La largeur de la dernière vérification d'agenda réussie, `null` avant tout
@@ -222,6 +225,17 @@ export function SaisieClient(props: {
 }) {
   const [message, setMessage] = useState<Message | null>(null)
   const [vue, setVue] = useState<Vue>(props.vueInitiale ?? 'CALENDRIER')
+
+  /**
+   * Vrai à partir de `md` (48rem) — même seuil que `RAIL_MEDIA` dans
+   * `NavRail`. Faux par défaut, comme au premier rendu serveur : la vue 3
+   * mois et le tableau, réservés au poste, ne doivent pas apparaître dans la
+   * liste avant que le client n'ait pu lire la largeur réelle de l'écran.
+   */
+  const [ecranLarge, setEcranLarge] = useState(false)
+  useEffect(() => {
+    setEcranLarge(window.matchMedia('(min-width: 48rem)').matches)
+  }, [])
 
   /**
    * Les jours occupés, tels que `BoutonAgenda` les a rapportés — ou tels que
@@ -428,42 +442,27 @@ export function SaisieClient(props: {
 
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          aria-pressed={vue === 'CALENDRIER'}
-          variant={vue === 'CALENDRIER' ? 'primary' : 'secondary'}
-          onClick={() => choisirVue('CALENDRIER')}
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <Select
+          label="Vue"
+          value={vue}
+          onChange={(ev) => choisirVue(ev.target.value as Vue)}
+          className="w-auto"
         >
-          Calendrier
-        </Button>
-        {/* Vingt et une colonnes ne tiennent pas sur un téléphone — trois
-            grilles de sept, réduites en densité compacte. Le calendrier reste
-            la seule surface de saisie mobile ; la vue 3 mois, comme le
-            tableau, ne s'atteint qu'au poste. */}
-        <Button
-          type="button"
-          aria-pressed={vue === 'TROIS_MOIS'}
-          variant={vue === 'TROIS_MOIS' ? 'primary' : 'secondary'}
-          onClick={() => choisirVue('TROIS_MOIS')}
-          className="hidden md:inline-flex"
-        >
-          3 mois
-        </Button>
-        {/* Sept colonnes tiennent sur un téléphone ; trente et une, non. La
-            vue calendrier, elle, reste offerte sur les deux. */}
-        {/* Le tableau montre toutes les missions et prestations auxquelles on
-            est affecté : son nom le dit, plutôt que de laisser croire à une
-            autre présentation de la seule prestation saisie. */}
-        <Button
-          type="button"
-          aria-pressed={vue === 'TABLEAU'}
-          variant={vue === 'TABLEAU' ? 'primary' : 'secondary'}
-          onClick={() => choisirVue('TABLEAU')}
-          className="hidden md:inline-flex"
-        >
-          Tableau multi-CRA
-        </Button>
+          <option value="CALENDRIER">Calendrier</option>
+          {/* Vingt et une colonnes ne tiennent pas sur un téléphone — trois
+              grilles de sept, réduites en densité compacte. Sept colonnes
+              tiennent en tableau ; trente et une, non. Le calendrier reste
+              la seule surface de saisie mobile ; ces deux vues ne s'atteignent
+              qu'au poste — retirées de la liste plutôt que grisées, une
+              option qu'on ne peut pas choisir n'apprend rien qu'un menu plus
+              court n'apprenne aussi bien. */}
+          {ecranLarge && <option value="TROIS_MOIS">3 mois</option>}
+          {/* Le tableau montre toutes les missions et prestations auxquelles
+              on est affecté : son nom le dit, plutôt que de laisser croire à
+              une autre présentation de la seule prestation saisie. */}
+          {ecranLarge && <option value="TABLEAU">Tableau multi-CRA</option>}
+        </Select>
 
         {/* La bascule de portée ne vaut que pour le calendrier : elle n'est
             transmise qu'à lui, et un réglage sans effet visible apprend à
@@ -496,20 +495,21 @@ export function SaisieClient(props: {
             </Button>
           </>
         )}
-      </div>
 
-      {/* Un clic, un appel, sur exactement la plage affichée ici — jamais au
-          chargement (voir `page.tsx`). Absent quand aucun connecteur n'est
-          configuré : un bouton qui échouerait à tous les coups n'apprendrait
-          rien à personne. */}
-      {props.agendaConnecte === true && (
-        <div className="mb-3">
-          {/* `key` force un remontage — donc une remise à zéro de l'état
-              interne du bouton (`etat: 'INACTIF'`) — chaque fois que la plage
-              vérifiée change. `BoutonAgenda` reste monté au même endroit de
-              l'arbre à travers une bascule de vue : sans cette clé, son
-              verdict ("n jours occupés…") survivrait à un changement de plage
-              qu'il n'a jamais vérifiée. */}
+        {/* Un clic, un appel, sur exactement la plage affichée ici — jamais
+            au chargement (voir `page.tsx`). Absent quand aucun connecteur
+            n'est configuré : un bouton qui échouerait à tous les coups
+            n'apprendrait rien à personne. Au même niveau que la vue et non
+            plus sur sa propre ligne : les deux réglages de cette barre
+            portent sur ce qu'on regarde, une ligne à part n'annonçait rien
+            de plus qu'un retour à la ligne. */}
+        {props.agendaConnecte === true && (
+          // `key` force un remontage — donc une remise à zéro de l'état
+          // interne du bouton (`etat: 'INACTIF'`) — chaque fois que la plage
+          // vérifiée change. `BoutonAgenda` reste monté au même endroit de
+          // l'arbre à travers une bascule de vue : sans cette clé, son
+          // verdict ("n jours occupés…") survivrait à un changement de plage
+          // qu'il n'a jamais vérifiée.
           <BoutonAgenda
             key={`${du}-${au}`}
             du={du}
@@ -519,8 +519,8 @@ export function SaisieClient(props: {
               setPlageVerifiee(vue === 'TROIS_MOIS' ? '3MOIS' : '1MOIS')
             }}
           />
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <LineSelector lines={props.lines} lineId={lineId} onChange={setLineId} />

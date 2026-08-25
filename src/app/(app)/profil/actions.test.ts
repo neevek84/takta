@@ -6,12 +6,14 @@ const {
   disconnectGoogle,
   definirIdentifiantDolibarr,
   oublierIdentifiantDolibarr,
+  definirVueParDefaut,
 } = vi.hoisted(() => ({
   requireUser: vi.fn(),
   revalidatePath: vi.fn(),
   disconnectGoogle: vi.fn(),
   definirIdentifiantDolibarr: vi.fn(),
   oublierIdentifiantDolibarr: vi.fn(),
+  definirVueParDefaut: vi.fn(),
 }))
 
 vi.mock('@/auth', () => ({ requireUser }))
@@ -21,12 +23,19 @@ vi.mock('@/services/dolibarr/utilisateur', () => ({
   definirIdentifiantDolibarr,
   oublierIdentifiantDolibarr,
 }))
+vi.mock('@/services/saisie/vue-par-defaut', () => ({ definirVueParDefaut }))
 
-import { deconnecterGoogle, enregistrerIdentifiantDolibarr } from './actions'
+import { deconnecterGoogle, enregistrerIdentifiantDolibarr, enregistrerVueParDefaut } from './actions'
 
 function formulaire(identifiant: string): FormData {
   const fd = new FormData()
   fd.set('identifiant', identifiant)
+  return fd
+}
+
+function formulaireVue(vue: string): FormData {
+  const fd = new FormData()
+  fd.set('vue', vue)
   return fd
 }
 
@@ -36,6 +45,7 @@ beforeEach(() => {
   disconnectGoogle.mockReset().mockResolvedValue(undefined)
   definirIdentifiantDolibarr.mockReset().mockResolvedValue({ ok: true, motif: '' })
   oublierIdentifiantDolibarr.mockReset().mockResolvedValue(undefined)
+  definirVueParDefaut.mockReset().mockResolvedValue(undefined)
 })
 
 /**
@@ -48,6 +58,7 @@ describe('chaque action exige une session', () => {
   const actions: Array<[string, () => Promise<unknown>]> = [
     ['enregistrerIdentifiantDolibarr', () => enregistrerIdentifiantDolibarr(null, formulaire('3'))],
     ['deconnecterGoogle', () => deconnecterGoogle()],
+    ['enregistrerVueParDefaut', () => enregistrerVueParDefaut(null, formulaireVue('TABLEAU'))],
   ]
 
   for (const [nom, appeler] of actions) {
@@ -59,6 +70,7 @@ describe('chaque action exige une session', () => {
       expect(definirIdentifiantDolibarr).not.toHaveBeenCalled()
       expect(oublierIdentifiantDolibarr).not.toHaveBeenCalled()
       expect(disconnectGoogle).not.toHaveBeenCalled()
+      expect(definirVueParDefaut).not.toHaveBeenCalled()
     })
   }
 })
@@ -115,5 +127,35 @@ describe('deconnecterGoogle', () => {
   it("déconnecte l'agenda du compte de la session", async () => {
     await deconnecterGoogle()
     expect(disconnectGoogle).toHaveBeenCalledWith('u1')
+  })
+})
+
+describe('enregistrerVueParDefaut', () => {
+  // Même règle que pour l'identifiant Dolibarr : la personne visée vient de
+  // la session, jamais d'un champ du formulaire.
+  it('vise le compte de la session, et lui seul', async () => {
+    const fd = formulaireVue('TABLEAU')
+    fd.set('userId', 'u2')
+
+    await enregistrerVueParDefaut(null, fd)
+
+    expect(definirVueParDefaut).toHaveBeenCalledWith('u1', 'TABLEAU')
+  })
+
+  it('accepte chacune des trois vues', async () => {
+    for (const vue of ['CALENDRIER', 'TROIS_MOIS', 'TABLEAU']) {
+      const r = await enregistrerVueParDefaut(null, formulaireVue(vue))
+      expect(definirVueParDefaut).toHaveBeenLastCalledWith('u1', vue)
+      expect(r?.ok).toBe(true)
+    }
+  })
+
+  // Un champ de formulaire est toujours falsifiable : sans cette garde, une
+  // valeur forgée écrirait une chaîne que `SaisieClient` ne reconnaîtrait pas.
+  it("refuse une valeur qui n'est pas une vue, sans rien écrire", async () => {
+    const r = await enregistrerVueParDefaut(null, formulaireVue('AUTRE'))
+
+    expect(r?.ok).toBe(false)
+    expect(definirVueParDefaut).not.toHaveBeenCalled()
   })
 })

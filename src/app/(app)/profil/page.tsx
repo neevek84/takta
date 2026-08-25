@@ -3,6 +3,7 @@ import { PageShell } from '@/components/ui/PageShell'
 import { Banner } from '@/components/ui/Banner'
 import { getConnectionState } from '@/services/google/connect'
 import { identifiantDolibarrDe, suggestionDInstance } from '@/services/dolibarr/utilisateur'
+import { vueParDefautDe } from '@/services/saisie/vue-par-defaut'
 import { ProfilClient } from './ProfilClient'
 
 /**
@@ -25,10 +26,11 @@ export default async function ProfilPage({
   // retombe sur l'avertissement.
   const toneMessage = tone === 'success' ? 'success' : tone === 'danger' ? 'danger' : 'warning'
 
-  const [identifiant, suggestion, connection] = await Promise.all([
+  const [identifiant, suggestion, connection, vueParDefaut] = await Promise.all([
     identifiantDolibarrDe(user.id),
     suggestionDInstance(),
     getConnectionState(user.id),
+    vueParDefautDe(user.id),
   ])
 
   return (
@@ -42,6 +44,7 @@ export default async function ProfilPage({
         identifiant={identifiant}
         suggestion={suggestion}
         connection={connection}
+        vueParDefaut={vueParDefaut}
       />
     </PageShell>
   )

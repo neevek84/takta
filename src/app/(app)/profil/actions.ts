@@ -7,6 +7,8 @@ import {
   definirIdentifiantDolibarr,
   oublierIdentifiantDolibarr,
 } from '@/services/dolibarr/utilisateur'
+import { definirVueParDefaut } from '@/services/saisie/vue-par-defaut'
+import { estVue } from '@/core/saisie/vue'
 
 export type ProfilState = { ok: boolean; message: string } | null
 
@@ -60,4 +62,32 @@ export async function deconnecterGoogle(): Promise<void> {
   const user = await requireUser()
   await disconnectGoogle(user.id)
   revalidatePath('/profil')
+}
+
+const LIBELLE_VUE: Record<string, string> = {
+  CALENDRIER: 'Calendrier',
+  TROIS_MOIS: '3 mois',
+  TABLEAU: 'Tableau multi-CRA',
+}
+
+/**
+ * Comme `enregistrerIdentifiantDolibarr` : la vue vise le compte de la
+ * session, jamais un champ du formulaire — et une valeur qui n'est pas une
+ * des trois vues reconnues (formulaire falsifié, ancien libellé) est refusée
+ * plutôt qu'écrite telle quelle.
+ */
+export async function enregistrerVueParDefaut(
+  _precedent: ProfilState,
+  formData: FormData,
+): Promise<ProfilState> {
+  const user = await requireUser()
+  const brut = String(formData.get('vue') ?? '')
+
+  if (!estVue(brut)) {
+    return { ok: false, message: 'Vue inconnue : rien n’a été enregistré.' }
+  }
+
+  await definirVueParDefaut(user.id, brut)
+  revalidatePath('/profil')
+  return { ok: true, message: `La saisie s’ouvrira désormais sur la vue « ${LIBELLE_VUE[brut]} ».` }
 }

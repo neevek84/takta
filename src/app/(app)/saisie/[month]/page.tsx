@@ -7,6 +7,7 @@ import {
   getPastForecastWithLockStatus,
 } from '@/services/time-entries'
 import { aUnConnecteurAgenda } from '@/services/credentials'
+import { vueParDefautDe } from '@/services/saisie/vue-par-defaut'
 import { buildMonthDays, shiftMonth } from '@/core/month/build'
 import { MonthNav } from '@/components/MonthNav'
 import { PageShell } from '@/components/ui/PageShell'
@@ -26,6 +27,17 @@ export default async function SaisiePage({
   // calendrier avant de basculer, et ce clignotement porte sur toute la page.
   const { vue } = await searchParams
   const user = await requireUser()
+
+  // L'adresse l'emporte quand elle dit quelque chose — un lien partagé ou un
+  // retour arrière du navigateur doit rester fiable. Son absence retombe sur
+  // la préférence réglée dans « Mon profil », elle-même repliée sur le
+  // calendrier tant que rien n'y est choisi.
+  const vueInitiale =
+    vue === '3mois'
+      ? 'TROIS_MOIS'
+      : vue === 'tableau'
+        ? 'TABLEAU'
+        : ((await vueParDefautDe(user.id)) ?? 'CALENDRIER')
 
   const settings = await getSettings()
   const lines = await listActiveLines(user.id)
@@ -74,7 +86,7 @@ export default async function SaisiePage({
         lockedCount={pastForecast.lockedCount}
       />
       <SaisieClient
-        vueInitiale={vue === '3mois' ? 'TROIS_MOIS' : vue === 'tableau' ? 'TABLEAU' : 'CALENDRIER'}
+        vueInitiale={vueInitiale}
         month={month}
         days={days}
         mois={mois}

@@ -5,9 +5,12 @@ import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
+import { Select } from '@/components/ui/Select'
+import type { Vue } from '@/core/saisie/vue'
 import {
   deconnecterGoogle,
   enregistrerIdentifiantDolibarr,
+  enregistrerVueParDefaut,
   type ProfilState,
 } from './actions'
 
@@ -26,15 +29,22 @@ export function ProfilClient({
   identifiant,
   suggestion,
   connection,
+  vueParDefaut,
 }: {
   /** l'identifiant Dolibarr **enregistré** pour ce compte, `null` s'il n'en a pas */
   identifiant: number | null
   /** l'ancien réglage d'instance, proposé mais **pas** enregistré */
   suggestion: number | null
   connection: { connected: boolean; calendarId: string; scope: string; connectedAt: Date | null }
+  /** la vue réglée pour ce compte, `null` tant que rien n'est choisi — le champ montre alors « Calendrier », son défaut effectif sur `/saisie`. */
+  vueParDefaut: Vue | null
 }) {
   const [etat, formAction, enCours] = useActionState<ProfilState, FormData>(
     enregistrerIdentifiantDolibarr,
+    null,
+  )
+  const [etatVue, formActionVue, vueEnCours] = useActionState<ProfilState, FormData>(
+    enregistrerVueParDefaut,
     null,
   )
   const [avis, setAvis] = useState<string | null>(null)
@@ -133,6 +143,30 @@ export function ProfilClient({
             </a>
           </div>
         )}
+      </Card>
+
+      <Card title="Vue par défaut" className="mt-6">
+        <p className="mb-3 text-sm text-muted">
+          La vue qui s’ouvre en arrivant sur la page Saisie. Le paramètre d’un lien reçu
+          (calendrier, 3 mois, tableau) garde toujours la priorité sur ce réglage.
+        </p>
+
+        {etatVue !== null && (
+          <div className="mb-3">
+            <Banner tone={etatVue.ok ? 'success' : 'danger'}>{etatVue.message}</Banner>
+          </div>
+        )}
+
+        <form action={formActionVue} className="flex flex-wrap items-end gap-3">
+          <Select label="Vue par défaut" name="vue" defaultValue={vueParDefaut ?? 'CALENDRIER'}>
+            <option value="CALENDRIER">Calendrier</option>
+            <option value="TROIS_MOIS">3 mois</option>
+            <option value="TABLEAU">Tableau multi-CRA</option>
+          </Select>
+          <Button type="submit" variant="primary" loading={vueEnCours}>
+            Enregistrer
+          </Button>
+        </form>
       </Card>
     </>
   )
