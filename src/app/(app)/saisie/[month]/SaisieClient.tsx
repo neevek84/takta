@@ -63,15 +63,6 @@ function bornesTroisMois(joursParMois: MonthDay[][]): { du: string; au: string }
 const AUCUN_TOTAL: LineEngagementTotals = []
 
 /**
- * La vue 3 mois n'offre pas la bascule « Toutes les prestations » : trois
- * grilles côte à côte, chacune déjà réduite pour tenir, n'ont pas la place
- * d'empiler en plus les libellés des autres prestations. `autresLignes` reste
- * donc vide, dans les trois grilles, tout le temps — une constante de module
- * pour la même raison que `AUCUN_TOTAL`.
- */
-const AUCUNE_AUTRE_LIGNE: LineForGrid[] = []
-
-/**
  * Centièmes de jour → jours, comme la charge et l'engagement les affichent
  * déjà. Le contrôle de capacité raisonne dans cette unité : le message la
  * reprend plutôt que de reconvertir en heures avec un facteur qu'il n'a pas.
@@ -464,10 +455,10 @@ export function SaisieClient(props: {
           {ecranLarge && <option value="TABLEAU">Tableau multi-CRA</option>}
         </Select>
 
-        {/* La bascule de portée ne vaut que pour le calendrier : elle n'est
-            transmise qu'à lui, et un réglage sans effet visible apprend à
-            l'utilisateur que l'interface ment. */}
-        {vue === 'CALENDRIER' && (
+        {/* La bascule de portée ne vaut que pour le calendrier et la vue 3
+            mois : au tableau, elle n'aurait aucun effet, et un réglage sans
+            effet visible apprend à l'utilisateur que l'interface ment. */}
+        {(vue === 'CALENDRIER' || vue === 'TROIS_MOIS') && (
           <>
             {/* Séparateur tracé par un filet et non par un aplat : un fond de
                 jeton doit porter une encre déclarée, ce que ce trait n'a pas. */}
@@ -669,8 +660,8 @@ export function SaisieClient(props: {
           diverger au premier correctif dessinerait deux fois le même fait de
           deux façons (voir la documentation de `densite`). Chaque grille garde
           exactement la cinématique du calendrier — même `onApply`, même
-          `onRange`, même formulaire — c'est une surface de saisie, pas un
-          aperçu à trois volets. */}
+          `onRange`, même formulaire, même bascule de portée — c'est une
+          surface de saisie, pas un aperçu à trois volets. */}
       {vue === 'TROIS_MOIS' && ligne !== undefined && (
         <>
           <div className="grid grid-cols-3 gap-3">
@@ -683,8 +674,8 @@ export function SaisieClient(props: {
                   line={ligne}
                   slots={props.slots}
                   entries={props.entries}
-                  autresLignes={AUCUNE_AUTRE_LIGNE}
-                  toutLeMois={false}
+                  autresLignes={props.lines.filter((l) => l.id !== ligne.id)}
+                  toutLeMois={toutLeMois}
                   busyDates={occupations}
                   aujourdhui={props.aujourdhui}
                   onApply={handleApply}

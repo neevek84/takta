@@ -620,9 +620,9 @@ describe('SaisieClient — calendrier', () => {
     expect(screen.queryByRole('button', { name: 'Tout le mois' })).toBeNull()
   })
 
-  // La bascule n'est transmise qu'au calendrier : en mode tableau, elle
-  // n'avait aucun effet. Un réglage sans effet visible apprend à
-  // l'utilisateur que l'interface ment.
+  // La bascule ne vaut que pour le calendrier et la vue 3 mois : en mode
+  // tableau, elle n'avait aucun effet. Un réglage sans effet visible apprend
+  // à l'utilisateur que l'interface ment.
   it('retire la bascule de portée en mode tableau', () => {
     renderClient()
     expect(screen.getByRole('button', { name: 'Cette prestation' })).toBeDefined()
@@ -1061,6 +1061,33 @@ describe('SaisieClient — vue 3 mois', () => {
 
     fireEvent.contextMenu(screen.getByTestId('case-2026-05-12'))
     expect(screen.getByLabelText('Heure de début')).toBeTruthy()
+  })
+
+  // La bascule de portée existe aussi ici : rien dans la vue 3 mois n'empêche
+  // de vouloir comparer ses prestations sur trois mois plutôt qu'un seul.
+  it('propose la bascule « Cette prestation » / « Toutes les prestations »', () => {
+    renderClient()
+    ouvrirTroisMois()
+
+    expect(screen.getByRole('button', { name: 'Cette prestation' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Toutes les prestations' })).toBeDefined()
+  })
+
+  it('affiche les autres prestations, en lecture seule, dans les trois grilles', () => {
+    const autrePrestation: MonthEntry[] = [
+      { id: 'e1', lineId: 'l2', date: '2026-03-10', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
+      { id: 'e2', lineId: 'l2', date: '2026-05-10', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
+    ]
+    renderClient({ entries: autrePrestation })
+    ouvrirTroisMois()
+
+    expect(screen.queryByTestId('autre-l2-2026-03-10')).toBeNull()
+    expect(screen.queryByTestId('autre-l2-2026-05-10')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toutes les prestations' }))
+
+    expect(screen.getByTestId('autre-l2-2026-03-10')).toBeDefined()
+    expect(screen.getByTestId('autre-l2-2026-05-10')).toBeDefined()
   })
 })
 
