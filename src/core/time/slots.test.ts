@@ -168,7 +168,9 @@ describe('entryBounds — pause déjeuner', () => {
     })
   })
 
-  it('tronque à la fin de plage sans perdre la pause', () => {
+  // Tronquer en gardant la pause ferait relire au formulaire « fin − début −
+  // pause », moins que le temps saisi : réenregistrer baisserait la facture.
+  it("n'applique pas la pause quand le bloc allongé ne tient pas dans la plage", () => {
     expect(
       entryBounds({
         minutes: 420,
@@ -177,7 +179,15 @@ describe('entryBounds — pause déjeuner', () => {
         journeeFinMinute: 900,
         pause: DEJEUNER,
       }),
-    ).toEqual({ startMinute: 540, endMinute: 900, pause: DEJEUNER })
+    ).toEqual({ startMinute: 540, endMinute: 900 })
+  })
+
+  it('applique la pause quand le bloc allongé finit pile en fin de plage', () => {
+    expect(entryBounds({ minutes: 480, slot: null, ...journee, pause: DEJEUNER })).toEqual({
+      startMinute: 540,
+      endMinute: 1080,
+      pause: DEJEUNER,
+    })
   })
 
   it('ne pose jamais la pause sur un créneau nommé', () => {

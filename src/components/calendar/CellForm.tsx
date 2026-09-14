@@ -295,7 +295,6 @@ export function CellForm({
     // La journée entière retrouve sa pause d'office ; un créneau nommé dit
     // lui-même quand il commence et finit, et n'en porte jamais.
     const pause = slot === null ? pauseReglage : undefined
-    setAvecPause(pause !== undefined)
     const bornes = entryBounds({
       // Sans créneau ni pause, la plage entière : c'est un pré-remplissage,
       // que la personne rectifie. Avec pause, la journée facturée.
@@ -308,6 +307,10 @@ export function CellForm({
       journeeFinMinute,
       ...(pause !== undefined && { pause }),
     })
+    // La case suit ce que `entryBounds` a réellement posé : une journée qui ne
+    // tient pas pause comprise n'en porte pas, et la cocher retrancherait la
+    // pause d'un bloc qui ne la contient pas.
+    setAvecPause(bornes.pause !== undefined)
     setDebut(minutesToTimeInput(bornes.startMinute))
     setFin(minutesToTimeInput(bornes.endMinute))
   }
@@ -461,7 +464,8 @@ export function CellForm({
       {lieu === 'SITE' && (dureeTrajetMinutes ?? 0) > 0 && (
         <p data-testid="annonce-trajet" className="mt-2 text-xs text-muted">
           Chez le client : un trajet de {dureeTrajetMinutes} min est posé avant et après dans
-          l’agenda, une seule fois. Vous pourrez ensuite le déplacer ou le supprimer là-bas.
+          l’agenda, une seule fois ; l’agenda en fait ensuite ce qu’il veut. Déplacer ou supprimer
+          la saisie ne les déplace ni ne les retire.
         </p>
       )}
 

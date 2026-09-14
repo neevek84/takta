@@ -89,7 +89,9 @@ export interface EntryBoundsArgs {
  * Sans créneau, le bloc part au début de la plage journée et dure exactement le
  * temps saisi, sans jamais déborder de la plage — occuper une soirée que
  * personne n'a vendue serait pire que de tronquer. Une pause donnée allonge le
- * bloc d'autant, jamais au-delà de la plage.
+ * bloc d'autant — seulement si le bloc allongé tient entier dans la plage. Un
+ * bloc tronqué ne porte pas de pause : relu, il vaudrait « fin − début −
+ * pause », moins que le temps saisi, et le réenregistrer baisserait la facture.
  */
 export function entryBounds(args: EntryBoundsArgs): {
   startMinute: number
@@ -106,13 +108,21 @@ export function entryBounds(args: EntryBoundsArgs): {
 
   // La pause s'ajoute au temps saisi, elle ne le remplace pas : 7 h facturées
   // occupent 8 h d'agenda. Elle ne s'applique que si elle tombe strictement
-  // dans le bloc ainsi allongé — une matinée de deux heures n'a rien à couper.
+  // dans le bloc ainsi allongé — une matinée de deux heures n'a rien à couper —
+  // et si ce bloc tient sans troncature : finir pile en fin de plage passe.
   const duree = pauseMinutes(args.pause)
   if (args.pause !== undefined && duree > 0) {
     const finAvecPause = debut + args.minutes + duree
-    const fin = Math.min(finAvecPause, args.journeeFinMinute)
-    if (args.pause.debutMinute > debut && args.pause.finMinute < fin) {
-      return { startMinute: debut, endMinute: fin % MINUTES_PER_DAY, pause: { ...args.pause } }
+    if (
+      finAvecPause <= args.journeeFinMinute &&
+      args.pause.debutMinute > debut &&
+      args.pause.finMinute < finAvecPause
+    ) {
+      return {
+        startMinute: debut,
+        endMinute: finAvecPause % MINUTES_PER_DAY,
+        pause: { ...args.pause },
+      }
     }
   }
 

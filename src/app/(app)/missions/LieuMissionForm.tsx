@@ -25,7 +25,8 @@ export function LieuMissionForm({ missionId, lieuDefaut }: { missionId: string; 
       <input type="hidden" name="missionId" value={missionId} />
       <p className="text-sm text-muted">
         Chez le client, chaque nouvelle saisie pose un trajet avant et après dans l’agenda, une
-        seule fois. Vous pourrez ensuite le déplacer ou le supprimer là-bas.
+        seule fois ; l’agenda en fait ensuite ce qu’il veut. Déplacer ou supprimer la saisie ne les
+        déplace ni ne les retire.
       </p>
       <div className="flex flex-wrap items-end gap-2">
         <Select label="Lieu par défaut" name="lieuDefaut" defaultValue={lieuDefaut} className="w-52">
