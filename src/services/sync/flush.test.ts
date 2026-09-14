@@ -1037,6 +1037,32 @@ describe('journée coupée par la pause', () => {
     expect([conflit.entityType, conflit.entityId]).toEqual(['TimeEntrySuite', entryId])
   })
 
+  // L'après-midi retouché dans Google attend un arbitrage : retirer la pause
+  // ne doit pas effacer ce geste sans le demander. Il reste dans l'agenda,
+  // simplement plus suivi.
+  it('détache le second bloc en conflit au lieu de le supprimer quand la pause disparaît', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const suite = await lienSuite(entryId)
+
+    api.toucherEvenement(suite!.externalId, { summary: 'Déplacé à la main' })
+    await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const conflit = await prisma.syncConflict.findFirstOrThrow({
+      where: { userId, entityType: 'TimeEntrySuite', resolvedAt: null },
+    })
+
+    await saisir('2026-03-12', 240)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(api.appelsVers(suite!.externalId).some((a) => a.method === 'DELETE')).toBe(false)
+    expect(api.events.has(suite!.externalId)).toBe(true)
+    expect(await lienSuite(entryId)).toBeNull()
+    const resolu = await prisma.syncConflict.findUniqueOrThrow({ where: { id: conflit.id } })
+    expect(resolu.resolvedAt).not.toBeNull()
+    expect(resolu.resolution).toBe('DETACHER')
+  })
+
   it('retire les deux blocs quand la saisie est supprimée', async () => {
     const entryId = await saisir('2026-03-12', 480)
     await flushSyncOutbox({ userId, now: NOW, connector: connector() })

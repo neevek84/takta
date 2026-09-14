@@ -211,7 +211,26 @@ async function traiterUpsert(
 
   // La pause a été retirée : le second bloc n'a plus rien à occuper.
   if (!blocs.some((b) => b.segment === 'APRES_PAUSE')) {
-    await retirerBloc(connector, cibleSuiteDe(row))
+    const suite = cibleSuiteDe(row)
+    const conflitSuite = await prisma.syncConflict.findFirst({
+      where: { userId: row.userId, ...suite, resolvedAt: null },
+      select: { id: true },
+    })
+    if (conflitSuite === null) {
+      await retirerBloc(connector, suite)
+    } else {
+      // Retouché dans Google et en attente d'arbitrage : le supprimer effacerait
+      // le geste de l'utilisateur sans le lui demander. On le laisse dans son
+      // agenda, simplement plus suivi — un détachement, que la saisie a rendu
+      // sans objet d'arbitrer.
+      await prisma.$transaction([
+        prisma.externalLink.deleteMany({ where: suite }),
+        prisma.syncConflict.update({
+          where: { id: conflitSuite.id },
+          data: { resolvedAt: now, resolution: 'DETACHER' },
+        }),
+      ])
+    }
   }
 
   return issues.find((i) => i.etat === 'CONFLIT') ?? issues[0]!
