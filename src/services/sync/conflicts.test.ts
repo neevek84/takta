@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/db/client'
-import { ENTITY_TIME_ENTRY, PROVIDER_GOOGLE } from '@/core/sync/policy'
+import { ENTITY_TIME_ENTRY, ENTITY_TIME_ENTRY_SUITE, PROVIDER_GOOGLE } from '@/core/sync/policy'
 import { updateSettings } from '@/services/settings'
 import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
@@ -591,5 +591,55 @@ describe('refus élémentaires', () => {
     const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
     expect(r).toMatchObject({ ok: false, reason: 'SAISIE_ABSENTE' })
     expect((await listOpenConflicts(userId)).length).toBe(1)
+  })
+})
+
+describe('le second bloc d une journée coupée', () => {
+  async function divergenceSuite(): Promise<{ conflictId: string; entryId: string }> {
+    const entryId = await saisirLeDouze()
+    const cible = { entityType: ENTITY_TIME_ENTRY_SUITE, entityId: entryId, provider: PROVIDER_GOOGLE }
+    await prisma.externalLink.create({
+      data: { userId, ...cible, externalId: 'evt-suite', etag: '"1"', syncState: 'SYNCED' },
+    })
+    const conflit = await prisma.syncConflict.create({
+      data: {
+        userId,
+        ...cible,
+        kind: 'REMOTE_MODIFIED',
+        remoteSnapshotJson: JSON.stringify(
+          instantane({ startLocal: '2026-03-12T13:30:00', endLocal: '2026-03-12T15:00:00' }),
+        ),
+      },
+    })
+    // L'état que le drainage laisse derrière lui : la file vidée.
+    await prisma.syncOutbox.deleteMany({ where: { userId } })
+    return { conflictId: conflit.id, entryId }
+  }
+
+  it('se liste comme le bloc d après la pause', async () => {
+    await divergenceSuite()
+    const [conflit] = await listOpenConflicts(userId)
+    expect(conflit?.libelle).toContain('après la pause')
+  })
+
+  it('se rétablit en repoussant la saisie entière', async () => {
+    const { conflictId, entryId } = await divergenceSuite()
+
+    expect(await resolveConflict({ userId, conflictId, resolution: 'RETABLIR' })).toEqual({
+      ok: true,
+      resolution: 'RETABLIR',
+    })
+    expect(await prisma.syncOutbox.findFirst({ where: cibleDe(entryId) })).not.toBeNull()
+    const lienSuite = await prisma.externalLink.findFirstOrThrow({
+      where: { entityType: ENTITY_TIME_ENTRY_SUITE, entityId: entryId },
+    })
+    expect(lienSuite.etag).toBe('')
+  })
+
+  it('refuse d être accepté seul', async () => {
+    const { conflictId } = await divergenceSuite()
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r.ok).toBe(false)
+    expect(r.ok === false && r.reason).toBe('SEGMENT')
   })
 })

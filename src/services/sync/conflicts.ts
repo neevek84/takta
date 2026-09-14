@@ -1,6 +1,7 @@
 import { prisma } from '@/db/client'
 import { isLocked } from '@/core/cra/state-machine'
 import type { ConflictKind, ConflictResolution } from '@/core/sync/policy'
+import { ENTITY_TIME_ENTRY, ENTITY_TIME_ENTRY_SUITE } from '@/core/sync/policy'
 import type { CraStatus, TimeEntryKind } from '@/core/types'
 import { saveEntry, toIsoDate } from '@/services/time-entries'
 import { enqueueSync } from './outbox'
@@ -29,6 +30,7 @@ export type ResolveResult =
         | 'INSTANTANE_ILLISIBLE'
         | 'JOUR_OCCUPE'
         | 'CHEVAUCHEMENT'
+        | 'SEGMENT'
       message: string
     }
 
@@ -92,7 +94,9 @@ export async function listOpenConflicts(userId: string): Promise<OpenConflict[]>
       libelle:
         entry === undefined
           ? 'Saisie supprimée'
-          : `${toIsoDate(entry.date)} · ${entry.line.mission.client.name} · ${entry.line.mission.label} · ${entry.line.label}`,
+          : `${toIsoDate(entry.date)} · ${entry.line.mission.client.name} · ${entry.line.mission.label} · ${entry.line.label}` +
+            // Deux blocs pour une même saisie : l'écran doit dire lequel a bougé.
+            (c.entityType === ENTITY_TIME_ENTRY_SUITE ? ' · après la pause' : ''),
       remote:
         snapshot === null
           ? null
@@ -196,13 +200,31 @@ export async function resolveConflict(args: {
         await tx.externalLink.updateMany({ where: cible, data: { etag: '' } })
       }
 
-      await enqueueSync(tx, { userId: args.userId, ...cible, operation: 'UPSERT' })
+      // Le second bloc d'une journée coupée n'entre jamais en file : c'est la
+      // saisie entière qu'on repousse, et le drainage retrouve ses deux blocs.
+      const aRepousser =
+        cible.entityType === ENTITY_TIME_ENTRY_SUITE
+          ? { ...cible, entityType: ENTITY_TIME_ENTRY }
+          : cible
+      await enqueueSync(tx, { userId: args.userId, ...aRepousser, operation: 'UPSERT' })
       await tx.syncConflict.update({
         where: { id: conflit.id },
         data: { resolvedAt: new Date(), resolution: 'RETABLIR' },
       })
     })
     return { ok: true, resolution: 'RETABLIR' }
+  }
+
+  // Accepter réécrit la saisie d'après l'événement. Le second bloc n'en porte
+  // qu'une moitié : il ne dit ni le début de la journée, ni sa pause, et en
+  // tirer une durée transformerait un après-midi retouché en journée facturée.
+  if (conflit.entityType === ENTITY_TIME_ENTRY_SUITE) {
+    return {
+      ok: false,
+      reason: 'SEGMENT',
+      message:
+        "Ce bloc est la seconde moitié d'une journée coupée par la pause : il ne dit pas à lui seul ce que vaut la journée. Rétablissez-le ou détachez-le.",
+    }
   }
 
   // --- ACCEPTER -----------------------------------------------------------
