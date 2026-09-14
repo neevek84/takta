@@ -107,11 +107,15 @@ dit lui-même quand il commence et finit.
 
 ### Les deux chemins d'écriture
 
-- **Clic dans la grille** — `applyCellState` (`src/services/cells.ts`) via
-  `cellStateToWrite` : l'état `JOURNEE` reçoit la pause d'office, en passant le
-  réglage courant à `entryBounds`.
-- **Formulaire** — `saveEntry` (`src/services/time-entries.ts`) : reçoit la
-  pause que le formulaire envoie, telle quelle. `null` = aucune pause.
+- **Calendrier** — `applyCellState` (`src/services/cells.ts`) via
+  `cellStateToWrite`, pour le clic comme pour le formulaire : l'état `JOURNEE`
+  reçoit la pause des réglages d'office ; l'état `LIBRE` que le formulaire
+  envoie porte la sienne, telle quelle, absente = aucune pause. Le remplissage
+  du mois passe par le même chemin.
+- **Vue tableau** — `saveEntry` (`src/services/time-entries.ts`) : une journée
+  entière (sans créneau, durée égale au facteur) reçoit la pause d'office, pour
+  qu'une même journée n'occupe pas l'agenda autrement selon la vue qui l'a
+  écrite.
 
 `CellState.LIBRE` gagne les deux bornes de pause, pour que rouvrir le
 formulaire montre ce qui est en base — la leçon de `bornesFigees`.
