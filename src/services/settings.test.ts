@@ -300,6 +300,49 @@ describe('délai de relance', () => {
   })
 })
 
+describe('pause déjeuner et trajets', () => {
+  beforeEach(async () => {
+    await prisma.settings.deleteMany({})
+  })
+
+  it('part de 12 h 30 – 13 h 30 et de trajets de 30 minutes', async () => {
+    const s = await getSettings()
+    expect([s.pauseDebutMinute, s.pauseFinMinute, s.dureeTrajetMinutes]).toEqual([750, 810, 30])
+  })
+
+  it('enregistre une autre pause et une autre durée de trajet', async () => {
+    const s = await updateSettings({ pauseDebutMinute: 720, pauseFinMinute: 765, dureeTrajetMinutes: 45 })
+    expect([s.pauseDebutMinute, s.pauseFinMinute, s.dureeTrajetMinutes]).toEqual([720, 765, 45])
+  })
+
+  it('accepte une pause désactivée, début égal à la fin', () => {
+    expect(validateSettingsPatch({ pauseDebutMinute: 0, pauseFinMinute: 0 }).ok).toBe(true)
+  })
+
+  it('refuse une pause dont la fin précède le début', () => {
+    expect(validateSettingsPatch({ pauseDebutMinute: 810, pauseFinMinute: 750 })).toEqual({
+      ok: false,
+      errors: ['La fin de la pause déjeuner doit suivre son début.'],
+    })
+  })
+
+  it('refuse une pause qui sort de la plage journée', () => {
+    expect(
+      validateSettingsPatch({
+        journeeDebutMinute: 540,
+        journeeFinMinute: 1080,
+        pauseDebutMinute: 480,
+        pauseFinMinute: 600,
+      }),
+    ).toEqual({ ok: false, errors: ['La pause déjeuner doit tomber à l’intérieur de la plage journée.'] })
+  })
+
+  it('refuse une durée de trajet négative ou supérieure à 4 heures', () => {
+    expect(validateSettingsPatch({ dureeTrajetMinutes: -5 }).ok).toBe(false)
+    expect(validateSettingsPatch({ dureeTrajetMinutes: 241 }).ok).toBe(false)
+  })
+})
+
 
 describe('consignation des réglages', () => {
   beforeEach(async () => {

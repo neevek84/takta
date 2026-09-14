@@ -160,6 +160,23 @@ const settingsPatchSchema = z
       .int('La fin de la plage journée doit être un nombre entier de minutes.')
       .min(1, 'La fin de la plage journée est invalide.')
       .max(1440, 'La fin de la plage journée est invalide.'),
+    pauseDebutMinute: z
+      .number({ message: 'Le début de la pause déjeuner est requis.' })
+      .int('Le début de la pause déjeuner doit être un nombre entier de minutes.')
+      .min(0, 'Le début de la pause déjeuner est invalide.')
+      .max(1439, 'Le début de la pause déjeuner est invalide.'),
+    pauseFinMinute: z
+      .number({ message: 'La fin de la pause déjeuner est requise.' })
+      .int('La fin de la pause déjeuner doit être un nombre entier de minutes.')
+      .min(0, 'La fin de la pause déjeuner est invalide.')
+      .max(1439, 'La fin de la pause déjeuner est invalide.'),
+    // Au-delà de quatre heures, ce n'est plus un trajet mais un déplacement,
+    // qui se saisit comme tel. 0 désactive la pose des trajets.
+    dureeTrajetMinutes: z
+      .number({ message: 'La durée de trajet est requise.' })
+      .int('La durée de trajet doit être un nombre entier de minutes.')
+      .min(0, 'La durée de trajet ne peut pas être négative.')
+      .max(240, 'La durée de trajet ne peut pas dépasser 4 heures.'),
     // 0 = relances désactivées. Un délai d'un jour est déjà agressif, au-delà
     // d'un trimestre le CRA relève de la relance humaine. La borne haute n'est
     // pas cosmétique : `runSignatureReminders` en tire une échéance, et un
@@ -198,6 +215,25 @@ const settingsPatchSchema = z
         message: 'La fin de la plage journée doit être postérieure à son début.',
       })
     }
+
+    // Deux bornes égales désactivent la pause : rien à vérifier alors. Sinon,
+    // la pause suit son début et tombe dans la plage — sans quoi `entryBounds`
+    // ne l'appliquerait jamais, et le réglage serait décoratif.
+    const { pauseDebutMinute: pd, pauseFinMinute: pf } = patch
+    if (pd !== undefined && pf !== undefined && pd !== pf) {
+      if (pf < pd) {
+        ctx.addIssue({ code: 'custom', message: 'La fin de la pause déjeuner doit suivre son début.' })
+      } else if (
+        patch.journeeDebutMinute !== undefined &&
+        patch.journeeFinMinute !== undefined &&
+        (pd <= patch.journeeDebutMinute || pf >= patch.journeeFinMinute)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'La pause déjeuner doit tomber à l’intérieur de la plage journée.',
+        })
+      }
+    }
   })
 
 /**
@@ -233,6 +269,12 @@ export interface AppSettings {
   journeeDebutMinute: number
   /** fin de la plage journée, minutes depuis minuit */
   journeeFinMinute: number
+  /** début de la pause déjeuner, minutes depuis minuit */
+  pauseDebutMinute: number
+  /** fin de la pause déjeuner ; égale au début = aucune pause */
+  pauseFinMinute: number
+  /** durée d'un trajet posé dans l'agenda, en minutes. 0 = aucun trajet. */
+  dureeTrajetMinutes: number
   /** délai avant relance d'une signature en attente, en jours. 0 = désactivé. */
   relanceJours: number
   /**
@@ -266,6 +308,9 @@ function toAppSettings(row: Row): AppSettings {
     debutExerciceMois: row.debutExerciceMois,
     journeeDebutMinute: row.journeeDebutMinute,
     journeeFinMinute: row.journeeFinMinute,
+    pauseDebutMinute: row.pauseDebutMinute,
+    pauseFinMinute: row.pauseFinMinute,
+    dureeTrajetMinutes: row.dureeTrajetMinutes,
     relanceJours: row.relanceJours,
     // Le repli est en LECTURE, pas en base : une installation déplacée suit
     // alors la machine, et « choisi Paris » reste distinct de « jamais
@@ -367,6 +412,11 @@ export async function updateSettings(
         journeeDebutMinute: patch.journeeDebutMinute,
       }),
       ...(patch.journeeFinMinute !== undefined && { journeeFinMinute: patch.journeeFinMinute }),
+      ...(patch.pauseDebutMinute !== undefined && { pauseDebutMinute: patch.pauseDebutMinute }),
+      ...(patch.pauseFinMinute !== undefined && { pauseFinMinute: patch.pauseFinMinute }),
+      ...(patch.dureeTrajetMinutes !== undefined && {
+        dureeTrajetMinutes: patch.dureeTrajetMinutes,
+      }),
       ...(patch.relanceJours !== undefined && { relanceJours: patch.relanceJours }),
       ...(patch.timeZone !== undefined && { timeZone: patch.timeZone.trim() }),
     },

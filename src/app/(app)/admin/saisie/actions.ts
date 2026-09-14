@@ -17,6 +17,16 @@ function timeInputToMinutes(value: string): number {
   return Number(match[1]) * 60 + Number(match[2])
 }
 
+/**
+ * Une heure de pause laissée vide vaut 0. Les deux vides donnent 0 et 0,
+ * c'est-à-dire « aucune pause » ; une seule vide donne une pause que le
+ * service refusera, en français — jamais un réglage à moitié écrit.
+ */
+function pauseChamp(value: FormDataEntryValue | null): number {
+  const brut = String(value ?? '')
+  return brut === '' ? 0 : timeInputToMinutes(brut)
+}
+
 function parseSlotsField(raw: FormDataEntryValue | null): Slot[] | null {
   if (typeof raw !== 'string' || raw.trim() === '') return []
   try {
@@ -68,6 +78,9 @@ export async function saveSettings(
       debutExerciceMois: Number(formData.get('debutExerciceMois')),
       journeeDebutMinute: timeInputToMinutes(String(formData.get('journeeDebut') ?? '')),
       journeeFinMinute: timeInputToMinutes(String(formData.get('journeeFin') ?? '')),
+      pauseDebutMinute: pauseChamp(formData.get('pauseDebut')),
+      pauseFinMinute: pauseChamp(formData.get('pauseFin')),
+      dureeTrajetMinutes: Number(formData.get('dureeTrajet')),
       // Le fuseau vit désormais ici et non dans `CRA_TIMEZONE`. Un champ vidé
       // est refusé par le service : « vide » signifie « jamais choisi », et
       // l'écrire rendrait ce sens indiscernable d'un choix délibéré.

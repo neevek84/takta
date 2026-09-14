@@ -51,6 +51,9 @@ function formulaire(patch: Record<string, string> = {}): FormData {
     debutExerciceMois: '1',
     journeeDebut: '09:00',
     journeeFin: '18:00',
+    pauseDebut: '12:30',
+    pauseFin: '13:30',
+    dureeTrajet: '30',
     ...patch,
   }
   for (const [k, v] of Object.entries(champs)) fd.set(k, v)
@@ -95,5 +98,21 @@ describe('attribution au journal de preuve', () => {
     // `SYSTEME` — une preuve fausse, et le seul motif de ce paramètre.
     await saveSettings(null, formulaire())
     expect(updateSettings).toHaveBeenCalledWith(expect.any(Object), 'u1')
+  })
+})
+
+describe('saveSettings — pause déjeuner et trajets', () => {
+  it('transcrit la pause et la durée de trajet', async () => {
+    await saveSettings(null, formulaire({ pauseDebut: '12:00', pauseFin: '12:45', dureeTrajet: '20' }))
+    const patch = updateSettings.mock.calls[0]![0] as Record<string, unknown>
+    expect([patch.pauseDebutMinute, patch.pauseFinMinute, patch.dureeTrajetMinutes]).toEqual([
+      720, 765, 20,
+    ])
+  })
+
+  it('lit deux heures de pause vides comme aucune pause', async () => {
+    await saveSettings(null, formulaire({ pauseDebut: '', pauseFin: '' }))
+    const patch = updateSettings.mock.calls[0]![0] as Record<string, unknown>
+    expect([patch.pauseDebutMinute, patch.pauseFinMinute]).toEqual([0, 0])
   })
 })
