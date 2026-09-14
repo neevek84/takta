@@ -343,3 +343,71 @@ describe('buildCellStates', () => {
     expect(buildCellStates(entries, 'l3', CTX).size).toBe(0)
   })
 })
+
+describe('pause déjeuner et lieu', () => {
+  const DEJEUNER = { debutMinute: 750, finMinute: 810 }
+
+  it('lit la pause et le lieu d une journée entière', () => {
+    const journee: CellEntry = { ...saisie(480, '', 540, 1080), pause: DEJEUNER, lieu: 'SITE' }
+    expect(readCellState([journee], CTX)).toEqual({
+      kind: 'JOURNEE',
+      bornes: { startMinute: 540, endMinute: 1080, pause: DEJEUNER },
+      lieu: 'SITE',
+    })
+  })
+
+  it('lit la pause et le lieu d une valeur libre', () => {
+    const libre: CellEntry = { ...saisie(360, '', 480, 900), pause: DEJEUNER, lieu: 'SITE' }
+    expect(readCellState([libre], CTX)).toEqual({
+      kind: 'LIBRE',
+      minutes: 360,
+      slotId: '',
+      startMinute: 480,
+      endMinute: 900,
+      eclatee: false,
+      pause: DEJEUNER,
+      lieu: 'SITE',
+    })
+  })
+
+  it('pose la pause des réglages sur une journée entière', () => {
+    expect(cellStateToWrite({ kind: 'JOURNEE' }, { ...CTX, pause: DEJEUNER })).toEqual([
+      { ...saisie(480, '', 540, 1080), pause: DEJEUNER },
+    ])
+  })
+
+  it('ne pose jamais la pause des réglages sur une demi-journée', () => {
+    const [matin] = cellStateToWrite({ kind: 'DEMI', slotId: 'matin' }, { ...CTX, pause: DEJEUNER })
+    expect(matin?.pause).toBeUndefined()
+  })
+
+  it('écrit la pause et le lieu qu une valeur libre porte', () => {
+    const [libre] = cellStateToWrite(
+      {
+        kind: 'LIBRE',
+        minutes: 360,
+        slotId: '',
+        startMinute: 480,
+        endMinute: 900,
+        eclatee: false,
+        pause: DEJEUNER,
+        lieu: 'SITE',
+      },
+      CTX,
+    )
+    expect(libre).toEqual({ ...saisie(360, '', 480, 900), pause: DEJEUNER, lieu: 'SITE' })
+  })
+
+  it('reporte la pause et le lieu jusqu à l état de la case', () => {
+    const etats = buildCellStates(
+      [{ ...saisie(480, '', 540, 1080), pause: DEJEUNER, lieu: 'SITE', date: '2026-03-10', lineId: 'l1' }],
+      'l1',
+      { slots: SLOTS },
+    )
+    expect(etats.get('2026-03-10')).toEqual({
+      kind: 'JOURNEE',
+      bornes: { startMinute: 540, endMinute: 1080, pause: DEJEUNER },
+      lieu: 'SITE',
+    })
+  })
+})

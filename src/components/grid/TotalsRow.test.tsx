@@ -33,6 +33,7 @@ function saisie(minutes: number, minutesParJour: number): MonthEntry {
     endMinute: 1020,
     slotId: '',
     minutesParJour,
+    lieu: 'DISTANCE',
   }
 }
 

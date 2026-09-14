@@ -120,8 +120,8 @@ function renderClient(
 
 /** Deux journées pleines le 12 : de quoi dépasser une capacité d'une journée. */
 const deuxJournees: MonthEntry[] = [
-  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
-  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
+  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480, lieu: 'DISTANCE' },
+  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480, lieu: 'DISTANCE' },
 ]
 
 /** Les trois boutons de vue ont fusionné en un seul champ liste de choix. */

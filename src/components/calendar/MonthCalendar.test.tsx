@@ -38,7 +38,8 @@ const ligneHeure: LineForGrid = { ...ligneJour, id: 'l2', label: 'Astreinte', di
 function entree(over: Partial<MonthEntry> = {}): MonthEntry {
   return {
     id: 'e', lineId: 'l1', date: '2026-03-10', minutes: 480,
-    kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480, ...over,
+    kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480,
+    lieu: 'DISTANCE', ...over,
   }
 }
 
@@ -208,6 +209,7 @@ describe('MonthCalendar', () => {
       await waitFor(() =>
         expect(onFormulaire).toHaveBeenCalledWith('2026-03-10', {
           kind: 'LIBRE', minutes: 180, slotId: '', startMinute: 540, endMinute: 720, eclatee: false,
+          lieu: 'DISTANCE',
         }),
       )
       expect(onApply).not.toHaveBeenCalled()
@@ -514,7 +516,7 @@ describe('MonthCalendar', () => {
   }
 
   const surLigneB: MonthEntry[] = [
-    { id: 'b1', lineId: 'lB', date: '2026-03-10', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
+    { id: 'b1', lineId: 'lB', date: '2026-03-10', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480, lieu: 'DISTANCE' },
   ]
 
   describe('Cette prestation ou tout le mois', () => {

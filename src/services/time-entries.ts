@@ -1,9 +1,9 @@
 import { prisma } from '@/db/client'
-import type { CraStatus, TimeEntryKind } from '@/core/types'
+import type { CraStatus, Lieu, TimeEntryKind } from '@/core/types'
 import { checkCapacity } from '@/core/capacity/check'
 import { isLocked } from '@/core/cra/state-machine'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
-import { entryBounds } from '@/core/time/slots'
+import { entryBounds, pauseDepuisColonnes, type Pause } from '@/core/time/slots'
 import { computeEngagement } from '@/core/engagement/compute'
 import { joursDuMois } from '@/core/cra/document'
 import { getSettings } from './settings'
@@ -25,6 +25,10 @@ export interface MonthEntry {
   endMinute: number
   /** durée d'une journée figée à l'écriture, en minutes */
   minutesParJour: number
+  /** pause figée à l'écriture ; absente = aucune */
+  pause?: Pause
+  /** lieu figé à l'écriture */
+  lieu: Lieu
 }
 
 export function toIsoDate(d: Date): string {
@@ -34,6 +38,7 @@ export function toIsoDate(d: Date): string {
 type TimeEntryRow = Awaited<ReturnType<typeof prisma.timeEntry.findMany>>[number]
 
 function versMonthEntry(r: TimeEntryRow): MonthEntry {
+  const pause = pauseDepuisColonnes(r.pauseDebutMinute, r.pauseFinMinute)
   return {
     id: r.id,
     lineId: r.lineId,
@@ -46,6 +51,8 @@ function versMonthEntry(r: TimeEntryRow): MonthEntry {
     startMinute: r.startMinute,
     endMinute: r.endMinute,
     minutesParJour: r.minutesParJour,
+    ...(pause !== undefined && { pause }),
+    lieu: r.lieu as Lieu,
   }
 }
 
