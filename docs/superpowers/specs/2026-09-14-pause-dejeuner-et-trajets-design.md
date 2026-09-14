@@ -93,9 +93,11 @@ journée entière (`slot === null`) avec une pause active :
 - le bloc part au début de la plage journée ;
 - la pause s'applique si elle tombe **dans** `[début, début + minutes + durée de
   la pause]` ;
-- la fin vaut `début + minutes + durée de la pause`, toujours bornée par la fin
-  de plage — la règle actuelle (« ne jamais occuper une soirée que personne n'a
-  vendue ») ne change pas ;
+- la fin vaut `début + minutes + durée de la pause`, et le bloc allongé doit
+  **tenir dans la plage sans troncature** ; sinon la pause ne s'applique pas et
+  le bloc garde sa forme historique. La règle actuelle (« ne jamais occuper une
+  soirée que personne n'a vendue ») ne change pas, et une journée rouverte puis
+  réenregistrée ne perd jamais de temps facturé ;
 - le résultat rend aussi `pauseDebutMinute` et `pauseFinMinute`, égaux à 0 quand
   la pause ne s'applique pas.
 
