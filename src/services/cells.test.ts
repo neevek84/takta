@@ -77,6 +77,11 @@ beforeEach(async () => {
     // déplacent la journée de travail pour éprouver le gel des heures.
     journeeDebutMinute: 540,
     journeeFinMinute: 1080,
+    // Cette suite ne teste pas la pause déjeuner : sans ce réglage à zéro, le
+    // défaut du singleton (750/810) allongerait les journées entières que ces
+    // tests attendent pile à `minutesParJour`.
+    pauseDebutMinute: 0,
+    pauseFinMinute: 0,
   })
 })
 

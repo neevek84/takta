@@ -4,6 +4,8 @@ import { isLocked } from '@/core/cra/state-machine'
 import { cellStateToWrite } from '@/core/saisie/cell-state'
 import { isSlotAllowed } from '@/core/saisie/cycle'
 import type { CellState } from '@/core/saisie/cycle'
+import { pauseDepuisColonnes } from '@/core/time/slots'
+import { LIEUX } from '@/core/types'
 import type { CraStatus, TimeEntryKind } from '@/core/types'
 import { getSettings } from './settings'
 import { enqueueTimeEntry } from './sync/outbox'
@@ -54,6 +56,21 @@ function dureeExploitable(minutes: number): boolean {
 }
 
 /**
+ * Une pause venue du client n'est pas crue sur parole non plus : elle doit
+ * tomber strictement dans le bloc qu'elle coupe. Un bloc de nuit n'en porte
+ * pas — il franchit minuit, la pause jamais.
+ */
+function pauseExploitable(state: Extract<CellState, { kind: 'LIBRE' }>): boolean {
+  const p = state.pause
+  if (p === undefined) return true
+  const minutesValides = [p.debutMinute, p.finMinute].every(
+    (m) => Number.isInteger(m) && m >= 0 && m <= 1439,
+  )
+  if (!minutesValides || state.endMinute <= state.startMinute) return false
+  return state.startMinute < p.debutMinute && p.debutMinute < p.finMinute && p.finMinute < state.endMinute
+}
+
+/**
  * Aligne les saisies d'une case (prestation, jour) sur ce que `state` décrit.
  *
  * Le rapprochement se fait **par cible**, jamais par table rase : la cible
@@ -91,7 +108,9 @@ export async function applyCellState(args: {
   // dans le server action qui l'appelle.
   const assignment = await prisma.assignment.findUnique({
     where: { lineId_userId: { lineId: args.lineId, userId: args.userId } },
-    select: { line: { select: { allowedSlotIds: true } } },
+    select: {
+      line: { select: { allowedSlotIds: true, mission: { select: { lieuDefaut: true } } } },
+    },
   })
   if (assignment === null) return { ok: false, reason: 'NON_AFFECTE' }
 
@@ -103,7 +122,17 @@ export async function applyCellState(args: {
     return { ok: false, reason: 'SAISIE_INVALIDE' }
   }
 
+  if (args.state.kind === 'LIBRE' && !pauseExploitable(args.state)) {
+    return { ok: false, reason: 'SAISIE_INVALIDE' }
+  }
+
+  const lieuDemande = args.state.kind === 'VIDE' ? undefined : args.state.lieu
+  if (lieuDemande !== undefined && !(LIEUX as readonly string[]).includes(lieuDemande)) {
+    return { ok: false, reason: 'SAISIE_INVALIDE' }
+  }
+
   const minutesParJour = await resolveLineMinutesParJour(args.lineId, settings.minutesParJour)
+  const pauseReglage = pauseDepuisColonnes(settings.pauseDebutMinute, settings.pauseFinMinute)
 
   let cibles
   try {
@@ -114,6 +143,9 @@ export async function applyCellState(args: {
       // ici, à l'écriture, que les heures d'une saisie se figent.
       journeeDebutMinute: settings.journeeDebutMinute,
       journeeFinMinute: settings.journeeFinMinute,
+      // La pause des réglages, pour une journée entière seulement : c'est
+      // `cellStateToWrite` qui décide à quel état elle s'applique.
+      ...(pauseReglage !== undefined && { pause: pauseReglage }),
     })
   } catch {
     return { ok: false, reason: 'SAISIE_INVALIDE' }
@@ -164,7 +196,7 @@ export async function applyCellState(args: {
     // ni retirer ni mettre en file.
     const presentes = await tx.timeEntry.findMany({
       where: { userId: args.userId, lineId: args.lineId, date },
-      select: { id: true, slotId: true },
+      select: { id: true, slotId: true, lieu: true },
     })
 
     // Ne disparaissent que les saisies dont plus aucune cible ne porte le
@@ -211,6 +243,10 @@ export async function applyCellState(args: {
                 minutesParJour,
                 startMinute: cible.startMinute,
                 endMinute: cible.endMinute,
+                pauseDebutMinute: cible.pause?.debutMinute ?? 0,
+                pauseFinMinute: cible.pause?.finMinute ?? 0,
+                // Le lieu que le formulaire dit, sinon celui de la mission.
+                lieu: cible.lieu ?? assignment.line.mission.lieuDefaut,
               },
             })
           : await tx.timeEntry.update({
@@ -226,6 +262,11 @@ export async function applyCellState(args: {
                 minutesParJour,
                 startMinute: cible.startMinute,
                 endMinute: cible.endMinute,
+                pauseDebutMinute: cible.pause?.debutMinute ?? 0,
+                pauseFinMinute: cible.pause?.finMinute ?? 0,
+                // Un clic dans la grille ne connaît pas le lieu : il garde
+                // celui de la saisie qu'il retouche.
+                lieu: cible.lieu ?? existante.lieu,
               },
             })
 

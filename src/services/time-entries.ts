@@ -266,7 +266,7 @@ export async function saveEntry(args: {
     // non le vendu de la prestation entière, que son engagement dépasse.
     select: {
       soldCentiemes: true,
-      line: { select: { missionId: true, allowedSlotIds: true } },
+      line: { select: { missionId: true, allowedSlotIds: true, mission: { select: { lieuDefaut: true } } } },
     },
   })
 
@@ -361,12 +361,26 @@ export async function saveEntry(args: {
   // Les deux bornes du bloc, figées ici et une seule fois : les recalculer au
   // moment de pousser vers l'agenda ferait déplacer une saisie que personne
   // n'a retouchée dès qu'un créneau change en administration.
+  // Une journée entière saisie au tableau reçoit la pause d'office, comme au
+  // calendrier : c'est la même journée, et elle ne doit pas occuper l'agenda
+  // autrement selon la vue qui l'a écrite.
+  const pauseReglage = pauseDepuisColonnes(settings.pauseDebutMinute, settings.pauseFinMinute)
+  const journeeEntiere = slotId === '' && args.minutes === minutesParJour
   const bornes = entryBounds({
     minutes: args.minutes,
     slot: slotId === '' ? null : (settings.slots.find((s) => s.id === slotId) ?? null),
     journeeDebutMinute: settings.journeeDebutMinute,
     journeeFinMinute: settings.journeeFinMinute,
+    ...(journeeEntiere && pauseReglage !== undefined && { pause: pauseReglage }),
   })
+  // Ce qui part en base : `bornes.pause` n'est pas une colonne, ses deux
+  // bornes le sont.
+  const colonnes = {
+    startMinute: bornes.startMinute,
+    endMinute: bornes.endMinute,
+    pauseDebutMinute: bornes.pause?.debutMinute ?? 0,
+    pauseFinMinute: bornes.pause?.finMinute ?? 0,
+  }
 
   const sameDay = await prisma.timeEntry.findMany({
     where: { userId: args.userId, date },
@@ -466,14 +480,15 @@ export async function saveEntry(args: {
               minutes: args.minutes,
               kind: args.kind,
               minutesParJour,
-              ...bornes,
+              ...colonnes,
+              lieu: assignment.line.mission.lieuDefaut,
             },
           })
         : await tx.timeEntry.update({
             where: { id: cible.id },
             // Les bornes sont réécrites avec la saisie, comme `minutesParJour` :
             // le gel porte sur l'écriture, et une correction *est* une écriture.
-            data: { minutes: args.minutes, kind: args.kind, minutesParJour, ...bornes },
+            data: { minutes: args.minutes, kind: args.kind, minutesParJour, ...colonnes },
           })
 
     await enqueueTimeEntry(tx, { userId: args.userId, entryId: entry.id, operation: 'UPSERT' })
