@@ -9,6 +9,7 @@ import { joursDuMois } from '@/core/cra/document'
 import { getSettings } from './settings'
 import { enqueueTimeEntry } from './sync/outbox'
 import { appendAudit, actorOf } from './audit'
+import { planifierTrajets } from './trajets'
 
 export interface MonthEntry {
   id: string
@@ -492,6 +493,12 @@ export async function saveEntry(args: {
           })
 
     await enqueueTimeEntry(tx, { userId: args.userId, entryId: entry.id, operation: 'UPSERT' })
+
+    await planifierTrajets(tx, {
+      userId: args.userId,
+      entryId: entry.id,
+      dureeMinutes: settings.dureeTrajetMinutes,
+    })
   })
 
   // Consigné **après** la transaction, jamais dedans : le journal atteste de

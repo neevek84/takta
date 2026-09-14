@@ -10,6 +10,7 @@ import type { CraStatus, TimeEntryKind } from '@/core/types'
 import { getSettings } from './settings'
 import { enqueueTimeEntry } from './sync/outbox'
 import { resolveLineMinutesParJour, type CapacityWarning } from './time-entries'
+import { planifierTrajets } from './trajets'
 
 export type CellResult =
   | { ok: true; state: CellState; warning?: CapacityWarning; signalement?: string }
@@ -271,6 +272,13 @@ export async function applyCellState(args: {
             })
 
       await enqueueTimeEntry(tx, { userId: args.userId, entryId: entry.id, operation: 'UPSERT' })
+
+      // Chez le client, les trajets de cette saisie — une fois pour toutes.
+      await planifierTrajets(tx, {
+        userId: args.userId,
+        entryId: entry.id,
+        dureeMinutes: settings.dureeTrajetMinutes,
+      })
     }
   })
 
