@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { entryBounds, type Slot } from '../time/slots'
-import { buildCalendarEvent, COULEUR_PREVISIONNEL, COULEUR_REALISE } from './event'
+import {
+  buildCalendarEvent,
+  buildCalendarEvents,
+  COULEUR_PREVISIONNEL,
+  COULEUR_REALISE,
+  SEGMENT_APRES_PAUSE,
+} from './event'
 
 const MATIN: Slot = { id: 'matin', label: 'Matin', startMinute: 540, endMinute: 780, centiemes: 50 }
 const APRES_MIDI: Slot = {
@@ -162,5 +168,28 @@ describe('buildCalendarEvent — le reste de l événement', () => {
     expect(buildCalendarEvent({ ...base(), kind: 'PREVISIONNEL' }).description).toContain(
       'prévisionnel',
     )
+  })
+})
+
+describe('buildCalendarEvents — la pause coupe le bloc', () => {
+  it('rend un seul bloc sans pause, identique à buildCalendarEvent', () => {
+    expect(buildCalendarEvents(base())).toEqual([
+      { segment: 'PRINCIPAL', draft: buildCalendarEvent(base()) },
+    ])
+  })
+
+  it('rend deux blocs, la pause libre entre les deux', () => {
+    const blocs = buildCalendarEvents({ ...base(), pause: { debutMinute: 750, finMinute: 810 } })
+    expect(
+      blocs.map((b) => [b.segment, b.draft.startLocal, b.draft.endLocal, b.draft.craSegment]),
+    ).toEqual([
+      ['PRINCIPAL', '2026-03-10T09:00:00', '2026-03-10T12:30:00', undefined],
+      ['APRES_PAUSE', '2026-03-10T13:30:00', '2026-03-10T17:00:00', SEGMENT_APRES_PAUSE],
+    ])
+  })
+
+  it('garde la même saisie derrière les deux blocs', () => {
+    const blocs = buildCalendarEvents({ ...base(), pause: { debutMinute: 750, finMinute: 810 } })
+    expect(blocs.map((b) => b.draft.craEntryId)).toEqual(['entry-1', 'entry-1'])
   })
 })

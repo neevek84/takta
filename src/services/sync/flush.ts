@@ -1,14 +1,16 @@
 import { prisma } from '@/db/client'
 import { CalendarApiError, type CalendarConnector } from '@/core/calendar/connector'
-import { buildCalendarEvent } from '@/core/calendar/event'
+import { buildCalendarEvents, type CalendarEventDraft } from '@/core/calendar/event'
 import {
   abandon,
+  ENTITY_TIME_ENTRY_SUITE,
   MAX_PASSES,
   nextAttempt,
   PROVIDER_GOOGLE,
   TAILLE_LOT,
   type ConflictKind,
 } from '@/core/sync/policy'
+import { pauseDepuisColonnes } from '@/core/time/slots'
 import type { TimeEntryKind } from '@/core/types'
 import type { FetchLike } from '@/integrations/google/calendar'
 import { actorOf, appendAudit } from '@/services/audit'
@@ -39,6 +41,13 @@ function cibleDe(row: Row) {
   return { entityType: row.entityType, entityId: row.entityId, provider: row.provider }
 }
 
+type Cible = ReturnType<typeof cibleDe>
+
+/** Le second bloc d'une saisie : même saisie, autre événement, autre lien. */
+function cibleSuiteDe(row: Row): Cible {
+  return { ...cibleDe(row), entityType: ENTITY_TIME_ENTRY_SUITE }
+}
+
 /** Message d'échec borné : la colonne n'est pas un journal d'exécution. */
 function messageDe(err: unknown): string {
   const brut = err instanceof Error ? err.message : String(err)
@@ -52,14 +61,19 @@ function messageDe(err: unknown): string {
  * cible, on le met à jour au lieu d'en empiler un second. Un écran d'arbitrage
  * qui listerait dix fois la même divergence ne serait pas arbitrable.
  */
-async function ouvrirConflit(row: Row, kind: ConflictKind, snapshot: unknown): Promise<void> {
+async function ouvrirConflit(
+  row: Row,
+  cible: Cible,
+  kind: ConflictKind,
+  snapshot: unknown,
+): Promise<void> {
   const ouvert = await prisma.syncConflict.findFirst({
-    where: { userId: row.userId, ...cibleDe(row), resolvedAt: null },
+    where: { userId: row.userId, ...cible, resolvedAt: null },
   })
   const data = { kind, remoteSnapshotJson: JSON.stringify(snapshot), detectedAt: new Date() }
 
   if (ouvert === null) {
-    await prisma.syncConflict.create({ data: { userId: row.userId, ...cibleDe(row), ...data } })
+    await prisma.syncConflict.create({ data: { userId: row.userId, ...cible, ...data } })
   } else {
     await prisma.syncConflict.update({ where: { id: ouvert.id }, data })
   }
@@ -79,6 +93,79 @@ type Issue =
   | { etat: 'RIEN' }
   | { etat: 'CONFLIT'; kind: ConflictKind }
 
+/**
+ * Pousse **un** bloc : création, ou lecture puis comparaison d'etag puis mise
+ * à jour. C'est la règle d'avant la pause, inchangée — elle s'applique
+ * désormais bloc par bloc, chacun sous son propre lien.
+ */
+async function pousserBloc(
+  connector: CalendarConnector,
+  row: Row,
+  cible: Cible,
+  draft: CalendarEventDraft,
+  now: Date,
+  entryId: string,
+): Promise<Issue> {
+  const link = await prisma.externalLink.findUnique({
+    where: { entityType_entityId_provider: cible },
+  })
+
+  if (link === null) {
+    const cree = await connector.createEvent(draft)
+    await prisma.externalLink.create({
+      data: {
+        ...cible,
+        userId: row.userId,
+        externalId: cree.externalId,
+        etag: cree.etag,
+        syncState: 'SYNCED',
+        syncedAt: now,
+      },
+    })
+    return { etat: 'POUSSE', entryId, externalId: cree.externalId }
+  }
+
+  // On lit avant d'écrire. C'est le seul moment où une modification faite dans
+  // Google peut être vue — et le seul endroit où on peut refuser de l'écraser.
+  let remote
+  try {
+    remote = await connector.getEvent(link.externalId)
+  } catch (err) {
+    if (err instanceof CalendarApiError && err.kind === 'NOT_FOUND') {
+      await ouvrirConflit(row, cible, 'REMOTE_DELETED', { externalId: link.externalId })
+      return { etat: 'CONFLIT', kind: 'REMOTE_DELETED' }
+    }
+    throw err
+  }
+
+  if (link.etag !== '' && remote.etag !== link.etag) {
+    await ouvrirConflit(row, cible, 'REMOTE_MODIFIED', remote)
+    // Et surtout : aucune écriture. La divergence part en arbitrage.
+    return { etat: 'CONFLIT', kind: 'REMOTE_MODIFIED' }
+  }
+
+  const maj = await connector.updateEvent(link.externalId, draft)
+  await prisma.externalLink.update({
+    where: { id: link.id },
+    data: { etag: maj.etag, syncState: 'SYNCED', syncedAt: now },
+  })
+  return { etat: 'POUSSE', entryId, externalId: link.externalId }
+}
+
+/** Retire un bloc de l'agenda, s'il y a jamais été posé. */
+async function retirerBloc(connector: CalendarConnector, cible: Cible): Promise<void> {
+  const link = await prisma.externalLink.findUnique({
+    where: { entityType_entityId_provider: cible },
+  })
+  // Jamais poussé, donc rien à retirer de l'agenda.
+  if (link === null) return
+
+  // Un événement déjà absent est absorbé par le connecteur : l'objectif est
+  // atteint, le lien peut être consommé.
+  await connector.deleteEvent(link.externalId)
+  await prisma.externalLink.delete({ where: { id: link.id } })
+}
+
 async function traiterUpsert(
   connector: CalendarConnector,
   row: Row,
@@ -94,12 +181,11 @@ async function traiterUpsert(
   if (entry === null) return { etat: 'RIEN' }
 
   // Aucun réglage n'est relu ici, et c'est tout l'enjeu : les heures d'une
-  // saisie sont figées à son écriture, et ce drainage les reportait autrefois
-  // depuis `settings.slots` et la plage journée **courantes**. Un créneau
-  // redéfini en administration déplaçait alors le bloc d'agenda d'une journée
-  // que personne n'avait retouchée — CRA validé compris. La colonne en base
-  // n'y aurait rien changé : le gel se casse en lecture.
-  const draft = buildCalendarEvent({
+  // saisie — pause comprise — sont figées à son écriture. Un réglage modifié
+  // en administration ne déplace aucun bloc d'une journée que personne n'a
+  // retouchée, CRA validé compris.
+  const pause = pauseDepuisColonnes(entry.pauseDebutMinute, entry.pauseFinMinute)
+  const blocs = buildCalendarEvents({
     entryId: entry.id,
     date: toIsoDate(entry.date),
     kind: entry.kind as TimeEntryKind,
@@ -109,68 +195,30 @@ async function traiterUpsert(
     startMinute: entry.startMinute,
     endMinute: entry.endMinute,
     // Le fuseau, lui, est bien un réglage courant, et c'est voulu : il situe
-    // des heures locales naïves, il ne les change pas. Il vient des réglages,
-    // saisi à l'écran — plus de `CRA_TIMEZONE` dans un fichier.
+    // des heures locales naïves, il ne les change pas.
     timeZone,
+    ...(pause !== undefined && { pause }),
   })
 
-  const link = await prisma.externalLink.findUnique({
-    where: { entityType_entityId_provider: cibleDe(row) },
-  })
-
-  if (link === null) {
-    const cree = await connector.createEvent(draft)
-    await prisma.externalLink.create({
-      data: {
-        ...cibleDe(row),
-        userId: row.userId,
-        externalId: cree.externalId,
-        etag: cree.etag,
-        syncState: 'SYNCED',
-        syncedAt: now,
-      },
-    })
-    return { etat: 'POUSSE', entryId: entry.id, externalId: cree.externalId }
+  // Chaque bloc part, même si l'autre est en conflit : une retouche faite dans
+  // Google sur l'après-midi ne doit pas empêcher la matinée de suivre la saisie.
+  const issues: Issue[] = []
+  for (const { segment, draft } of blocs) {
+    const cible = segment === 'PRINCIPAL' ? cibleDe(row) : cibleSuiteDe(row)
+    issues.push(await pousserBloc(connector, row, cible, draft, now, entry.id))
   }
 
-  // On lit avant d'écrire. C'est le seul moment où une modification faite dans
-  // Google peut être vue — et le seul endroit où on peut refuser de l'écraser.
-  let remote
-  try {
-    remote = await connector.getEvent(link.externalId)
-  } catch (err) {
-    if (err instanceof CalendarApiError && err.kind === 'NOT_FOUND') {
-      await ouvrirConflit(row, 'REMOTE_DELETED', { externalId: link.externalId })
-      return { etat: 'CONFLIT', kind: 'REMOTE_DELETED' }
-    }
-    throw err
+  // La pause a été retirée : le second bloc n'a plus rien à occuper.
+  if (!blocs.some((b) => b.segment === 'APRES_PAUSE')) {
+    await retirerBloc(connector, cibleSuiteDe(row))
   }
 
-  if (link.etag !== '' && remote.etag !== link.etag) {
-    await ouvrirConflit(row, 'REMOTE_MODIFIED', remote)
-    // Et surtout : aucune écriture. La divergence part en arbitrage.
-    return { etat: 'CONFLIT', kind: 'REMOTE_MODIFIED' }
-  }
-
-  const maj = await connector.updateEvent(link.externalId, draft)
-  await prisma.externalLink.update({
-    where: { id: link.id },
-    data: { etag: maj.etag, syncState: 'SYNCED', syncedAt: now },
-  })
-  return { etat: 'POUSSE', entryId: entry.id, externalId: link.externalId }
+  return issues.find((i) => i.etat === 'CONFLIT') ?? issues[0]!
 }
 
 async function traiterSuppression(connector: CalendarConnector, row: Row): Promise<Issue> {
-  const link = await prisma.externalLink.findUnique({
-    where: { entityType_entityId_provider: cibleDe(row) },
-  })
-  // Jamais poussée, donc rien à retirer de l'agenda.
-  if (link === null) return { etat: 'RIEN' }
-
-  // Un événement déjà absent est absorbé par le connecteur : l'objectif est
-  // atteint, la ligne peut être consommée.
-  await connector.deleteEvent(link.externalId)
-  await prisma.externalLink.delete({ where: { id: link.id } })
+  await retirerBloc(connector, cibleDe(row))
+  await retirerBloc(connector, cibleSuiteDe(row))
   // `RIEN` et non `POUSSE` : `agenda.bloc.pousse` atteste qu'un bloc a été
   // écrit dans l'agenda, et un retrait n'en écrit aucun.
   return { etat: 'RIEN' }

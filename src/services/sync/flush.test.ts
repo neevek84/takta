@@ -976,3 +976,75 @@ describe('une ligne effacée pendant le drainage', () => {
     expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
   })
 })
+
+describe('journée coupée par la pause', () => {
+  beforeEach(async () => {
+    await updateSettings({ pauseDebutMinute: 750, pauseFinMinute: 810 })
+  })
+
+  function lienSuite(entityId: string) {
+    return prisma.externalLink.findFirst({
+      where: { entityType: 'TimeEntrySuite', entityId, provider: 'GOOGLE' },
+    })
+  }
+
+  function bornesPosees(): string[][] {
+    return api
+      .appelsVers('/events')
+      .filter((a) => a.method === 'POST')
+      .map((a) => {
+        const b = a.body as { start: { dateTime: string }; end: { dateTime: string } }
+        return [b.start.dateTime, b.end.dateTime]
+      })
+  }
+
+  it('pose deux blocs, la pause libre entre les deux', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(bornesPosees()).toEqual([
+      ['2026-03-12T09:00:00', '2026-03-12T12:30:00'],
+      ['2026-03-12T13:30:00', '2026-03-12T18:00:00'],
+    ])
+    expect(await lien(entryId)).not.toBeNull()
+    expect(await lienSuite(entryId)).not.toBeNull()
+  })
+
+  it('retire le second bloc quand la pause disparaît', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const suite = await lienSuite(entryId)
+
+    // Une durée partielle n'est plus une journée entière : plus de pause.
+    await saisir('2026-03-12', 240)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(await lienSuite(entryId)).toBeNull()
+    expect(api.appelsVers(suite!.externalId).some((a) => a.method === 'DELETE')).toBe(true)
+  })
+
+  it('ouvre le conflit sur le seul bloc retouché dans Google', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const suite = await lienSuite(entryId)
+
+    api.toucherEvenement(suite!.externalId, { summary: 'Déplacé à la main' })
+    await saisir('2026-03-12', 480)
+    const r = await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(r.conflits).toBe(1)
+    const conflit = await prisma.syncConflict.findFirstOrThrow({ where: { userId, resolvedAt: null } })
+    expect([conflit.entityType, conflit.entityId]).toEqual(['TimeEntrySuite', entryId])
+  })
+
+  it('retire les deux blocs quand la saisie est supprimée', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 0, kind: 'REALISE' })
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(await lien(entryId)).toBeNull()
+    expect(await lienSuite(entryId)).toBeNull()
+  })
+})

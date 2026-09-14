@@ -1,4 +1,4 @@
-import { minutesBetween } from '../time/slots'
+import { minutesBetween, type Pause } from '../time/slots'
 import type { TimeEntryKind } from '../types'
 
 /** Identifiants de couleur Google : Myrtille pour le réalisé, Banane pour le prévu. */
@@ -16,8 +16,12 @@ export interface CalendarEventDraft {
   /** le but même du bloc : occuper la plage */
   transparency: 'opaque'
   colorId: string
-  /** retrouvé côté Google dans extendedProperties.private */
+  /** retrouvé côté Google dans extendedProperties.private ; vide pour un trajet */
   craEntryId: string
+  /** `'apres-pause'` sur le second bloc d'une journée coupée ; absent sinon */
+  craSegment?: string
+  /** identifiant du trajet ; absent pour un bloc de travail */
+  craTrajetId?: string
 }
 
 export interface BuildEventArgs {
@@ -78,4 +82,35 @@ export function buildCalendarEvent(args: BuildEventArgs): CalendarEventDraft {
     colorId: args.kind === 'REALISE' ? COULEUR_REALISE : COULEUR_PREVISIONNEL,
     craEntryId: args.entryId,
   }
+}
+
+export const SEGMENT_APRES_PAUSE = 'apres-pause'
+
+export type Segment = 'PRINCIPAL' | 'APRES_PAUSE'
+
+/**
+ * Les blocs d'agenda d'une saisie : un seul, ou deux quand une pause la coupe.
+ *
+ * Un événement Google n'a pas de trou. Poser un bloc de 9 h à 17 h et écrire
+ * la pause en description laisserait l'agenda annoncer occupé à midi — le
+ * contraire de ce que la pause veut dire. Le premier bloc garde exactement la
+ * forme d'aujourd'hui, pour que les liens déjà posés continuent de le désigner.
+ */
+export function buildCalendarEvents(
+  args: BuildEventArgs & { pause?: Pause },
+): Array<{ segment: Segment; draft: CalendarEventDraft }> {
+  if (args.pause === undefined) {
+    return [{ segment: 'PRINCIPAL', draft: buildCalendarEvent(args) }]
+  }
+
+  return [
+    { segment: 'PRINCIPAL', draft: buildCalendarEvent({ ...args, endMinute: args.pause.debutMinute }) },
+    {
+      segment: 'APRES_PAUSE',
+      draft: {
+        ...buildCalendarEvent({ ...args, startMinute: args.pause.finMinute }),
+        craSegment: SEGMENT_APRES_PAUSE,
+      },
+    },
+  ]
 }

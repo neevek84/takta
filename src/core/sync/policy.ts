@@ -27,6 +27,16 @@ export const ENTITY_TIME_ENTRY = 'TimeEntry'
  */
 export const ENTITY_CRA = 'Cra'
 
+/**
+ * Le second bloc d'une journée coupée par la pause déjeuner. Même saisie —
+ * l'`entityId` est celui de la `TimeEntry` —, autre événement : l'unicité
+ * (entityType, entityId, provider) d'`ExternalLink` en demande un par bloc.
+ *
+ * Ce type n'entre jamais en file : c'est la saisie entière qu'on repousse, et
+ * le drainage retrouve ses deux blocs à partir d'elle.
+ */
+export const ENTITY_TIME_ENTRY_SUITE = 'TimeEntrySuite'
+
 /** Recul progressif : 1 min, 5 min, 15 min, 1 h, 6 h. */
 export const RETRY_DELAYS_MINUTES: readonly number[] = [1, 5, 15, 60, 360]
 export const MAX_ATTEMPTS = 5
