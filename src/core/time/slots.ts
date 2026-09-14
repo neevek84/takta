@@ -33,6 +33,31 @@ export function slotDurationMinutes(slot: Slot): number {
   return minutesBetween(slot.startMinute, slot.endMinute)
 }
 
+/**
+ * Une pause incluse dans un bloc, en minutes depuis minuit.
+ *
+ * Elle ne franchit jamais minuit, et un bloc de nuit n'en porte pas : la pause
+ * déjeuner est la seule qu'on connaisse, et elle tombe en pleine journée.
+ */
+export interface Pause {
+  debutMinute: number
+  finMinute: number
+}
+
+/** Durée d'une pause, en minutes ; 0 quand il n'y en a pas. */
+export function pauseMinutes(pause: Pause | undefined): number {
+  return pause === undefined ? 0 : Math.max(0, pause.finMinute - pause.debutMinute)
+}
+
+/**
+ * Relit la pause portée par deux colonnes — celles d'une saisie ou des
+ * réglages. Deux bornes égales disent « aucune pause » : c'est ce que vaut
+ * toute saisie antérieure à la pause, écrite à 0 et 0.
+ */
+export function pauseDepuisColonnes(debutMinute: number, finMinute: number): Pause | undefined {
+  return finMinute > debutMinute ? { debutMinute, finMinute } : undefined
+}
+
 export interface EntryBoundsArgs {
   /** temps saisi, en minutes */
   minutes: number
@@ -42,6 +67,12 @@ export interface EntryBoundsArgs {
   journeeDebutMinute: number
   /** fin de la plage journée, minutes depuis minuit */
   journeeFinMinute: number
+  /**
+   * pause déjeuner à inclure dans une journée sans créneau. Absente, aucune.
+   * C'est l'appelant qui décide qu'une saisie est une journée entière : ce
+   * calcul ne fait que placer la pause quand on la lui donne.
+   */
+  pause?: Pause
 }
 
 /**
@@ -57,21 +88,38 @@ export interface EntryBoundsArgs {
  * Un créneau nommé dit *quand* ; la durée saisie sert au CRA, pas au placement.
  * Sans créneau, le bloc part au début de la plage journée et dure exactement le
  * temps saisi, sans jamais déborder de la plage — occuper une soirée que
- * personne n'a vendue serait pire que de tronquer.
+ * personne n'a vendue serait pire que de tronquer. Une pause donnée allonge le
+ * bloc d'autant, jamais au-delà de la plage.
  */
 export function entryBounds(args: EntryBoundsArgs): {
   startMinute: number
   endMinute: number
+  /** présente seulement si la pause tombe réellement dans le bloc */
+  pause?: Pause
 } {
   if (args.slot !== null) {
     return { startMinute: args.slot.startMinute, endMinute: args.slot.endMinute }
   }
 
-  const plage = Math.max(0, args.journeeFinMinute - args.journeeDebutMinute)
-  const fin = args.journeeDebutMinute + Math.min(args.minutes, plage)
+  const debut = args.journeeDebutMinute
+  const plage = Math.max(0, args.journeeFinMinute - debut)
+
+  // La pause s'ajoute au temps saisi, elle ne le remplace pas : 7 h facturées
+  // occupent 8 h d'agenda. Elle ne s'applique que si elle tombe strictement
+  // dans le bloc ainsi allongé — une matinée de deux heures n'a rien à couper.
+  const duree = pauseMinutes(args.pause)
+  if (args.pause !== undefined && duree > 0) {
+    const finAvecPause = debut + args.minutes + duree
+    const fin = Math.min(finAvecPause, args.journeeFinMinute)
+    if (args.pause.debutMinute > debut && args.pause.finMinute < fin) {
+      return { startMinute: debut, endMinute: fin % MINUTES_PER_DAY, pause: { ...args.pause } }
+    }
+  }
+
+  const fin = debut + Math.min(args.minutes, plage)
   // Minuit se note 0, jamais 1440 : les deux bornes vivent dans la même plage
   // 0-1439 que celles d'un créneau, et `minutesBetween` retrouve la durée.
-  return { startMinute: args.journeeDebutMinute, endMinute: fin % MINUTES_PER_DAY }
+  return { startMinute: debut, endMinute: fin % MINUTES_PER_DAY }
 }
 
 export function slotInterval(slot: Slot, date: Date): { start: Date; end: Date } {
