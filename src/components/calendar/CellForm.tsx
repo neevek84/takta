@@ -6,12 +6,14 @@ import type { CellState } from '@/core/saisie/cycle'
 import { cellStateToWrite } from '@/core/saisie/cell-state'
 import { libelleCreneauAvecMoment } from '@/core/saisie/slot-labels'
 import { entryBounds, minutesBetween } from '@/core/time/slots'
-import type { Slot } from '@/core/time/slots'
+import type { Pause, Slot } from '@/core/time/slots'
 import { formatQuantity } from '@/core/time/units'
+import { LIBELLES_LIEU, LIEUX, type Lieu } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import { Field } from '@/components/ui/Field'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
+import { Checkbox } from '@/components/ui/Checkbox'
 
 /** Minutes depuis minuit → 'HH:MM', la valeur d'un `<input type="time">`. */
 function minutesToTimeInput(minutes: number): string {
@@ -43,12 +45,29 @@ function timeInputToMinutes(value: string): number | null {
  * part, et valider sans rien changer les écrasait par celles-là. Le gel avait
  * tenu en base jusqu'à ce que le lecteur le casse.
  */
-function bornesFigees(etat: CellState): { startMinute: number; endMinute: number } | undefined {
+/** Ce que le formulaire envoie : les heures, la pause qu'elles contiennent, le lieu. */
+export interface SaisieDuFormulaire {
+  minutes: number
+  slotId: string
+  startMinute: number
+  endMinute: number
+  /** absente = aucune pause */
+  pause?: Pause
+  lieu: Lieu
+}
+
+function bornesFigees(etat: CellState): BornesFigeesLues | undefined {
   if (etat.kind === 'LIBRE') {
-    return { startMinute: etat.startMinute, endMinute: etat.endMinute }
+    return {
+      startMinute: etat.startMinute,
+      endMinute: etat.endMinute,
+      ...(etat.pause !== undefined && { pause: etat.pause }),
+    }
   }
   return etat.kind === 'VIDE' ? undefined : etat.bornes
 }
+
+type BornesFigeesLues = { startMinute: number; endMinute: number; pause?: Pause }
 
 /**
  * Les deux bornes que le formulaire affiche à l'ouverture.
@@ -66,24 +85,35 @@ function bornesInitiales(
   slots: Slot[],
   journeeDebutMinute: number,
   journeeFinMinute: number,
-): { startMinute: number; endMinute: number } {
+  pauseReglage: Pause | undefined,
+): BornesFigeesLues {
   const figees = bornesFigees(etat)
   if (figees !== undefined) return figees
 
-  if (etat.kind === 'VIDE') {
+  // Une case vide s'ouvre comme la journée entière qu'un clic y poserait,
+  // pause comprise, dès qu'une pause est réglée. Sans réglage, la plage
+  // entière reste le pré-remplissage historique.
+  const etatDeDepart: CellState =
+    etat.kind === 'VIDE' ? (pauseReglage === undefined ? etat : { kind: 'JOURNEE' }) : etat
+  if (etatDeDepart.kind === 'VIDE') {
     return { startMinute: journeeDebutMinute, endMinute: journeeFinMinute % 1440 }
   }
 
-  const cible = cellStateToWrite(etat, {
+  const cible = cellStateToWrite(etatDeDepart, {
     minutesParJour: line.minutesParJour,
     slots,
     journeeDebutMinute,
     journeeFinMinute,
+    ...(pauseReglage !== undefined && { pause: pauseReglage }),
   })[0]
 
   return cible === undefined
     ? { startMinute: journeeDebutMinute, endMinute: journeeFinMinute % 1440 }
-    : { startMinute: cible.startMinute, endMinute: cible.endMinute }
+    : {
+        startMinute: cible.startMinute,
+        endMinute: cible.endMinute,
+        ...(cible.pause !== undefined && { pause: cible.pause }),
+      }
 }
 
 function creneauInitial(etat: CellState): string {
@@ -139,6 +169,8 @@ export function CellForm({
   slots,
   journeeDebutMinute,
   journeeFinMinute,
+  pauseReglage,
+  dureeTrajetMinutes,
   onSubmit,
   onDelete,
   onCancel,
@@ -152,15 +184,35 @@ export function CellForm({
   journeeDebutMinute: number
   /** fin de la plage journée, minutes depuis minuit */
   journeeFinMinute: number
-  onSubmit: (minutes: number, slotId: string, startMinute: number, endMinute: number) => void
+  /** pause des réglages ; absente = aucune pause proposée d'office */
+  pauseReglage?: Pause
+  /** durée d'un trajet posé chez le client, pour l'annoncer ; 0 = aucun */
+  dureeTrajetMinutes?: number
+  onSubmit: (saisie: SaisieDuFormulaire) => void
   onDelete: () => void
   onCancel: () => void
 }) {
-  const initiales = () =>
-    bornesInitiales(etat, line, slots, journeeDebutMinute, journeeFinMinute)
-
-  const [debut, setDebut] = useState(() => minutesToTimeInput(initiales().startMinute))
-  const [fin, setFin] = useState(() => minutesToTimeInput(initiales().endMinute))
+  // Calculées une seule fois : `useState` n'appelle l'initialiseur qu'au
+  // premier rendu, mais trois appels referaient trois fois le même calcul.
+  const [depart] = useState(() =>
+    bornesInitiales(etat, line, slots, journeeDebutMinute, journeeFinMinute, pauseReglage),
+  )
+  const [debut, setDebut] = useState(() => minutesToTimeInput(depart.startMinute))
+  const [fin, setFin] = useState(() => minutesToTimeInput(depart.endMinute))
+  const [avecPause, setAvecPause] = useState(() => depart.pause !== undefined)
+  const pauseProposee = depart.pause ?? pauseReglage
+  const [pauseDebut, setPauseDebut] = useState(() =>
+    pauseProposee === undefined ? '' : minutesToTimeInput(pauseProposee.debutMinute),
+  )
+  const [pauseFin, setPauseFin] = useState(() =>
+    pauseProposee === undefined ? '' : minutesToTimeInput(pauseProposee.finMinute),
+  )
+  const [lieu, setLieu] = useState<Lieu>(() =>
+    etat.kind !== 'VIDE' && etat.lieu !== undefined ? etat.lieu : line.lieuDefaut,
+  )
+  // La case n'apparaît que si elle a quelque chose à dire : un réglage, ou une
+  // saisie qui porte déjà une pause.
+  const pauseDisponible = pauseProposee !== undefined
   const [slotId, setSlotId] = useState(() => creneauInitial(etat))
   const [erreur, setErreur] = useState<string | null>(null)
 
@@ -219,8 +271,17 @@ export function CellForm({
 
   const debutMinute = timeInputToMinutes(debut)
   const finMinute = timeInputToMinutes(fin)
+  const pauseDebutMinute = timeInputToMinutes(pauseDebut)
+  const pauseFinMinute = timeInputToMinutes(pauseFin)
+  const dureePause =
+    avecPause && pauseDebutMinute !== null && pauseFinMinute !== null
+      ? Math.max(0, pauseFinMinute - pauseDebutMinute)
+      : 0
+  // La durée facturée : le bloc, moins la pause qu'il contient.
   const minutes =
-    debutMinute === null || finMinute === null ? null : minutesBetween(debutMinute, finMinute)
+    debutMinute === null || finMinute === null
+      ? null
+      : minutesBetween(debutMinute, finMinute) - dureePause
 
   /**
    * Le créneau **pré-remplit** les deux heures, il ne les verrouille pas.
@@ -231,13 +292,21 @@ export function CellForm({
   function choisirCreneau(id: string): void {
     setSlotId(id)
     const slot = id === '' ? null : (slots.find((s) => s.id === id) ?? null)
+    // La journée entière retrouve sa pause d'office ; un créneau nommé dit
+    // lui-même quand il commence et finit, et n'en porte jamais.
+    const pause = slot === null ? pauseReglage : undefined
+    setAvecPause(pause !== undefined)
     const bornes = entryBounds({
-      // Sans créneau, la plage entière : c'est un pré-remplissage, que la
-      // personne rectifie. La durée réellement retenue en découlera.
-      minutes: Math.max(0, journeeFinMinute - journeeDebutMinute),
+      // Sans créneau ni pause, la plage entière : c'est un pré-remplissage,
+      // que la personne rectifie. Avec pause, la journée facturée.
+      minutes:
+        pause === undefined
+          ? Math.max(0, journeeFinMinute - journeeDebutMinute)
+          : line.minutesParJour,
       slot,
       journeeDebutMinute,
       journeeFinMinute,
+      ...(pause !== undefined && { pause }),
     })
     setDebut(minutesToTimeInput(bornes.startMinute))
     setFin(minutesToTimeInput(bornes.endMinute))
@@ -248,8 +317,36 @@ export function CellForm({
       setErreur('Indiquez une heure de début et une heure de fin.')
       return
     }
+
+    let pause: Pause | undefined
+    if (avecPause) {
+      if (pauseDebutMinute === null || pauseFinMinute === null) {
+        setErreur('Indiquez les deux heures de la pause.')
+        return
+      }
+      // Même règle que le serveur : strictement dans le bloc, et jamais sur un
+      // bloc de nuit.
+      const dansLeBloc =
+        finMinute > debutMinute &&
+        debutMinute < pauseDebutMinute &&
+        pauseDebutMinute < pauseFinMinute &&
+        pauseFinMinute < finMinute
+      if (!dansLeBloc) {
+        setErreur('La pause doit tomber entre le début et la fin.')
+        return
+      }
+      pause = { debutMinute: pauseDebutMinute, finMinute: pauseFinMinute }
+    }
+
     setErreur(null)
-    onSubmit(minutes, slotId, debutMinute, finMinute)
+    onSubmit({
+      minutes,
+      slotId,
+      startMinute: debutMinute,
+      endMinute: finMinute,
+      ...(pause !== undefined && { pause }),
+      lieu,
+    })
   }
 
   return (
@@ -315,6 +412,58 @@ export function CellForm({
           })}
         </Select>
       </div>
+
+      {pauseDisponible && (
+        <div className="mt-2 flex flex-wrap items-end gap-3">
+          <Checkbox
+            label="Pause déjeuner"
+            checked={avecPause}
+            onChange={(ev) => setAvecPause(ev.target.checked)}
+          />
+          {avecPause && (
+            <>
+              <Field
+                label="Début de la pause"
+                type="time"
+                value={pauseDebut}
+                onChange={(ev) => setPauseDebut(ev.target.value)}
+                className="w-32"
+              />
+              <Field
+                label="Fin de la pause"
+                type="time"
+                value={pauseFin}
+                onChange={(ev) => setPauseFin(ev.target.value)}
+                className="w-32"
+              />
+            </>
+          )}
+        </div>
+      )}
+
+      <div className="mt-2 flex flex-wrap items-end gap-3">
+        <Select
+          label="Lieu"
+          value={lieu}
+          onChange={(ev) => setLieu(ev.target.value as Lieu)}
+          className="w-52"
+        >
+          {LIEUX.map((l) => (
+            <option key={l} value={l}>
+              {LIBELLES_LIEU[l]}
+            </option>
+          ))}
+        </Select>
+      </div>
+
+      {/* Le trajet se dit avant d'arriver dans l'agenda : il y sera posé une
+          fois, puis l'application ne le suivra plus. */}
+      {lieu === 'SITE' && (dureeTrajetMinutes ?? 0) > 0 && (
+        <p data-testid="annonce-trajet" className="mt-2 text-xs text-muted">
+          Chez le client : un trajet de {dureeTrajetMinutes} min est posé avant et après dans
+          l’agenda, une seule fois. Vous pourrez ensuite le déplacer ou le supprimer là-bas.
+        </p>
+      )}
 
       {/* La durée n'est plus une saisie : elle découle des deux heures, et
           s'affiche pour que rien ne parte sans avoir été vu. `role="status"`

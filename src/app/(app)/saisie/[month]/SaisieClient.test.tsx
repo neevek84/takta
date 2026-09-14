@@ -981,7 +981,15 @@ describe('SaisieClient — calendrier', () => {
       expect(appliquerCase).toHaveBeenCalledWith({
         lineId: 'l1',
         date: '2026-03-12',
-        state: { kind: 'LIBRE', minutes: 180, slotId: '', startMinute: 540, endMinute: 720, eclatee: false },
+        state: {
+          kind: 'LIBRE',
+          minutes: 180,
+          slotId: '',
+          startMinute: 540,
+          endMinute: 720,
+          eclatee: false,
+          lieu: 'DISTANCE',
+        },
         month: '2026-03',
       }),
     )
