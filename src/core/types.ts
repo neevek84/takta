@@ -23,3 +23,14 @@ export const ENGAGEMENT_SOURCES: readonly EngagementSource[] = [
   'DOLIBARR_COMMANDE',
   'DOLIBARR_PROJET',
 ]
+
+/**
+ * Où la prestation se déroule. Chez le client, l'agenda reçoit un trajet avant
+ * et après la saisie ; à distance, rien.
+ */
+export type Lieu = 'SITE' | 'DISTANCE'
+export const LIEUX: readonly Lieu[] = ['SITE', 'DISTANCE']
+export const LIBELLES_LIEU: Record<Lieu, string> = {
+  SITE: 'Chez le client',
+  DISTANCE: 'À distance',
+}

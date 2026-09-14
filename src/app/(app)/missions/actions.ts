@@ -11,7 +11,9 @@ import {
   updateLine,
   updateMissionLabel,
   updateMissionSignataire,
+  updateMissionLieu,
   type SignataireResult,
+  type LieuResult,
 } from '@/services/missions'
 import { getDolibarrApi } from '@/services/dolibarr/resolve'
 import { ouvrirLaTacheDeLaPrestation } from '@/services/dolibarr/taches'
@@ -179,6 +181,29 @@ export async function saveSignataire(
 
   revalidatePath('/missions')
   revalidatePath('/cra')
+  return resultat
+}
+
+/** `null` = rien n'a encore été soumis. */
+export type LieuMissionState = LieuResult | null
+
+/** Enregistre le lieu par défaut d'une mission, et rend son verdict. */
+export async function saveLieuMission(
+  _prevState: LieuMissionState,
+  formData: FormData,
+): Promise<LieuMissionState> {
+  const user = await requireUser()
+
+  const resultat = await updateMissionLieu(
+    user.id,
+    String(formData.get('missionId')),
+    String(formData.get('lieuDefaut') ?? ''),
+  )
+  if (!resultat.ok) return resultat
+
+  revalidatePath('/missions')
+  // La grille de saisie lit le lieu par défaut pour pré-remplir le formulaire.
+  revalidatePath('/saisie', 'layout')
   return resultat
 }
 

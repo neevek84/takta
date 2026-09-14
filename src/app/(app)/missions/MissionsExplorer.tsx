@@ -15,6 +15,7 @@ import { RepriseTaches } from './RepriseTaches'
 import { RepriseTemps } from './RepriseTemps'
 import { GestionMission } from './GestionMission'
 import { SignataireForm } from './SignataireForm'
+import { LieuMissionForm } from './LieuMissionForm'
 
 /** Une commande Dolibarr sur laquelle une mission peut naître. */
 export interface CommandeOuverte {
@@ -363,6 +364,18 @@ function Detail({
             signataireNom={mission.signataireNom}
             signataireEmail={mission.signataireEmail}
           />
+        </div>
+      </details>
+
+      <details className="group rounded-lg border border-rule bg-surface [&::-webkit-details-marker]:hidden">
+        <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
+          Lieu
+          <span aria-hidden="true" className="transition-transform group-open:rotate-90">
+            ▸
+          </span>
+        </summary>
+        <div className="px-4 pb-4 [&>form]:mt-0">
+          <LieuMissionForm missionId={mission.id} lieuDefaut={mission.lieuDefaut} />
         </div>
       </details>
 

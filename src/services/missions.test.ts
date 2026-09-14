@@ -9,6 +9,7 @@ import {
   updateMissionLabel,
   updateLine,
   updateMissionSignataire,
+  updateMissionLieu,
 } from './missions'
 import { updateSettings } from './settings'
 import { readAuditSince } from './audit'
@@ -1228,5 +1229,53 @@ describe('renommer une mission', () => {
     expect([relu.externalId, relu.syncState, relu.etag]).toEqual(['178', 'SYNCED', 'abc'])
 
     await prisma.externalLink.delete({ where: { id: lien.id } })
+  })
+})
+
+describe('lieu par défaut d une mission', () => {
+  let lieuUser = ''
+  let intrus = ''
+  let missionLieu = ''
+
+  beforeAll(async () => {
+    lieuUser = (
+      await prisma.user.create({ data: { email: 'lieu@test.local', name: 'L', passwordHash: 'x' } })
+    ).id
+    intrus = (
+      await prisma.user.create({ data: { email: 'lieu-intrus@test.local', name: 'I', passwordHash: 'x' } })
+    ).id
+    const c = await createClient('LIEU client')
+    missionLieu = (await createMission({ clientId: c.id, label: 'Sur site' })).id
+    await createLine({ missionId: missionLieu, userId: lieuUser, label: 'Conseil', soldCentiemes: 1000, tjmCents: 0 })
+  })
+
+  afterAll(async () => {
+    await prisma.user.deleteMany({ where: { email: { in: ['lieu@test.local', 'lieu-intrus@test.local'] } } })
+    await prisma.client.deleteMany({ where: { name: 'LIEU client' } })
+  })
+
+  it('crée une mission à distance par défaut', async () => {
+    const lignes = await listActiveLines(lieuUser)
+    expect(lignes.find((l) => l.missionLabel === 'Sur site')?.lieuDefaut).toBe('DISTANCE')
+  })
+
+  it('passe la mission chez le client, et la grille le voit', async () => {
+    expect(await updateMissionLieu(lieuUser, missionLieu, 'SITE')).toEqual({ ok: true })
+    const lignes = await listActiveLines(lieuUser)
+    expect(lignes.find((l) => l.missionLabel === 'Sur site')?.lieuDefaut).toBe('SITE')
+  })
+
+  it('refuse un lieu inconnu', async () => {
+    expect(await updateMissionLieu(lieuUser, missionLieu, 'LUNE')).toEqual({
+      ok: false,
+      erreur: 'Lieu inconnu.',
+    })
+  })
+
+  it('refuse une mission qui n est pas affectée', async () => {
+    expect(await updateMissionLieu(intrus, missionLieu, 'DISTANCE')).toEqual({
+      ok: false,
+      erreur: 'Cette mission ne vous est pas affectée.',
+    })
   })
 })

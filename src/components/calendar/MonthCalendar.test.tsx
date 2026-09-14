@@ -30,6 +30,7 @@ const ligneJour: LineForGrid = {
   minutesParJour: 480,
   soldCentiemes: 3000,
   allowedSlotIds: [],
+  lieuDefaut: 'DISTANCE',
 }
 
 const ligneHeure: LineForGrid = { ...ligneJour, id: 'l2', label: 'Astreinte', displayUnit: 'HEURE' }

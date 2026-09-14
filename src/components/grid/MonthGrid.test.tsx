@@ -31,6 +31,7 @@ const lines: LineForGrid[] = [
     minutesParJour: 480,
     soldCentiemes: 3000,
     allowedSlotIds: [],
+    lieuDefaut: 'DISTANCE',
   },
   {
     id: 'l2',
@@ -41,6 +42,7 @@ const lines: LineForGrid[] = [
     minutesParJour: 480,
     soldCentiemes: 1000,
     allowedSlotIds: ['nuit'],
+    lieuDefaut: 'DISTANCE',
   },
 ]
 
