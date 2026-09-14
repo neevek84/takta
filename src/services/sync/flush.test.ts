@@ -1048,3 +1048,78 @@ describe('journée coupée par la pause', () => {
     expect(await lienSuite(entryId)).toBeNull()
   })
 })
+
+describe('trajets', () => {
+  let ligneSite = ''
+
+  beforeAll(async () => {
+    const c = await createClient('FLUSH trajets')
+    const m = await createMission({ clientId: c.id, label: 'Chez eux', lieuDefaut: 'SITE' })
+    ligneSite = (
+      await createLine({ missionId: m.id, userId, label: 'Atelier', soldCentiemes: 3000, tjmCents: 0 })
+    ).id
+  })
+
+  beforeEach(async () => {
+    await prisma.trajet.deleteMany({ where: { userId } })
+    await updateSettings({ dureeTrajetMinutes: 30 })
+  })
+
+  afterAll(async () => {
+    await prisma.trajet.deleteMany({ where: { userId } })
+    await prisma.client.deleteMany({ where: { name: 'FLUSH trajets' } })
+  })
+
+  /** Les événements de trajet présents chez Google, par identifiant. */
+  function trajetsChezGoogle(): string[] {
+    return [...api.events.values()]
+      .filter((e) => e.body.colorId === '8')
+      .map((e) => e.id)
+  }
+
+  async function saisirSurSite(minutes = 240): Promise<void> {
+    const r = await saveEntry({ userId, lineId: ligneSite, date: '2026-03-12', minutes, kind: 'REALISE' })
+    expect(r.ok).toBe(true)
+  }
+
+  it('pose l aller et le retour, et note qu ils sont posés', async () => {
+    await saisirSurSite()
+    const r = await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(r.echecs).toBe(0)
+    const bornes = api
+      .appelsVers('/events')
+      .filter((a) => a.method === 'POST' && (a.body as { colorId: string }).colorId === '8')
+      .map((a) => (a.body as { start: { dateTime: string } }).start.dateTime)
+      .sort()
+    expect(bornes).toEqual(['2026-03-12T08:30:00', '2026-03-12T13:00:00'])
+    expect(await prisma.trajet.count({ where: { userId, poseAt: null } })).toBe(0)
+  })
+
+  it('ne relit ni ne réécrit un trajet posé', async () => {
+    await saisirSurSite()
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const ids = trajetsChezGoogle()
+
+    for (const id of ids) api.toucherEvenement(id, { summary: 'Retouché à la main' })
+    await saisirSurSite(300)
+    const r = await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(r.conflits).toBe(0)
+    for (const id of ids) {
+      expect(api.appelsVers(id).filter((a) => a.method !== 'POST')).toEqual([])
+    }
+    expect(trajetsChezGoogle()).toHaveLength(2)
+  })
+
+  it('laisse les trajets dans l agenda quand la saisie est supprimée', async () => {
+    await saisirSurSite()
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const ids = trajetsChezGoogle()
+
+    await saveEntry({ userId, lineId: ligneSite, date: '2026-03-12', minutes: 0, kind: 'REALISE' })
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(trajetsChezGoogle()).toEqual(ids)
+  })
+})

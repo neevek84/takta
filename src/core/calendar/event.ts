@@ -4,6 +4,8 @@ import type { TimeEntryKind } from '../types'
 /** Identifiants de couleur Google : Myrtille pour le réalisé, Banane pour le prévu. */
 export const COULEUR_REALISE = '9'
 export const COULEUR_PREVISIONNEL = '5'
+/** Graphite : un trajet occupe, mais ne se confond ni avec le réalisé ni avec le prévu. */
+export const COULEUR_TRAJET = '8'
 
 export interface CalendarEventDraft {
   summary: string
@@ -113,4 +115,32 @@ export function buildCalendarEvents(
       },
     },
   ]
+}
+
+/**
+ * Le bloc d'un trajet. Il occupe l'agenda comme un bloc de travail, mais ne
+ * porte aucun `craEntryId` : l'application ne le relira jamais, et rien ne
+ * doit pouvoir le prendre pour une saisie.
+ */
+export function buildTrajetEvent(args: {
+  trajetId: string
+  /** 'YYYY-MM-DD' */
+  date: string
+  startMinute: number
+  endMinute: number
+  summary: string
+  timeZone: string
+}): CalendarEventDraft {
+  return {
+    summary: args.summary,
+    description:
+      'Trajet posé par takta. Vous pouvez le déplacer ou le supprimer : l’application ne le suivra plus.',
+    startLocal: localAt(args.date, args.startMinute),
+    endLocal: localAt(args.date, args.startMinute + minutesBetween(args.startMinute, args.endMinute)),
+    timeZone: args.timeZone,
+    transparency: 'opaque',
+    colorId: COULEUR_TRAJET,
+    craEntryId: '',
+    craTrajetId: args.trajetId,
+  }
 }

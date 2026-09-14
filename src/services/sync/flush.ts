@@ -1,9 +1,10 @@
 import { prisma } from '@/db/client'
 import { CalendarApiError, type CalendarConnector } from '@/core/calendar/connector'
-import { buildCalendarEvents, type CalendarEventDraft } from '@/core/calendar/event'
+import { buildCalendarEvents, buildTrajetEvent, type CalendarEventDraft } from '@/core/calendar/event'
 import {
   abandon,
   ENTITY_TIME_ENTRY_SUITE,
+  ENTITY_TRAJET,
   MAX_PASSES,
   nextAttempt,
   PROVIDER_GOOGLE,
@@ -224,6 +225,39 @@ async function traiterSuppression(connector: CalendarConnector, row: Row): Promi
   return { etat: 'RIEN' }
 }
 
+/**
+ * Pose un trajet, **une fois**. Aucun lien, aucun etag, aucune relecture : le
+ * trajet appartient à l'agenda dès qu'il y est, et le porteur le déplace ou le
+ * supprime sans que l'application s'en mêle.
+ *
+ * Un trajet dont la création a réussi mais dont `poseAt` n'a pas pu être écrit
+ * serait reposé au passage suivant : un doublon, que le porteur retire à la
+ * main. Le risque est accepté plutôt que de tenir un lien pour un seul cas.
+ */
+async function traiterTrajet(
+  connector: CalendarConnector,
+  row: Row,
+  now: Date,
+  timeZone: string,
+): Promise<Issue> {
+  const trajet = await prisma.trajet.findFirst({ where: { id: row.entityId, userId: row.userId } })
+  // Disparu avec son compte, ou déjà posé : plus rien à faire.
+  if (trajet === null || trajet.poseAt !== null) return { etat: 'RIEN' }
+
+  const cree = await connector.createEvent(
+    buildTrajetEvent({
+      trajetId: trajet.id,
+      date: toIsoDate(trajet.date),
+      startMinute: trajet.startMinute,
+      endMinute: trajet.endMinute,
+      summary: trajet.summary,
+      timeZone,
+    }),
+  )
+  await prisma.trajet.update({ where: { id: trajet.id }, data: { poseAt: now } })
+  return { etat: 'POUSSE', entryId: trajet.entryId, externalId: cree.externalId }
+}
+
 export async function flushSyncOutbox(args: {
   userId: string
   limit?: number
@@ -301,10 +335,14 @@ export async function flushSyncOutbox(args: {
     let aConsigner: (() => Promise<unknown>) | null = null
 
     try {
+      // Un trajet ne se met jamais à jour ni ne se retire : il a son propre
+      // traitement, qui ne lit aucune saisie.
       const issue =
-        row.operation === 'DELETE'
-          ? await traiterSuppression(connector, row)
-          : await traiterUpsert(connector, row, now, timeZone)
+        row.entityType === ENTITY_TRAJET
+          ? await traiterTrajet(connector, row, now, timeZone)
+          : row.operation === 'DELETE'
+            ? await traiterSuppression(connector, row)
+            : await traiterUpsert(connector, row, now, timeZone)
 
       if (issue.etat === 'CONFLIT') report.conflits += 1
       else report.reussies += 1

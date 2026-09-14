@@ -3,8 +3,10 @@ import { entryBounds, type Slot } from '../time/slots'
 import {
   buildCalendarEvent,
   buildCalendarEvents,
+  buildTrajetEvent,
   COULEUR_PREVISIONNEL,
   COULEUR_REALISE,
+  COULEUR_TRAJET,
   SEGMENT_APRES_PAUSE,
 } from './event'
 
@@ -191,5 +193,40 @@ describe('buildCalendarEvents — la pause coupe le bloc', () => {
   it('garde la même saisie derrière les deux blocs', () => {
     const blocs = buildCalendarEvents({ ...base(), pause: { debutMinute: 750, finMinute: 810 } })
     expect(blocs.map((b) => b.draft.craEntryId)).toEqual(['entry-1', 'entry-1'])
+  })
+})
+
+describe('buildTrajetEvent', () => {
+  const trajet = {
+    trajetId: 'trajet-1',
+    date: '2026-03-10',
+    startMinute: 1020,
+    endMinute: 1050,
+    summary: 'Trajet · Acme',
+    timeZone: 'Europe/Paris',
+  }
+
+  it('pose un bloc occupé, de la couleur des trajets', () => {
+    const draft = buildTrajetEvent(trajet)
+    expect([draft.summary, draft.startLocal, draft.endLocal, draft.transparency, draft.colorId]).toEqual([
+      'Trajet · Acme',
+      '2026-03-10T17:00:00',
+      '2026-03-10T17:30:00',
+      'opaque',
+      COULEUR_TRAJET,
+    ])
+  })
+
+  it('se désigne comme un trajet, jamais comme une saisie', () => {
+    const draft = buildTrajetEvent(trajet)
+    expect([draft.craEntryId, draft.craTrajetId]).toEqual(['', 'trajet-1'])
+  })
+
+  it('dit qu on peut le retoucher sans que l application s en mêle', () => {
+    expect(buildTrajetEvent(trajet).description).toContain('ne le suivra plus')
+  })
+
+  it('finit à minuit le soir même quand sa fin est notée 0', () => {
+    expect(buildTrajetEvent({ ...trajet, startMinute: 1430, endMinute: 0 }).endLocal).toBe('2026-03-11T00:00:00')
   })
 })
