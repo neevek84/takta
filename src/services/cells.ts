@@ -197,7 +197,7 @@ export async function applyCellState(args: {
     // ni retirer ni mettre en file.
     const presentes = await tx.timeEntry.findMany({
       where: { userId: args.userId, lineId: args.lineId, date },
-      select: { id: true, slotId: true, lieu: true },
+      select: { id: true, slotId: true, lieu: true, trajetsCalcules: true },
     })
 
     // Ne disparaissent que les saisies dont plus aucune cible ne porte le
@@ -221,6 +221,15 @@ export async function applyCellState(args: {
         })
       }
     }
+
+    // Une case remplacée dans la même transaction reste le même fait : passer
+    // de la journée au matin change l'identifiant, pas la réalité. La saisie
+    // qui naît hérite donc du lieu de celle qu'elle remplace, et de ses
+    // trajets déjà calculés — sans quoi chaque clic du cycle reposerait des
+    // trajets que plus rien ne retire, et un lieu choisi au formulaire
+    // retomberait sur celui de la mission.
+    const remplacee = emportees[0]
+    const trajetsDejaCalcules = emportees.some((e) => e.trajetsCalcules)
 
     for (const cible of cibles) {
       // Relevée par sa **cible**, le créneau, et non par la clé d'unicité,
@@ -246,8 +255,10 @@ export async function applyCellState(args: {
                 endMinute: cible.endMinute,
                 pauseDebutMinute: cible.pause?.debutMinute ?? 0,
                 pauseFinMinute: cible.pause?.finMinute ?? 0,
-                // Le lieu que le formulaire dit, sinon celui de la mission.
-                lieu: cible.lieu ?? assignment.line.mission.lieuDefaut,
+                // Le lieu que le formulaire dit, sinon celui de la saisie
+                // remplacée, sinon celui de la mission.
+                lieu: cible.lieu ?? remplacee?.lieu ?? assignment.line.mission.lieuDefaut,
+                trajetsCalcules: trajetsDejaCalcules,
               },
             })
           : await tx.timeEntry.update({

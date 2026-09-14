@@ -144,6 +144,31 @@ describe('applyCellState — lieu', () => {
     expect((await lire(ligneDistance)).lieu).toBe('SITE')
   })
 
+  // Le demi-journée remplace la saisie sous un identifiant neuf : c'est la
+  // même case, elle ne retombe pas sur le lieu de la mission.
+  it('garde le lieu de la saisie quand un clic change la forme de la case', async () => {
+    const libre: CellState = {
+      kind: 'LIBRE',
+      minutes: 240,
+      slotId: '',
+      startMinute: 540,
+      endMinute: 780,
+      eclatee: false,
+      lieu: 'SITE',
+    }
+    await applyCellState({ userId, lineId: ligneDistance, date: JOUR, kind: 'REALISE', state: libre })
+    await applyCellState({
+      userId,
+      lineId: ligneDistance,
+      date: JOUR,
+      kind: 'REALISE',
+      state: { kind: 'DEMI', slotId: 'matin' },
+    })
+
+    const e = await lire(ligneDistance)
+    expect([e.slotId, e.lieu]).toEqual(['matin', 'SITE'])
+  })
+
   it('refuse un lieu inconnu', async () => {
     const state = {
       kind: 'LIBRE',

@@ -5,6 +5,7 @@ import { createClient } from './clients'
 import { createMission, createLine } from './missions'
 import { applyCellState } from './cells'
 import { saveEntry } from './time-entries'
+import type { CellState } from '@/core/saisie/cycle'
 
 let userId = ''
 let ligneSite = ''
@@ -113,6 +114,22 @@ describe('pose des trajets', () => {
       [1050, 1065],
       [1125, 1155],
     ])
+  })
+
+  // Changer la forme de la case remplace la saisie sous un identifiant neuf :
+  // c'est pourtant le même fait, et ses trajets sont déjà posés.
+  it('ne repose rien quand un clic change la forme de la case', async () => {
+    const clic = (state: CellState) =>
+      applyCellState({ userId, lineId: ligneSite, date: JOUR, kind: 'REALISE', state })
+    await clic({ kind: 'JOURNEE' })
+    await clic({ kind: 'DEMI', slotId: 'matin' })
+    await clic({ kind: 'DEMI', slotId: 'apres-midi' })
+
+    expect((await trajetsDuJour()).map((t) => [t.startMinute, t.endMinute])).toEqual([
+      [510, 540],
+      [1020, 1050],
+    ])
+    expect(await prisma.syncOutbox.count({ where: { userId, entityType: 'Trajet' } })).toBe(2)
   })
 
   it('laisse les trajets en place quand la saisie est supprimée', async () => {
