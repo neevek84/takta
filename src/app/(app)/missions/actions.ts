@@ -198,6 +198,8 @@ export async function saveLieuMission(
     user.id,
     String(formData.get('missionId')),
     String(formData.get('lieuDefaut') ?? ''),
+    // Une case décochée n'est pas transmise du tout : son absence vaut « non ».
+    { appliquerAuxPlanifies: formData.get('appliquerAuxPlanifies') === 'on' },
   )
   if (!resultat.ok) return resultat
 

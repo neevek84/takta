@@ -1279,3 +1279,124 @@ describe('lieu par défaut d une mission', () => {
     })
   })
 })
+
+// Passer une mission « chez le client » après avoir planifié ses jours laissait
+// ces jours « à distance » : le lieu se fige à l'écriture, et rien ne les
+// réécrivait. Le porteur n'avait aucun trajet sur sa planification.
+describe('appliquer le lieu aux jours planifiés', () => {
+  let planifUser = ''
+  let missionPlanif = ''
+  let lignePlanif = ''
+
+  const AUJOURDHUI = '2026-09-15'
+
+  function saisieLe(date: string) {
+    return prisma.timeEntry.create({
+      data: {
+        lineId: lignePlanif,
+        userId: planifUser,
+        date: new Date(`${date}T00:00:00.000Z`),
+        minutes: 480,
+        kind: date >= AUJOURDHUI ? 'PREVISIONNEL' : 'REALISE',
+        startMinute: 540,
+        endMinute: 1020,
+        minutesParJour: 480,
+      },
+    })
+  }
+
+  function lire(date: string) {
+    return prisma.timeEntry.findFirstOrThrow({
+      where: { userId: planifUser, date: new Date(`${date}T00:00:00.000Z`) },
+    })
+  }
+
+  beforeAll(async () => {
+    planifUser = (
+      await prisma.user.create({ data: { email: 'planif@test.local', name: 'P', passwordHash: 'x' } })
+    ).id
+    const c = await createClient('PLANIF client')
+    missionPlanif = (await createMission({ clientId: c.id, label: 'Planifiée' })).id
+    lignePlanif = (
+      await createLine({ missionId: missionPlanif, userId: planifUser, label: 'Atelier', soldCentiemes: 5000, tjmCents: 0 })
+    ).id
+  })
+
+  beforeEach(async () => {
+    await prisma.trajet.deleteMany({ where: { userId: planifUser } })
+    await prisma.syncOutbox.deleteMany({ where: { userId: planifUser } })
+    await prisma.timeEntry.deleteMany({ where: { userId: planifUser } })
+    await prisma.cra.deleteMany({ where: { userId: planifUser } })
+    await prisma.mission.update({ where: { id: missionPlanif }, data: { lieuDefaut: 'DISTANCE' } })
+    await updateSettings({ dureeTrajetMinutes: 30 })
+  })
+
+  afterAll(async () => {
+    await prisma.user.deleteMany({ where: { email: 'planif@test.local' } })
+    await prisma.client.deleteMany({ where: { name: 'PLANIF client' } })
+  })
+
+  it('passe les jours à venir chez le client et pose leurs trajets', async () => {
+    await saisieLe('2026-09-16')
+    await saisieLe('2026-09-17')
+
+    expect(
+      await updateMissionLieu(planifUser, missionPlanif, 'SITE', {
+        appliquerAuxPlanifies: true,
+        aujourdhui: AUJOURDHUI,
+      }),
+    ).toEqual({ ok: true, saisiesMisesAJour: 2 })
+
+    for (const date of ['2026-09-16', '2026-09-17']) {
+      const e = await lire(date)
+      expect([e.lieu, e.trajetsCalcules]).toEqual(['SITE', true])
+    }
+    expect(await prisma.trajet.count({ where: { userId: planifUser } })).toBe(4)
+    expect(await prisma.syncOutbox.count({ where: { userId: planifUser, entityType: 'Trajet' } })).toBe(4)
+  })
+
+  it('ne touche ni aux jours passés ni aux mois verrouillés', async () => {
+    await saisieLe('2026-09-10')
+    await saisieLe('2026-10-05')
+    await prisma.cra.create({
+      data: {
+        missionId: missionPlanif,
+        userId: planifUser,
+        month: new Date('2026-10-01T00:00:00.000Z'),
+        status: 'VALIDE',
+      },
+    })
+
+    const r = await updateMissionLieu(planifUser, missionPlanif, 'SITE', {
+      appliquerAuxPlanifies: true,
+      aujourdhui: AUJOURDHUI,
+    })
+
+    expect(r).toEqual({ ok: true, saisiesMisesAJour: 0 })
+    expect((await lire('2026-09-10')).lieu).toBe('DISTANCE')
+    expect((await lire('2026-10-05')).lieu).toBe('DISTANCE')
+    expect(await prisma.trajet.count({ where: { userId: planifUser } })).toBe(0)
+  })
+
+  it('laisse les jours planifiés tels quels sans la case', async () => {
+    await saisieLe('2026-09-16')
+
+    expect(await updateMissionLieu(planifUser, missionPlanif, 'SITE')).toEqual({ ok: true })
+    expect((await lire('2026-09-16')).lieu).toBe('DISTANCE')
+    expect(await prisma.trajet.count({ where: { userId: planifUser } })).toBe(0)
+  })
+
+  it('repasse les jours à venir à distance sans retirer les trajets déjà posés', async () => {
+    await saisieLe('2026-09-16')
+    await updateMissionLieu(planifUser, missionPlanif, 'SITE', { appliquerAuxPlanifies: true, aujourdhui: AUJOURDHUI })
+
+    const r = await updateMissionLieu(planifUser, missionPlanif, 'DISTANCE', {
+      appliquerAuxPlanifies: true,
+      aujourdhui: AUJOURDHUI,
+    })
+
+    expect(r).toEqual({ ok: true, saisiesMisesAJour: 1 })
+    expect((await lire('2026-09-16')).lieu).toBe('DISTANCE')
+    expect(await prisma.trajet.count({ where: { userId: planifUser } })).toBe(2)
+  })
+})
