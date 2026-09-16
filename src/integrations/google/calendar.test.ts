@@ -531,3 +531,42 @@ describe('le double refuse ce que le catalogue ne déclare pas', () => {
     ).rejects.toThrow(/non catalogué/)
   })
 })
+
+describe('propriétés privées d un bloc', () => {
+  const brouillon = {
+    summary: 'Acme · Refonte · Dév',
+    description: 'Bloc réalisé posé par le CRA.',
+    startLocal: '2026-03-10T13:30:00',
+    endLocal: '2026-03-10T17:00:00',
+    timeZone: 'Europe/Paris',
+    transparency: 'opaque' as const,
+    colorId: '9',
+    craEntryId: 'entry-1',
+  }
+
+  function connecteur() {
+    const api = createFakeGoogleApi()
+    const connector = createGoogleCalendarConnector({
+      fetchFn: api.fetchFn,
+      accessToken: 'ya29.acces',
+      calendarId: 'cal-exemple@group.calendar.google.com',
+    })
+    return { api, connector }
+  }
+
+  it('porte le segment du second bloc d une journée coupée', async () => {
+    const { api, connector } = connecteur()
+    await connector.createEvent({ ...brouillon, craSegment: 'apres-pause' })
+    expect((api.dernierAppel().body as Record<string, unknown>).extendedProperties).toEqual({
+      private: { craEntryId: 'entry-1', craSegment: 'apres-pause' },
+    })
+  })
+
+  it('ne porte que l identifiant du trajet sur un trajet', async () => {
+    const { api, connector } = connecteur()
+    await connector.createEvent({ ...brouillon, craEntryId: '', craTrajetId: 'trajet-1' })
+    expect((api.dernierAppel().body as Record<string, unknown>).extendedProperties).toEqual({
+      private: { craTrajetId: 'trajet-1' },
+    })
+  })
+})

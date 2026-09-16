@@ -1,6 +1,12 @@
 import { prisma } from '@/db/client'
 import { isLocked } from '@/core/cra/state-machine'
 import type { ConflictKind, ConflictResolution } from '@/core/sync/policy'
+import {
+  ENTITY_TIME_ENTRY,
+  ENTITY_TIME_ENTRY_SUITE,
+  ENTITY_TRAJET,
+  PROVIDER_GOOGLE,
+} from '@/core/sync/policy'
 import type { CraStatus, TimeEntryKind } from '@/core/types'
 import { saveEntry, toIsoDate } from '@/services/time-entries'
 import { enqueueSync } from './outbox'
@@ -29,6 +35,7 @@ export type ResolveResult =
         | 'INSTANTANE_ILLISIBLE'
         | 'JOUR_OCCUPE'
         | 'CHEVAUCHEMENT'
+        | 'SEGMENT'
       message: string
     }
 
@@ -92,7 +99,9 @@ export async function listOpenConflicts(userId: string): Promise<OpenConflict[]>
       libelle:
         entry === undefined
           ? 'Saisie supprimée'
-          : `${toIsoDate(entry.date)} · ${entry.line.mission.client.name} · ${entry.line.mission.label} · ${entry.line.label}`,
+          : `${toIsoDate(entry.date)} · ${entry.line.mission.client.name} · ${entry.line.mission.label} · ${entry.line.label}` +
+            // Deux blocs pour une même saisie : l'écran doit dire lequel a bougé.
+            (c.entityType === ENTITY_TIME_ENTRY_SUITE ? ' · après la pause' : ''),
       remote:
         snapshot === null
           ? null
@@ -196,13 +205,31 @@ export async function resolveConflict(args: {
         await tx.externalLink.updateMany({ where: cible, data: { etag: '' } })
       }
 
-      await enqueueSync(tx, { userId: args.userId, ...cible, operation: 'UPSERT' })
+      // Le second bloc d'une journée coupée n'entre jamais en file : c'est la
+      // saisie entière qu'on repousse, et le drainage retrouve ses deux blocs.
+      const aRepousser =
+        cible.entityType === ENTITY_TIME_ENTRY_SUITE
+          ? { ...cible, entityType: ENTITY_TIME_ENTRY }
+          : cible
+      await enqueueSync(tx, { userId: args.userId, ...aRepousser, operation: 'UPSERT' })
       await tx.syncConflict.update({
         where: { id: conflit.id },
         data: { resolvedAt: new Date(), resolution: 'RETABLIR' },
       })
     })
     return { ok: true, resolution: 'RETABLIR' }
+  }
+
+  // Accepter réécrit la saisie d'après l'événement. Le second bloc n'en porte
+  // qu'une moitié : il ne dit ni le début de la journée, ni sa pause, et en
+  // tirer une durée transformerait un après-midi retouché en journée facturée.
+  if (conflit.entityType === ENTITY_TIME_ENTRY_SUITE) {
+    return {
+      ok: false,
+      reason: 'SEGMENT',
+      message:
+        "Ce bloc est la seconde moitié d'une journée coupée par la pause : il ne dit pas à lui seul ce que vaut la journée. Rétablissez-le ou détachez-le.",
+    }
   }
 
   // --- ACCEPTER -----------------------------------------------------------
@@ -214,6 +241,20 @@ export async function resolveConflict(args: {
       ok: false,
       reason: 'SAISIE_ABSENTE',
       message: "La saisie concernée n'existe plus. Détachez la divergence.",
+    }
+  }
+
+  // Le premier bloc d'une journée coupée n'en dit pas plus que le second : il
+  // s'arrête à la pause. En tirer une durée facturerait la matinée seule, et
+  // supprimer la journée parce que la matinée a disparu emporterait l'après-
+  // midi. Dans les deux cas, l'autre événement resterait orphelin. Refusé
+  // avant toute écriture, disparition comprise.
+  if (entry.pauseFinMinute > entry.pauseDebutMinute) {
+    return {
+      ok: false,
+      reason: 'SEGMENT',
+      message:
+        'Cette journée est coupée par la pause : un seul de ses deux blocs ne dit pas ce que vaut la journée. Rétablissez-le ou détachez-le.',
     }
   }
 
@@ -352,7 +393,41 @@ export async function resolveConflict(args: {
     },
   })
 
+  // Déplacée, la saisie renaît sous un identifiant neuf, que `saveEntry` a créé
+  // avec le lieu de la mission et des trajets à calculer. C'est pourtant la
+  // même saisie : elle garde son lieu, et des trajets déjà posés ne se
+  // reposent pas au nouveau jour — ni ceux qu'une saisie à distance n'aurait
+  // jamais dû avoir. Une saisie neuve n'a encore rien pu poser : tout trajet
+  // non posé à son nom vient de cet arbitrage.
+  const deplaceeAilleurs = deplacee.id !== entry.id
+  const trajetsEnTrop = deplaceeAilleurs && (entry.lieu !== 'SITE' || entry.trajetsCalcules)
+
   await prisma.$transaction(async (tx) => {
+    if (trajetsEnTrop) {
+      const enTrop = await tx.trajet.findMany({
+        where: { userId: args.userId, entryId: deplacee.id, poseAt: null },
+        select: { id: true },
+      })
+      const ids = enTrop.map((t) => t.id)
+      await tx.syncOutbox.deleteMany({
+        where: { entityType: ENTITY_TRAJET, provider: PROVIDER_GOOGLE, entityId: { in: ids } },
+      })
+      await tx.trajet.deleteMany({ where: { id: { in: ids } } })
+    }
+    if (deplaceeAilleurs) {
+      await tx.timeEntry.update({
+        where: { id: deplacee.id },
+        data: {
+          lieu: entry.lieu,
+          // Trajets retirés : le drapeau redevient celui de la saisie
+          // d'origine, sans quoi il dirait calculé ce qui ne l'a pas été.
+          trajetsCalcules: trajetsEnTrop
+            ? entry.trajetsCalcules
+            : entry.trajetsCalcules || deplacee.trajetsCalcules,
+        },
+      })
+    }
+
     // La saisie a suivi l'événement : le lien le suit aussi, avec l'etag
     // distant. Sans lui, le prochain drainage rouvrirait le même conflit.
     await tx.externalLink.updateMany({

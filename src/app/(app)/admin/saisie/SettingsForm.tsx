@@ -319,6 +319,50 @@ export function SettingsForm({
 
       <Card>
         <fieldset>
+          <legend className="mb-2 font-medium">Pause déjeuner et trajets</legend>
+          <p className="mb-2 text-sm text-muted">
+            Une journée entière reçoit la pause d’office : le temps facturé ne change pas, le bloc
+            d’agenda s’allonge d’autant et laisse la pause libre. Laissez les deux heures vides
+            pour ne poser aucune pause.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field
+              label="Début de la pause"
+              name="pauseDebut"
+              type="time"
+              defaultValue={
+                settings.pauseFinMinute > settings.pauseDebutMinute
+                  ? minutesToTimeInput(settings.pauseDebutMinute)
+                  : ''
+              }
+            />
+            <Field
+              label="Fin de la pause"
+              name="pauseFin"
+              type="time"
+              defaultValue={
+                settings.pauseFinMinute > settings.pauseDebutMinute
+                  ? minutesToTimeInput(settings.pauseFinMinute)
+                  : ''
+              }
+            />
+            <Field
+              label="Durée d’un trajet (min)"
+              name="dureeTrajet"
+              type="number"
+              min="0"
+              max="240"
+              step="5"
+              required
+              defaultValue={settings.dureeTrajetMinutes}
+              hint="Posé avant et après une saisie chez le client. 0 = aucun trajet."
+            />
+          </div>
+        </fieldset>
+      </Card>
+
+      <Card>
+        <fieldset>
           <legend className="mb-2 font-medium">Unité d’affichage par défaut des nouvelles lignes</legend>
           <Select label="Unité" name="defaultDisplayUnit" defaultValue={settings.defaultDisplayUnit}>
             {DISPLAY_UNITS.map((u) => (

@@ -47,6 +47,7 @@ const lines: LineForGrid[] = [
     minutesParJour: 480,
     soldCentiemes: 3000,
     allowedSlotIds: [],
+    lieuDefaut: 'DISTANCE',
   },
   {
     id: 'l2',
@@ -57,6 +58,7 @@ const lines: LineForGrid[] = [
     minutesParJour: 480,
     soldCentiemes: 1000,
     allowedSlotIds: [],
+    lieuDefaut: 'DISTANCE',
   },
 ]
 
@@ -76,6 +78,7 @@ const lignesDistinctes: LineForGrid[] = [
     minutesParJour: 480,
     soldCentiemes: 3000,
     allowedSlotIds: [],
+    lieuDefaut: 'DISTANCE',
   },
   {
     id: 'lB',
@@ -86,6 +89,7 @@ const lignesDistinctes: LineForGrid[] = [
     minutesParJour: 480,
     soldCentiemes: 3000,
     allowedSlotIds: [],
+    lieuDefaut: 'DISTANCE',
   },
 ]
 
@@ -116,8 +120,8 @@ function renderClient(
 
 /** Deux journées pleines le 12 : de quoi dépasser une capacité d'une journée. */
 const deuxJournees: MonthEntry[] = [
-  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
-  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480 },
+  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480, lieu: 'DISTANCE' },
+  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', startMinute: 540, endMinute: 1020, minutesParJour: 480, lieu: 'DISTANCE' },
 ]
 
 /** Les trois boutons de vue ont fusionné en un seul champ liste de choix. */
@@ -977,7 +981,15 @@ describe('SaisieClient — calendrier', () => {
       expect(appliquerCase).toHaveBeenCalledWith({
         lineId: 'l1',
         date: '2026-03-12',
-        state: { kind: 'LIBRE', minutes: 180, slotId: '', startMinute: 540, endMinute: 720, eclatee: false },
+        state: {
+          kind: 'LIBRE',
+          minutes: 180,
+          slotId: '',
+          startMinute: 540,
+          endMinute: 720,
+          eclatee: false,
+          lieu: 'DISTANCE',
+        },
         month: '2026-03',
       }),
     )

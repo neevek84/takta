@@ -46,6 +46,7 @@ vi.mock('@/services/missions', () => ({
       minutesParJour: 480,
       soldCentiemes: 3000,
       allowedSlotIds: [],
+      lieuDefaut: 'DISTANCE',
     },
   ],
 }))

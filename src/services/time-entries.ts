@@ -1,14 +1,15 @@
 import { prisma } from '@/db/client'
-import type { CraStatus, TimeEntryKind } from '@/core/types'
+import type { CraStatus, Lieu, TimeEntryKind } from '@/core/types'
 import { checkCapacity } from '@/core/capacity/check'
 import { isLocked } from '@/core/cra/state-machine'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
-import { entryBounds } from '@/core/time/slots'
+import { entryBounds, pauseDepuisColonnes, type Pause } from '@/core/time/slots'
 import { computeEngagement } from '@/core/engagement/compute'
 import { joursDuMois } from '@/core/cra/document'
 import { getSettings } from './settings'
 import { enqueueTimeEntry } from './sync/outbox'
 import { appendAudit, actorOf } from './audit'
+import { planifierTrajets } from './trajets'
 
 export interface MonthEntry {
   id: string
@@ -25,6 +26,10 @@ export interface MonthEntry {
   endMinute: number
   /** durée d'une journée figée à l'écriture, en minutes */
   minutesParJour: number
+  /** pause figée à l'écriture ; absente = aucune */
+  pause?: Pause
+  /** lieu figé à l'écriture */
+  lieu: Lieu
 }
 
 export function toIsoDate(d: Date): string {
@@ -34,6 +39,7 @@ export function toIsoDate(d: Date): string {
 type TimeEntryRow = Awaited<ReturnType<typeof prisma.timeEntry.findMany>>[number]
 
 function versMonthEntry(r: TimeEntryRow): MonthEntry {
+  const pause = pauseDepuisColonnes(r.pauseDebutMinute, r.pauseFinMinute)
   return {
     id: r.id,
     lineId: r.lineId,
@@ -46,6 +52,8 @@ function versMonthEntry(r: TimeEntryRow): MonthEntry {
     startMinute: r.startMinute,
     endMinute: r.endMinute,
     minutesParJour: r.minutesParJour,
+    ...(pause !== undefined && { pause }),
+    lieu: r.lieu as Lieu,
   }
 }
 
@@ -259,7 +267,7 @@ export async function saveEntry(args: {
     // non le vendu de la prestation entière, que son engagement dépasse.
     select: {
       soldCentiemes: true,
-      line: { select: { missionId: true, allowedSlotIds: true } },
+      line: { select: { missionId: true, allowedSlotIds: true, mission: { select: { lieuDefaut: true } } } },
     },
   })
 
@@ -354,12 +362,26 @@ export async function saveEntry(args: {
   // Les deux bornes du bloc, figées ici et une seule fois : les recalculer au
   // moment de pousser vers l'agenda ferait déplacer une saisie que personne
   // n'a retouchée dès qu'un créneau change en administration.
+  // Une journée entière saisie au tableau reçoit la pause d'office, comme au
+  // calendrier : c'est la même journée, et elle ne doit pas occuper l'agenda
+  // autrement selon la vue qui l'a écrite.
+  const pauseReglage = pauseDepuisColonnes(settings.pauseDebutMinute, settings.pauseFinMinute)
+  const journeeEntiere = slotId === '' && args.minutes === minutesParJour
   const bornes = entryBounds({
     minutes: args.minutes,
     slot: slotId === '' ? null : (settings.slots.find((s) => s.id === slotId) ?? null),
     journeeDebutMinute: settings.journeeDebutMinute,
     journeeFinMinute: settings.journeeFinMinute,
+    ...(journeeEntiere && pauseReglage !== undefined && { pause: pauseReglage }),
   })
+  // Ce qui part en base : `bornes.pause` n'est pas une colonne, ses deux
+  // bornes le sont.
+  const colonnes = {
+    startMinute: bornes.startMinute,
+    endMinute: bornes.endMinute,
+    pauseDebutMinute: bornes.pause?.debutMinute ?? 0,
+    pauseFinMinute: bornes.pause?.finMinute ?? 0,
+  }
 
   const sameDay = await prisma.timeEntry.findMany({
     where: { userId: args.userId, date },
@@ -459,17 +481,24 @@ export async function saveEntry(args: {
               minutes: args.minutes,
               kind: args.kind,
               minutesParJour,
-              ...bornes,
+              ...colonnes,
+              lieu: assignment.line.mission.lieuDefaut,
             },
           })
         : await tx.timeEntry.update({
             where: { id: cible.id },
             // Les bornes sont réécrites avec la saisie, comme `minutesParJour` :
             // le gel porte sur l'écriture, et une correction *est* une écriture.
-            data: { minutes: args.minutes, kind: args.kind, minutesParJour, ...bornes },
+            data: { minutes: args.minutes, kind: args.kind, minutesParJour, ...colonnes },
           })
 
     await enqueueTimeEntry(tx, { userId: args.userId, entryId: entry.id, operation: 'UPSERT' })
+
+    await planifierTrajets(tx, {
+      userId: args.userId,
+      entryId: entry.id,
+      dureeMinutes: settings.dureeTrajetMinutes,
+    })
   })
 
   // Consigné **après** la transaction, jamais dedans : le journal atteste de

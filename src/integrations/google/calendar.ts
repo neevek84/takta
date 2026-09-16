@@ -39,6 +39,19 @@ interface GoogleEvent {
  * dans son propre calendrier dédié, suffit donc à faire porter l'occupation
  * jusqu'à l'agenda principal, sans jamais y écrire un événement.
  */
+/**
+ * Ce que l'application reconnaît d'elle-même dans l'agenda. Un trajet n'a pas
+ * de `craEntryId` : il n'est pas une saisie, et la lecture d'occupation comme
+ * la détection de conflit ne doivent jamais le prendre pour l'une d'elles.
+ */
+function proprietesPrivees(draft: CalendarEventDraft): Record<string, string> {
+  return {
+    ...(draft.craEntryId !== '' && { craEntryId: draft.craEntryId }),
+    ...(draft.craSegment !== undefined && { craSegment: draft.craSegment }),
+    ...(draft.craTrajetId !== undefined && { craTrajetId: draft.craTrajetId }),
+  }
+}
+
 function toBody(draft: CalendarEventDraft, ownerEmail: string): Record<string, unknown> {
   return {
     summary: draft.summary,
@@ -47,7 +60,7 @@ function toBody(draft: CalendarEventDraft, ownerEmail: string): Record<string, u
     end: { dateTime: draft.endLocal, timeZone: draft.timeZone },
     transparency: draft.transparency,
     colorId: draft.colorId,
-    extendedProperties: { private: { craEntryId: draft.craEntryId } },
+    extendedProperties: { private: proprietesPrivees(draft) },
     ...(ownerEmail === ''
       ? {}
       : { attendees: [{ email: ownerEmail, responseStatus: 'accepted' }] }),

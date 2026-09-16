@@ -19,7 +19,7 @@ import { Select } from '@/components/ui/Select'
 import type { CellState } from '@/core/saisie/cycle'
 import type { Vue } from '@/core/saisie/vue'
 import type { MonthDay } from '@/core/month/build'
-import type { Slot } from '@/core/time/slots'
+import type { Pause, Slot } from '@/core/time/slots'
 import type { CapacityMode } from '@/core/types'
 import type { LineForGrid } from '@/services/missions'
 import type { LineEngagementTotals, MonthEntry } from '@/services/time-entries'
@@ -190,6 +190,10 @@ export function SaisieClient(props: {
    */
   journeeDebutMinute: number
   journeeFinMinute: number
+  /** pause des réglages, proposée d'office au formulaire ; absente = aucune */
+  pauseReglage?: Pause
+  /** durée d'un trajet chez le client, annoncée par le formulaire */
+  dureeTrajetMinutes?: number
   /**
    * jours déjà occupés dans l'agenda externe, connus au premier rendu.
    *
@@ -721,15 +725,19 @@ export function SaisieClient(props: {
           // imposée : ce sont des pré-remplissages, pas des règles.
           journeeDebutMinute={props.journeeDebutMinute}
           journeeFinMinute={props.journeeFinMinute}
-          onSubmit={async (minutes, slotId, startMinute, endMinute) => {
+          pauseReglage={props.pauseReglage}
+          dureeTrajetMinutes={props.dureeTrajetMinutes ?? 0}
+          onSubmit={async (saisie) => {
             setFormulaire(null)
             await handleApply(formulaire.date, {
               kind: 'LIBRE',
-              minutes,
-              slotId,
-              startMinute,
-              endMinute,
+              minutes: saisie.minutes,
+              slotId: saisie.slotId,
+              startMinute: saisie.startMinute,
+              endMinute: saisie.endMinute,
               eclatee: false,
+              ...(saisie.pause !== undefined && { pause: saisie.pause }),
+              lieu: saisie.lieu,
             })
           }}
           onDelete={async () => {

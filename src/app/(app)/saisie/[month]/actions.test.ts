@@ -84,6 +84,13 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.user.deleteMany({ where: { email: 'actions@test.local' } })
   await prisma.client.deleteMany({ where: { name: 'ACTIONS client' } })
+  // `compterPrevisionnelDeLaLigne` crée ce second compte et son client pour
+  // vérifier le cloisonnement entre utilisateurs — sans ce nettoyage, il
+  // survivait à ce fichier et faussait, ailleurs, toute requête qui énumère
+  // les comptes sans les scoper (le plus ancien compte de l'instance, les
+  // destinataires des rappels).
+  await prisma.user.deleteMany({ where: { email: 'autre-actions@test.local' } })
+  await prisma.client.deleteMany({ where: { name: 'ACTIONS autre client' } })
   await prisma.$disconnect()
 })
 

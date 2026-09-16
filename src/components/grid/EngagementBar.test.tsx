@@ -13,6 +13,7 @@ const line: LineForGrid = {
   minutesParJour: 480,
   soldCentiemes: 3000, // 30 jours vendus
   allowedSlotIds: [],
+  lieuDefaut: 'DISTANCE',
 }
 
 function texte(): string {

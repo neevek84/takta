@@ -1,6 +1,7 @@
 import { centiemesToMinutes } from '../time/units'
 import { entryBounds } from '../time/slots'
-import type { Slot } from '../time/slots'
+import type { Pause, Slot } from '../time/slots'
+import type { Lieu } from '../types'
 import type { CellState } from './cycle'
 
 export interface CellEntry {
@@ -21,6 +22,10 @@ export interface CellEntry {
    * écriture n'ait eu lieu.
    */
   minutesParJour: number
+  /** pause incluse dans le bloc, figée à l'écriture ; absente = aucune */
+  pause?: Pause
+  /** lieu figé à l'écriture ; absent = celui que l'écrivain décidera */
+  lieu?: Lieu
 }
 
 export interface DatedCellEntry extends CellEntry {
@@ -56,6 +61,11 @@ export interface CellContext extends CellReadContext {
   journeeDebutMinute: number
   /** fin de la plage journée, minutes depuis minuit */
   journeeFinMinute: number
+  /**
+   * pause déjeuner des réglages, posée d'office sur une **journée entière** —
+   * jamais sur un créneau nommé. Absente, aucune pause.
+   */
+  pause?: Pause
 }
 
 /**
@@ -75,9 +85,14 @@ export function readCellState(entries: readonly CellEntry[], ctx: CellReadContex
     // Le facteur est celui de la saisie, **jamais** le réglage courant : une
     // journée écrite à 420 minutes reste une journée le jour où la prestation
     // passe à 480. Ses bornes la suivent, pour la même raison.
-    const bornes = { startMinute: seule.startMinute, endMinute: seule.endMinute }
+    const bornes = {
+      startMinute: seule.startMinute,
+      endMinute: seule.endMinute,
+      ...(seule.pause !== undefined && { pause: seule.pause }),
+    }
+    const lieu = seule.lieu !== undefined ? { lieu: seule.lieu } : {}
     if (seule.slotId === '' && seule.minutes === seule.minutesParJour) {
-      return { kind: 'JOURNEE', bornes }
+      return { kind: 'JOURNEE', bornes, ...lieu }
     }
 
     const slot = ctx.slots.find((s) => s.id === seule.slotId)
@@ -85,7 +100,7 @@ export function readCellState(entries: readonly CellEntry[], ctx: CellReadContex
       slot !== undefined &&
       seule.minutes === centiemesToMinutes(slot.centiemes, seule.minutesParJour)
     ) {
-      return { kind: 'DEMI', slotId: slot.id, bornes }
+      return { kind: 'DEMI', slotId: slot.id, bornes, ...lieu }
     }
 
     // Les bornes viennent de la saisie, **jamais** des réglages courants :
@@ -98,6 +113,8 @@ export function readCellState(entries: readonly CellEntry[], ctx: CellReadContex
       startMinute: seule.startMinute,
       endMinute: seule.endMinute,
       eclatee: false,
+      ...(seule.pause !== undefined && { pause: seule.pause }),
+      ...lieu,
     }
   }
 
@@ -132,12 +149,13 @@ export function readCellState(entries: readonly CellEntry[], ctx: CellReadContex
  * crans neufs, et le formulaire n'envoie que des `LIBRE`.
  */
 export function cellStateToWrite(state: CellState, ctx: CellContext): CellEntry[] {
-  const bornes = (minutes: number, slot: Slot | null) =>
+  const bornes = (minutes: number, slot: Slot | null, pause?: Pause) =>
     entryBounds({
       minutes,
       slot,
       journeeDebutMinute: ctx.journeeDebutMinute,
       journeeFinMinute: ctx.journeeFinMinute,
+      ...(pause !== undefined && { pause }),
     })
 
   // Le facteur du moment part avec chaque saisie : c'est ce geste-ci qui le
@@ -152,8 +170,9 @@ export function cellStateToWrite(state: CellState, ctx: CellContext): CellEntry[
         {
           minutes: ctx.minutesParJour,
           slotId: '',
-          ...bornes(ctx.minutesParJour, null),
+          ...bornes(ctx.minutesParJour, null, ctx.pause),
           minutesParJour,
+          ...(state.lieu !== undefined && { lieu: state.lieu }),
         },
       ]
     case 'DEMI': {
@@ -162,7 +181,15 @@ export function cellStateToWrite(state: CellState, ctx: CellContext): CellEntry[
         throw new Error(`Créneau inconnu : « ${state.slotId} ».`)
       }
       const minutes = centiemesToMinutes(slot.centiemes, ctx.minutesParJour)
-      return [{ minutes, slotId: slot.id, ...bornes(minutes, slot), minutesParJour }]
+      return [
+        {
+          minutes,
+          slotId: slot.id,
+          ...bornes(minutes, slot),
+          minutesParJour,
+          ...(state.lieu !== undefined && { lieu: state.lieu }),
+        },
+      ]
     }
     case 'LIBRE':
       // Le formulaire a dit le début et la fin ; on les écrit tels quels.
@@ -173,6 +200,8 @@ export function cellStateToWrite(state: CellState, ctx: CellContext): CellEntry[
           startMinute: state.startMinute,
           endMinute: state.endMinute,
           minutesParJour,
+          ...(state.pause !== undefined && { pause: state.pause }),
+          ...(state.lieu !== undefined && { lieu: state.lieu }),
         },
       ]
   }
@@ -195,6 +224,8 @@ export function buildCellStates(
       // Recopié, jamais laissé tomber : c'est ici que le facteur figé se
       // perdait, et le classement retombait sur le réglage courant.
       minutesParJour: e.minutesParJour,
+      ...(e.pause !== undefined && { pause: e.pause }),
+      ...(e.lieu !== undefined && { lieu: e.lieu }),
     }
     const bucket = parDate.get(e.date)
     if (bucket === undefined) parDate.set(e.date, [entree])

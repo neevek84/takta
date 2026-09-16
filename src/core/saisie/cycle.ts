@@ -1,6 +1,6 @@
 import { crossesMidnight } from '../time/slots'
-import type { Slot } from '../time/slots'
-import type { DisplayUnit } from '../types'
+import type { Pause, Slot } from '../time/slots'
+import type { DisplayUnit, Lieu } from '../types'
 
 /**
  * Les heures d'une saisie, telles qu'elles ont été **figées à son écriture**.
@@ -17,6 +17,8 @@ export interface BornesFigees {
   startMinute: number
   /** fin du bloc, minutes depuis minuit */
   endMinute: number
+  /** pause incluse dans le bloc, figée elle aussi ; absente = aucune */
+  pause?: Pause
 }
 
 /**
@@ -30,11 +32,15 @@ export interface BornesFigees {
  * `bornes` est absent des états que la **cinématique** produit — un cran à
  * venir n'a pas encore d'heures, c'est l'écriture qui les lui donnera — et
  * présent sur ceux que la **lecture** rend, qui les tiennent de la base.
+ *
+ * `lieu`, comme `bornes`, n'existe que sur ce que la lecture ou le formulaire
+ * produit : la cinématique ne le connaît pas, et l'écriture reprend alors
+ * celui de la saisie existante ou de la mission.
  */
 export type CellState =
   | { kind: 'VIDE' }
-  | { kind: 'JOURNEE'; bornes?: BornesFigees }
-  | { kind: 'DEMI'; slotId: string; bornes?: BornesFigees }
+  | { kind: 'JOURNEE'; bornes?: BornesFigees; lieu?: Lieu }
+  | { kind: 'DEMI'; slotId: string; bornes?: BornesFigees; lieu?: Lieu }
   | {
       kind: 'LIBRE'
       minutes: number
@@ -52,6 +58,10 @@ export type CellState =
       endMinute: number
       /** vrai quand la case agrège plusieurs saisies */
       eclatee: boolean
+      /** pause incluse dans le bloc ; absente = aucune */
+      pause?: Pause
+      /** lieu que la saisie porte ou que le formulaire choisit */
+      lieu?: Lieu
     }
 
 export type CycleStep = { action: 'ETAT'; state: CellState } | { action: 'FORMULAIRE' }

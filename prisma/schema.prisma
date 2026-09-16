@@ -36,6 +36,7 @@ model User {
   links       ExternalLink[]
   webhooks    Webhook[]
   passwordResets PasswordReset[]
+  trajets        Trajet[]
 }
 
 model PasswordReset {
@@ -51,6 +52,34 @@ model PasswordReset {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+/// Un trajet que l'application a posé, ou va poser, dans l'agenda. Il ne sert
+/// qu'à ne pas en poser deux au même endroit : l'application ne relit jamais
+/// l'événement distant, et le porteur le déplace ou le supprime à sa guise.
+///
+/// Aucune clé étrangère vers `TimeEntry` : le trajet survit à sa saisie, comme
+/// il survit dans l'agenda.
+model Trajet {
+  id          String    @id @default(cuid())
+  userId      String
+  /// minuit UTC du jour concerné
+  date        DateTime
+  /// minutes depuis minuit ; un trajet ne franchit jamais minuit, la fin 0
+  /// désigne minuit du soir
+  startMinute Int
+  endMinute   Int
+  /// saisie d'origine, pour la trace uniquement
+  entryId     String
+  /// libellé figé à la pose : « Trajet · Client »
+  summary     String
+  /// null tant que Google n'a pas confirmé la création
+  poseAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
 }
 
 model Client {
@@ -82,6 +111,11 @@ model Mission {
   /// Le rattacher au client obligerait à ressaisir ou à se tromper.
   signataireNom   String @default("")
   signataireEmail String @default("")
+
+  /// 'SITE' | 'DISTANCE'. Défaut DISTANCE : aucune mission existante ne se met
+  /// à poser des trajets sans qu'on l'ait demandé. Une chaîne et non un enum,
+  /// comme `kind` : le schéma reste dans l'intersection SQLite/Postgres.
+  lieuDefaut String @default("DISTANCE")
 
   client Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
   lines  MissionLine[]
@@ -163,6 +197,17 @@ model TimeEntry {
   /// Le défaut n'existe que pour permettre la migration d'une table peuplée :
   /// le chemin d'écriture renseigne TOUJOURS cette colonne explicitement.
   minutesParJour Int @default(480)
+  /// pause incluse dans le bloc, minutes depuis minuit. Égales = aucune pause.
+  /// Figées à l'écriture comme les deux bornes : changer le réglage ne déplace
+  /// aucune journée saisie. Les défauts à 0 disent « aucune pause », ce qui est
+  /// exactement la réalité de toute saisie antérieure à ce lot.
+  pauseDebutMinute Int @default(0)
+  pauseFinMinute   Int @default(0)
+  /// 'SITE' | 'DISTANCE', repris de la mission à l'écriture, modifiable.
+  lieu String @default("DISTANCE")
+  /// vrai dès que les trajets de cette saisie ont été calculés — une seule fois
+  /// dans sa vie : les trajets sont posés, puis l'agenda en fait ce qu'il veut.
+  trajetsCalcules Boolean @default(false)
   updatedAt DateTime @updatedAt
 
   line MissionLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
@@ -319,6 +364,14 @@ model Settings {
   journeeDebutMinute Int @default(540)
   /// fin de la plage journée, minutes depuis minuit (18 h -> 1080)
   journeeFinMinute   Int @default(1080)
+
+  /// début de la pause déjeuner, minutes depuis minuit (12 h 30 -> 750)
+  pauseDebutMinute Int @default(750)
+  /// fin de la pause déjeuner (13 h 30 -> 810). Égale au début = aucune pause :
+  /// pas de booléen à part, qui pourrait contredire les heures.
+  pauseFinMinute   Int @default(810)
+  /// durée d'un trajet posé dans l'agenda, en minutes. 0 = aucun trajet.
+  dureeTrajetMinutes Int @default(30)
 
   /// identité imprimée en tête du CRA. Vide = l'entête émetteur reste muet,
   /// le document se génère quand même.

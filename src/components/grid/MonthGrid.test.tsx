@@ -31,6 +31,7 @@ const lines: LineForGrid[] = [
     minutesParJour: 480,
     soldCentiemes: 3000,
     allowedSlotIds: [],
+    lieuDefaut: 'DISTANCE',
   },
   {
     id: 'l2',
@@ -41,6 +42,7 @@ const lines: LineForGrid[] = [
     minutesParJour: 480,
     soldCentiemes: 1000,
     allowedSlotIds: ['nuit'],
+    lieuDefaut: 'DISTANCE',
   },
 ]
 
@@ -54,8 +56,8 @@ const BORNES = { startMinute: 540, endMinute: 1020 }
 // `minutesParJour` est figé sur chaque saisie depuis le lot 1d : les deux
 // lignes du jeu d'essai travaillent en journées de 8 h.
 const entries: MonthEntry[] = [
-  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480 },
-  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'nuit', ...BORNES, minutesParJour: 480 },
+  { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+  { id: 'e2', lineId: 'l2', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: 'nuit', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
 ]
 
 const engagementTotals: Record<string, LineEngagementTotals> = {
@@ -177,8 +179,8 @@ describe('MonthGrid', () => {
     it('distingue réalisé, prévisionnel et vide sur la saisie', () => {
       renderGrid({
         entries: [
-          { id: 'r', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480 },
-          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480 },
+          { id: 'r', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
 
@@ -203,8 +205,8 @@ describe('MonthGrid', () => {
     it('lit une journée mêlant réalisé et prévisionnel comme prévisionnelle', () => {
       renderGrid({
         entries: [
-          { id: 'm', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
-          { id: 'a', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+          { id: 'a', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
 
@@ -216,8 +218,8 @@ describe('MonthGrid', () => {
     it('ne dépend pas de l ordre des saisies pour lire une journée mixte', () => {
       renderGrid({
         entries: [
-          { id: 'a', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
-          { id: 'm', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+          { id: 'a', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+          { id: 'm', lineId: 'l1', date: '2026-03-17', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
 
@@ -230,8 +232,8 @@ describe('MonthGrid', () => {
     it('convertit chaque saisie sous son propre facteur, jamais la somme', () => {
       renderGrid({
         entries: [
-          { id: 'court', lineId: 'l1', date: '2026-03-18', minutes: 105, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 420 },
-          { id: 'long', lineId: 'l1', date: '2026-03-18', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
+          { id: 'court', lineId: 'l1', date: '2026-03-18', minutes: 105, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 420, lieu: 'DISTANCE' },
+          { id: 'long', lineId: 'l1', date: '2026-03-18', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
 
@@ -310,7 +312,7 @@ describe('MonthGrid', () => {
     // Une journée pleine écrite sous un réglage à 7 h 12 : 432 minutes valent
     // 1 j, jamais 0,9 j — ce que donnerait le facteur global de 8 h.
     const uneJourneeSurL1: MonthEntry[] = [
-      { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 432, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 432 },
+      { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 432, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 432, lieu: 'DISTANCE' },
     ]
 
     it('formate chaque saisie au facteur figé à son écriture', () => {
@@ -371,7 +373,7 @@ describe('MonthGrid', () => {
           days={days}
           lines={lines}
           entries={[
-            { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480 },
+            { id: 'e1', lineId: 'l1', date: '2026-03-12', minutes: 240, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
           ]}
           engagementTotals={engagementTotals}
           capacityCentiemes={100}
@@ -428,8 +430,8 @@ describe('MonthGrid', () => {
   // son modèle de données plutôt que d'en masquer un.
   describe('journée éclatée en créneaux', () => {
     const deuxCreneaux: MonthEntry[] = [
-      { id: 'e1', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
-      { id: 'e2', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
+      { id: 'e1', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+      { id: 'e2', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
     ]
 
     it('additionne les créneaux d une même journée au lieu d en masquer un', () => {
@@ -630,8 +632,8 @@ describe('MonthGrid', () => {
       renderGrid({
         slots: DEFAULT_SLOTS,
         entries: [
-          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
-          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
       expect(cell('Consultant ITSM', '2026-03-16').value).toBe('1')
@@ -660,8 +662,8 @@ describe('MonthGrid', () => {
       renderGrid({
         slots: DEFAULT_SLOTS,
         entries: [
-          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
-          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'PREVISIONNEL', slotId: 'apres-midi', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
       expect(cell('Consultant ITSM', '2026-03-16').getAttribute('data-saisie')).toBe(
@@ -813,7 +815,7 @@ describe('MonthGrid', () => {
      */
     it('garde la forme et le chiffre d une journée figée quand le réglage change', () => {
       const validee: MonthEntry[] = [
-        { id: 'v', lineId: 'l1', date: '2026-03-16', minutes: 420, kind: 'REALISE', slotId: '', startMinute: 480, endMinute: 900, minutesParJour: 420 },
+        { id: 'v', lineId: 'l1', date: '2026-03-16', minutes: 420, kind: 'REALISE', slotId: '', startMinute: 480, endMinute: 900, minutesParJour: 420, lieu: 'DISTANCE' },
       ]
       const rendu = (minutesParJour: number): [string | null, string, string] => {
         renderGrid({ lines: [{ ...lines[0]!, minutesParJour }], entries: validee })
@@ -835,7 +837,7 @@ describe('MonthGrid', () => {
       renderGrid({
         slots: DEFAULT_SLOTS,
         entries: [
-          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
       const aplat = remplissage('l1', '2026-03-16')!
@@ -848,7 +850,7 @@ describe('MonthGrid', () => {
       renderGrid({
         slots: DEFAULT_SLOTS,
         entries: [
-          { id: 'l', lineId: 'l1', date: '2026-03-16', minutes: 180, kind: 'REALISE', slotId: 'nuit', ...BORNES, minutesParJour: 480 },
+          { id: 'l', lineId: 'l1', date: '2026-03-16', minutes: 180, kind: 'REALISE', slotId: 'nuit', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
       const aplat = remplissage('l1', '2026-03-16')!
@@ -869,8 +871,8 @@ describe('MonthGrid', () => {
       renderGrid({
         slots: DEFAULT_SLOTS,
         entries: [
-          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
-          { id: 'b', lineId: 'l1', date: '2026-03-16', minutes: 120, kind: 'REALISE', slotId: 'nuit', ...BORNES, minutesParJour: 420 },
+          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+          { id: 'b', lineId: 'l1', date: '2026-03-16', minutes: 120, kind: 'REALISE', slotId: 'nuit', ...BORNES, minutesParJour: 420, lieu: 'DISTANCE' },
         ],
       })
       // 0,50 + 0,29 = 0,79 — et non 0,75.
@@ -891,7 +893,7 @@ describe('MonthGrid', () => {
       renderGrid({
         slots: DEFAULT_SLOTS,
         entries: [
-          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
       const aplat = remplissage('l1', '2026-03-16')!
@@ -911,9 +913,9 @@ describe('MonthGrid', () => {
       renderGrid({
         slots: DEFAULT_SLOTS,
         entries: [
-          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480 },
-          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
-          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480 },
+          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+          { id: 'm', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+          { id: 'a', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE', slotId: 'apres-midi', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
 
@@ -942,7 +944,7 @@ describe('MonthGrid', () => {
     it('garde le contour tireté et l italique du prévisionnel sous l aplat', () => {
       renderGrid({
         entries: [
-          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480 },
+          { id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
       const champ = cell('Consultant ITSM', '2026-03-13')
@@ -967,7 +969,7 @@ describe('MonthGrid', () => {
   describe('le prévisionnel, le même des deux côtés de la bascule', () => {
     const PREVU: MonthEntry = {
       id: 'p', lineId: 'l1', date: '2026-03-13', minutes: 480, kind: 'PREVISIONNEL',
-      slotId: '', ...BORNES, minutesParJour: 480,
+      slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE',
     }
     const REALISE: MonthEntry = { ...PREVU, id: 'r', kind: 'REALISE' }
 
@@ -1167,7 +1169,10 @@ describe('MonthGrid', () => {
      * porter une saisie, et donc ce qui déclenche le marqueur.
      */
     function eclateeLe(date: string, prefixe: string, over: Partial<MonthEntry> = {}): MonthEntry[] {
-      const base = { lineId: 'l1', date, minutes: 120, kind: 'REALISE' as const, ...BORNES, minutesParJour: 480 }
+      const base = {
+        lineId: 'l1', date, minutes: 120, kind: 'REALISE' as const, ...BORNES,
+        minutesParJour: 480, lieu: 'DISTANCE' as const,
+      }
       return [
         { ...base, id: `${prefixe}1`, slotId: 'matin', ...over },
         { ...base, id: `${prefixe}2`, slotId: 'apres-midi', ...over },
@@ -1273,8 +1278,8 @@ describe('MonthGrid', () => {
         slots: DEFAULT_SLOTS,
         entries: [
           ...eclateeLe('2026-03-10', 'a'),
-          { id: 'seul', lineId: 'l1', date: '2026-03-11', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480 },
-          { id: 'plein', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480 },
+          { id: 'seul', lineId: 'l1', date: '2026-03-11', minutes: 240, kind: 'REALISE', slotId: 'matin', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+          { id: 'plein', lineId: 'l1', date: '2026-03-12', minutes: 480, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
         ],
       })
 
@@ -1465,7 +1470,7 @@ describe('la cellule qui agrège des créneaux', () => {
     renderGrid({
       entries: [
         { id: 'z1', lineId: 'l1', date: '2026-03-16', minutes: 0, kind: 'REALISE',
-          slotId: 'matin', ...BORNES_LOCALES, minutesParJour: 480 },
+          slotId: 'matin', ...BORNES_LOCALES, minutesParJour: 480, lieu: 'DISTANCE' },
       ],
     })
     const input = cell('Consultant ITSM', '2026-03-16')
@@ -1480,7 +1485,7 @@ describe('la cellule qui agrège des créneaux', () => {
     renderGrid({
       entries: [
         { id: 'u1', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE',
-          slotId: 'matin', ...BORNES_LOCALES, minutesParJour: 480 },
+          slotId: 'matin', ...BORNES_LOCALES, minutesParJour: 480, lieu: 'DISTANCE' },
       ],
     })
     const input = cell('Consultant ITSM', '2026-03-16')
@@ -1496,7 +1501,7 @@ describe('les deux vues ne marquent pas le même fait', () => {
   const BORNES_2 = { startMinute: 540, endMinute: 780 }
   const UN_CRENEAU = [
     { id: 'x1', lineId: 'l1', date: '2026-03-16', minutes: 240, kind: 'REALISE' as const,
-      slotId: 'matin', ...BORNES_2, minutesParJour: 480 },
+      slotId: 'matin', ...BORNES_2, minutesParJour: 480, lieu: 'DISTANCE' as const },
   ]
 
   it('donne au tableau un marqueur distinct de celui de la journée éclatée', () => {

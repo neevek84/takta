@@ -28,6 +28,9 @@ const REGLAGES: AppSettings = {
   debutExerciceMois: 1,
   journeeDebutMinute: 540,
   journeeFinMinute: 1080,
+  pauseDebutMinute: 750,
+  pauseFinMinute: 810,
+  dureeTrajetMinutes: 30,
   relanceJours: 7,
   timeZone: 'Europe/Paris',
 }
@@ -101,6 +104,21 @@ describe('le menu des sources d’engagement', () => {
       'Projet Dolibarr',
     ])
     expect(libelles.every((l) => l !== '')).toBe(true)
+  })
+})
+
+describe('SettingsForm — pause déjeuner et trajets', () => {
+  it('affiche la pause et la durée de trajet enregistrées', () => {
+    rendre({ pauseDebutMinute: 720, pauseFinMinute: 780, dureeTrajetMinutes: 45 })
+    expect(screen.getByLabelText('Début de la pause')).toHaveProperty('value', '12:00')
+    expect(screen.getByLabelText('Fin de la pause')).toHaveProperty('value', '13:00')
+    expect(screen.getByLabelText('Durée d’un trajet (min)')).toHaveProperty('value', '45')
+  })
+
+  it('laisse les heures vides quand aucune pause n’est réglée', () => {
+    rendre({ pauseDebutMinute: 0, pauseFinMinute: 0 })
+    expect(screen.getByLabelText('Début de la pause')).toHaveProperty('value', '')
+    expect(screen.getByLabelText('Fin de la pause')).toHaveProperty('value', '')
   })
 })
 

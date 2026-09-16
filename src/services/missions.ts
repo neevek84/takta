@@ -9,7 +9,8 @@ const ENTITE_MISSION = 'Mission'
 const ENTITE_LIGNE = 'MissionLine'
 import { getSettings } from './settings'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
-import type { DisplayUnit, EngagementSource } from '@/core/types'
+import { LIEUX } from '@/core/types'
+import type { DisplayUnit, EngagementSource, Lieu } from '@/core/types'
 import { appendAudit, actorOf } from './audit'
 
 export interface LineForGrid {
@@ -21,6 +22,8 @@ export interface LineForGrid {
   minutesParJour: number
   soldCentiemes: number
   allowedSlotIds: string[]
+  /** lieu par défaut de la mission ; une saisie en hérite, et peut le changer */
+  lieuDefaut: Lieu
 }
 
 /**
@@ -42,6 +45,7 @@ export async function createMission(args: {
    */
   startDate?: string | null
   userId?: string
+  lieuDefaut?: Lieu
 }): Promise<{ id: string }> {
   const m = await prisma.mission.create({
     data: {
@@ -57,6 +61,7 @@ export async function createMission(args: {
         args.startDate === undefined || args.startDate === null || args.startDate === ''
           ? null
           : new Date(`${args.startDate}T00:00:00Z`),
+      lieuDefaut: args.lieuDefaut ?? 'DISTANCE',
     },
   })
 
@@ -154,6 +159,8 @@ export interface MissionForUser {
   /** contact signataire du CRA, porté par la mission et non par le client */
   signataireNom: string
   signataireEmail: string
+  /** lieu par défaut des saisies de cette mission */
+  lieuDefaut: Lieu
   lines: Array<{
     id: string
     label: string
@@ -228,6 +235,7 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
     minutesParJourSurcharge: m.minutesParJour,
     signataireNom: m.signataireNom,
     signataireEmail: m.signataireEmail,
+    lieuDefaut: m.lieuDefaut as Lieu,
     lines: m.lines.map((l) => ({
       id: l.id,
       label: l.label,
@@ -372,6 +380,33 @@ export async function updateMissionSignataire(
   return { ok: true }
 }
 
+export type LieuResult = { ok: true } | { ok: false; erreur: string }
+
+/**
+ * Change le lieu par défaut d'une mission. Les saisies déjà écrites gardent le
+ * leur : le lieu se fige à l'écriture, comme les heures.
+ *
+ * Scopé par affectation, comme le signataire.
+ */
+export async function updateMissionLieu(
+  userId: string,
+  missionId: string,
+  lieu: string,
+): Promise<LieuResult> {
+  if (!(LIEUX as readonly string[]).includes(lieu)) return { ok: false, erreur: 'Lieu inconnu.' }
+
+  const mission = await prisma.mission.findFirst({
+    where: { id: missionId, lines: { some: { assignments: { some: { userId } } } } },
+    select: { id: true },
+  })
+  if (mission === null) {
+    return { ok: false, erreur: 'Cette mission ne vous est pas affectée.' }
+  }
+
+  await prisma.mission.update({ where: { id: missionId }, data: { lieuDefaut: lieu } })
+  return { ok: true }
+}
+
 export type LibelleResult = { ok: true } | { ok: false; erreur: string }
 
 /**
@@ -453,5 +488,6 @@ export async function listActiveLines(userId: string): Promise<LineForGrid[]> {
     }),
     soldCentiemes: a.soldCentiemes,
     allowedSlotIds: a.line.allowedSlotIds === '' ? [] : a.line.allowedSlotIds.split(','),
+    lieuDefaut: a.line.mission.lieuDefaut as Lieu,
   }))
 }

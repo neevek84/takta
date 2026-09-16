@@ -15,6 +15,7 @@ vi.mock('./actions', () => ({
 // Les deux formulaires ont leurs propres tests ; ici on vérifie le câblage.
 vi.mock('./LigneForm', () => ({ LigneForm: () => <div data-testid="ligne-form" /> }))
 vi.mock('./SignataireForm', () => ({ SignataireForm: () => <div data-testid="signataire-form" /> }))
+vi.mock('./LieuMissionForm', () => ({ LieuMissionForm: () => <div data-testid="lieu-mission-form" /> }))
 
 import { MissionsExplorer, type CommandeOuverte } from './MissionsExplorer'
 
@@ -28,6 +29,7 @@ function mission(patch: Partial<MissionForUser> & { id: string }): MissionForUse
     minutesParJourSurcharge: null,
     signataireNom: '',
     signataireEmail: '',
+    lieuDefaut: 'DISTANCE',
     lines: [],
     ...patch,
   }

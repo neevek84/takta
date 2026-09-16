@@ -9,6 +9,7 @@ import {
 import { aUnConnecteurAgenda } from '@/services/credentials'
 import { vueParDefautDe } from '@/services/saisie/vue-par-defaut'
 import { buildMonthDays, shiftMonth } from '@/core/month/build'
+import { pauseDepuisColonnes } from '@/core/time/slots'
 import { MonthNav } from '@/components/MonthNav'
 import { PageShell } from '@/components/ui/PageShell'
 import { PastForecastNotice } from './PastForecastNotice'
@@ -106,6 +107,8 @@ export default async function SaisiePage({
         // saisie déjà écrite porte ses propres bornes, figées à l'écriture.
         journeeDebutMinute={settings.journeeDebutMinute}
         journeeFinMinute={settings.journeeFinMinute}
+        pauseReglage={pauseDepuisColonnes(settings.pauseDebutMinute, settings.pauseFinMinute)}
+        dureeTrajetMinutes={settings.dureeTrajetMinutes}
         // Une lecture locale, sans réseau : dit seulement si un connecteur
         // existe, pour que `BoutonAgenda` sache s'effacer plutôt que d'offrir
         // une vérification qui échouerait à tous les coups.

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/db/client'
-import { ENTITY_TIME_ENTRY, PROVIDER_GOOGLE } from '@/core/sync/policy'
+import { ENTITY_TIME_ENTRY, ENTITY_TIME_ENTRY_SUITE, PROVIDER_GOOGLE } from '@/core/sync/policy'
 import { updateSettings } from '@/services/settings'
 import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
@@ -591,5 +591,218 @@ describe('refus élémentaires', () => {
     const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
     expect(r).toMatchObject({ ok: false, reason: 'SAISIE_ABSENTE' })
     expect((await listOpenConflicts(userId)).length).toBe(1)
+  })
+})
+
+describe('le second bloc d une journée coupée', () => {
+  async function divergenceSuite(): Promise<{ conflictId: string; entryId: string }> {
+    const entryId = await saisirLeDouze()
+    const cible = { entityType: ENTITY_TIME_ENTRY_SUITE, entityId: entryId, provider: PROVIDER_GOOGLE }
+    await prisma.externalLink.create({
+      data: { userId, ...cible, externalId: 'evt-suite', etag: '"1"', syncState: 'SYNCED' },
+    })
+    const conflit = await prisma.syncConflict.create({
+      data: {
+        userId,
+        ...cible,
+        kind: 'REMOTE_MODIFIED',
+        remoteSnapshotJson: JSON.stringify(
+          instantane({ startLocal: '2026-03-12T13:30:00', endLocal: '2026-03-12T15:00:00' }),
+        ),
+      },
+    })
+    // L'état que le drainage laisse derrière lui : la file vidée.
+    await prisma.syncOutbox.deleteMany({ where: { userId } })
+    return { conflictId: conflit.id, entryId }
+  }
+
+  it('se liste comme le bloc d après la pause', async () => {
+    await divergenceSuite()
+    const [conflit] = await listOpenConflicts(userId)
+    expect(conflit?.libelle).toContain('après la pause')
+  })
+
+  it('se rétablit en repoussant la saisie entière', async () => {
+    const { conflictId, entryId } = await divergenceSuite()
+
+    expect(await resolveConflict({ userId, conflictId, resolution: 'RETABLIR' })).toEqual({
+      ok: true,
+      resolution: 'RETABLIR',
+    })
+    expect(await prisma.syncOutbox.findFirst({ where: cibleDe(entryId) })).not.toBeNull()
+    const lienSuite = await prisma.externalLink.findFirstOrThrow({
+      where: { entityType: ENTITY_TIME_ENTRY_SUITE, entityId: entryId },
+    })
+    expect(lienSuite.etag).toBe('')
+  })
+
+  it('refuse d être accepté seul', async () => {
+    const { conflictId } = await divergenceSuite()
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r.ok).toBe(false)
+    expect(r.ok === false && r.reason).toBe('SEGMENT')
+  })
+
+  // Détacher le second bloc ne rompt que son lien : la matinée reste suivie.
+  it('se détache sans toucher au lien du premier bloc', async () => {
+    const { conflictId, entryId } = await divergenceSuite()
+    await prisma.externalLink.create({
+      data: { userId, ...cibleDe(entryId), externalId: EXTERNAL_ID, etag: '"1"', syncState: 'SYNCED' },
+    })
+
+    expect(await resolveConflict({ userId, conflictId, resolution: 'DETACHER' })).toEqual({
+      ok: true,
+      resolution: 'DETACHER',
+    })
+    const liens = await prisma.externalLink.findMany({ where: { entityId: entryId } })
+    expect(liens.map((l) => l.entityType)).toEqual([ENTITY_TIME_ENTRY])
+  })
+})
+
+describe('le premier bloc d une journée coupée', () => {
+  beforeEach(async () => {
+    await updateSettings({ pauseDebutMinute: 750, pauseFinMinute: 810 })
+  })
+
+  /** Une journée entière de 8 h, coupée par la pause, dont le matin a divergé. */
+  async function divergenceMatin(
+    kind: 'REMOTE_MODIFIED' | 'REMOTE_DELETED',
+  ): Promise<{ conflictId: string; entryId: string }> {
+    const r = await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 480, kind: 'REALISE' })
+    expect(r.ok).toBe(true)
+    const entry = await prisma.timeEntry.findFirstOrThrow({ where: { userId, lineId: lineA } })
+    expect([entry.pauseDebutMinute, entry.pauseFinMinute]).toEqual([750, 810])
+
+    await prisma.externalLink.create({
+      data: { userId, ...cibleDe(entry.id), externalId: EXTERNAL_ID, etag: '"1"', syncState: 'SYNCED' },
+    })
+    await prisma.externalLink.create({
+      data: {
+        userId,
+        entityType: ENTITY_TIME_ENTRY_SUITE,
+        entityId: entry.id,
+        provider: PROVIDER_GOOGLE,
+        externalId: 'evt-suite',
+        etag: '"1"',
+        syncState: 'SYNCED',
+      },
+    })
+    const conflit = await prisma.syncConflict.create({
+      data: {
+        userId,
+        ...cibleDe(entry.id),
+        kind,
+        remoteSnapshotJson: JSON.stringify(
+          kind === 'REMOTE_DELETED'
+            ? { externalId: EXTERNAL_ID }
+            : instantane({ startLocal: '2026-03-12T09:15:00', endLocal: '2026-03-12T12:45:00' }),
+        ),
+      },
+    })
+    await prisma.syncOutbox.deleteMany({ where: { userId } })
+    return { conflictId: conflit.id, entryId: entry.id }
+  }
+
+  // Le matin ne porte que la moitié de la journée : en tirer une durée
+  // facturerait 3 h 30 au lieu de 8 h, et laisserait l'après-midi orphelin.
+  it('refuse d accepter un matin retouché, sans rien écrire', async () => {
+    const { conflictId, entryId } = await divergenceMatin('REMOTE_MODIFIED')
+
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r).toMatchObject({ ok: false, reason: 'SEGMENT' })
+
+    const e = await prisma.timeEntry.findUniqueOrThrow({ where: { id: entryId } })
+    expect([e.minutes, e.startMinute, e.endMinute, e.pauseDebutMinute, e.pauseFinMinute]).toEqual([
+      480, 540, 1080, 750, 810,
+    ])
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+    expect(await prisma.externalLink.count({ where: { entityId: entryId } })).toBe(2)
+    expect((await listOpenConflicts(userId)).length).toBe(1)
+  })
+
+  it('refuse d accepter un matin disparu, et garde la journée', async () => {
+    const { conflictId, entryId } = await divergenceMatin('REMOTE_DELETED')
+
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r).toMatchObject({ ok: false, reason: 'SEGMENT' })
+
+    expect(await prisma.timeEntry.findUnique({ where: { id: entryId } })).not.toBeNull()
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+    expect(await prisma.externalLink.count({ where: { entityId: entryId } })).toBe(2)
+    expect((await listOpenConflicts(userId)).length).toBe(1)
+  })
+})
+
+describe('accepter — le lieu de la saisie déplacée', () => {
+  const CLIENT_SITE = 'CONFLITS client sur site'
+  let ligneSite = ''
+
+  beforeAll(async () => {
+    const c = await createClient(CLIENT_SITE)
+    const m = await createMission({ clientId: c.id, label: 'Chez eux', lieuDefaut: 'SITE' })
+    ligneSite = (
+      await createLine({ missionId: m.id, userId, label: 'Atelier', soldCentiemes: 3000, tjmCents: 0 })
+    ).id
+  })
+
+  beforeEach(async () => {
+    await prisma.trajet.deleteMany({ where: { userId } })
+    await updateSettings({ pauseDebutMinute: 0, pauseFinMinute: 0, dureeTrajetMinutes: 30 })
+  })
+
+  afterAll(async () => {
+    await prisma.trajet.deleteMany({ where: { userId } })
+    await prisma.client.deleteMany({ where: { name: CLIENT_SITE } })
+  })
+
+  /** Une saisie chez le client, poussée puis déplacée au 18 dans Google. */
+  async function deplaceeDansGoogle(): Promise<{ conflictId: string; entryId: string }> {
+    const r = await saveEntry({ userId, lineId: ligneSite, date: '2026-03-12', minutes: 240, kind: 'REALISE' })
+    expect(r.ok).toBe(true)
+    const entry = await prisma.timeEntry.findFirstOrThrow({ where: { userId, lineId: ligneSite } })
+    await prisma.externalLink.create({
+      data: { userId, ...cibleDe(entry.id), externalId: EXTERNAL_ID, etag: '"1"', syncState: 'SYNCED' },
+    })
+    const conflit = await prisma.syncConflict.create({
+      data: {
+        userId,
+        ...cibleDe(entry.id),
+        kind: 'REMOTE_MODIFIED',
+        remoteSnapshotJson: JSON.stringify(
+          instantane({ startLocal: '2026-03-18T09:00:00', endLocal: '2026-03-18T13:00:00' }),
+        ),
+      },
+    })
+    await prisma.syncOutbox.deleteMany({ where: { userId } })
+    return { conflictId: conflit.id, entryId: entry.id }
+  }
+
+  const DIX_HUIT = new Date('2026-03-18T00:00:00.000Z')
+
+  // Ses trajets ont été posés le 12 : le déplacement n'en pose pas d'autres.
+  it('garde le lieu et ne repose aucun trajet', async () => {
+    const { conflictId } = await deplaceeDansGoogle()
+
+    expect(await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })).toEqual({
+      ok: true,
+      resolution: 'ACCEPTER',
+    })
+    const deplacee = await prisma.timeEntry.findFirstOrThrow({ where: { userId, lineId: ligneSite } })
+    expect([deplacee.date, deplacee.lieu, deplacee.trajetsCalcules]).toEqual([DIX_HUIT, 'SITE', true])
+    expect(await prisma.trajet.count({ where: { userId, date: DIX_HUIT } })).toBe(0)
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+  })
+
+  // Passée à distance au formulaire : la mission ne la ramène pas sur site.
+  it('garde un lieu à distance choisi contre la mission', async () => {
+    const { conflictId, entryId } = await deplaceeDansGoogle()
+    await prisma.timeEntry.update({ where: { id: entryId }, data: { lieu: 'DISTANCE', trajetsCalcules: false } })
+    await prisma.trajet.deleteMany({ where: { userId } })
+
+    expect(await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })).toMatchObject({ ok: true })
+    const deplacee = await prisma.timeEntry.findFirstOrThrow({ where: { userId, lineId: ligneSite } })
+    expect([deplacee.lieu, deplacee.trajetsCalcules]).toEqual(['DISTANCE', false])
+    expect(await prisma.trajet.count({ where: { userId } })).toBe(0)
+    expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
   })
 })

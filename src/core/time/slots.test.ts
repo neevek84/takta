@@ -5,6 +5,8 @@ import {
   slotDurationMinutes,
   crossesMidnight,
   slotInterval,
+  pauseDepuisColonnes,
+  pauseMinutes,
   type Slot,
 } from './slots'
 
@@ -141,5 +143,82 @@ describe('entryBounds', () => {
     expect(bornes).toEqual({ startMinute: 540, endMinute: 0 })
     // Et la durée reste celle qu'on attend : minuit ferme la journée.
     expect(minutesBetween(bornes.startMinute, bornes.endMinute)).toBe(900)
+  })
+})
+
+// La pause déjeuner : le temps facturé ne change pas, le bloc s'allonge de la
+// pause et la laisse libre au milieu.
+describe('entryBounds — pause déjeuner', () => {
+  const journee = { journeeDebutMinute: 540, journeeFinMinute: 1080 }
+  const DEJEUNER = { debutMinute: 750, finMinute: 810 }
+
+  it('allonge une journée de 7 h de la pause, et la rend', () => {
+    expect(entryBounds({ minutes: 420, slot: null, ...journee, pause: DEJEUNER })).toEqual({
+      startMinute: 540,
+      endMinute: 1020,
+      pause: DEJEUNER,
+    })
+  })
+
+  it('ignore une pause qui tombe hors du bloc', () => {
+    // 9 h → 11 h : la pause de 12 h 30 n'a rien à couper.
+    expect(entryBounds({ minutes: 120, slot: null, ...journee, pause: DEJEUNER })).toEqual({
+      startMinute: 540,
+      endMinute: 660,
+    })
+  })
+
+  // Tronquer en gardant la pause ferait relire au formulaire « fin − début −
+  // pause », moins que le temps saisi : réenregistrer baisserait la facture.
+  it("n'applique pas la pause quand le bloc allongé ne tient pas dans la plage", () => {
+    expect(
+      entryBounds({
+        minutes: 420,
+        slot: null,
+        journeeDebutMinute: 540,
+        journeeFinMinute: 900,
+        pause: DEJEUNER,
+      }),
+    ).toEqual({ startMinute: 540, endMinute: 900 })
+  })
+
+  it('applique la pause quand le bloc allongé finit pile en fin de plage', () => {
+    expect(entryBounds({ minutes: 480, slot: null, ...journee, pause: DEJEUNER })).toEqual({
+      startMinute: 540,
+      endMinute: 1080,
+      pause: DEJEUNER,
+    })
+  })
+
+  it('ne pose jamais la pause sur un créneau nommé', () => {
+    const matin: Slot = { id: 'm', label: 'Matin', startMinute: 540, endMinute: 780, centiemes: 50 }
+    expect(entryBounds({ minutes: 240, slot: matin, ...journee, pause: DEJEUNER })).toEqual({
+      startMinute: 540,
+      endMinute: 780,
+    })
+  })
+
+  it('traite une pause de durée nulle comme aucune pause', () => {
+    expect(
+      entryBounds({ minutes: 420, slot: null, ...journee, pause: { debutMinute: 750, finMinute: 750 } }),
+    ).toEqual({ startMinute: 540, endMinute: 960 })
+  })
+})
+
+describe('pauseDepuisColonnes', () => {
+  it('lit deux colonnes égales comme aucune pause', () => {
+    expect(pauseDepuisColonnes(0, 0)).toBeUndefined()
+    expect(pauseDepuisColonnes(750, 750)).toBeUndefined()
+  })
+
+  it('rend la pause quand la fin suit le début', () => {
+    expect(pauseDepuisColonnes(750, 810)).toEqual({ debutMinute: 750, finMinute: 810 })
+  })
+})
+
+describe('pauseMinutes', () => {
+  it('vaut 0 sans pause et la durée sinon', () => {
+    expect(pauseMinutes(undefined)).toBe(0)
+    expect(pauseMinutes({ debutMinute: 750, finMinute: 810 })).toBe(60)
   })
 })

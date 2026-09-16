@@ -14,6 +14,7 @@ const ligne: LineForGrid = {
   minutesParJour: 480,
   soldCentiemes: 3000,
   allowedSlotIds: [],
+  lieuDefaut: 'DISTANCE',
 }
 
 const ligneRestreinte: LineForGrid = { ...ligne, allowedSlotIds: ['matin', 'apres-midi'] }
@@ -64,6 +65,13 @@ function dureeCalculee(): string {
 
 function enregistrer(): void {
   fireEvent.click(screen.getByRole('button', { name: 'Enregistrer' }))
+}
+
+const DEJEUNER = { debutMinute: 750, finMinute: 810 }
+const ligneSept: LineForGrid = { ...ligne, minutesParJour: 420 }
+
+function casePause(): HTMLInputElement {
+  return screen.getByLabelText('Pause déjeuner') as HTMLInputElement
 }
 
 describe('CellForm', () => {
@@ -167,7 +175,13 @@ describe('CellForm', () => {
     fireEvent.change(debut(), { target: { value: '09:00' } })
     fireEvent.change(fin(), { target: { value: '12:30' } })
     enregistrer()
-    expect(onSubmit).toHaveBeenCalledWith(210, '', 540, 750)
+    expect(onSubmit).toHaveBeenCalledWith({
+      minutes: 210,
+      slotId: '',
+      startMinute: 540,
+      endMinute: 750,
+      lieu: 'DISTANCE',
+    })
   })
 
   // Le porteur travaille parfois la nuit : une fin antérieure au début n'est
@@ -178,7 +192,13 @@ describe('CellForm', () => {
     fireEvent.change(fin(), { target: { value: '02:00' } })
     expect(dureeCalculee()).toContain('4h')
     enregistrer()
-    expect(onSubmit).toHaveBeenCalledWith(240, '', 1320, 120)
+    expect(onSubmit).toHaveBeenCalledWith({
+      minutes: 240,
+      slotId: '',
+      startMinute: 1320,
+      endMinute: 120,
+      lieu: 'DISTANCE',
+    })
   })
 
   it('compte une journée pleine quand les deux heures coïncident', () => {
@@ -186,7 +206,13 @@ describe('CellForm', () => {
     fireEvent.change(debut(), { target: { value: '09:00' } })
     fireEvent.change(fin(), { target: { value: '09:00' } })
     enregistrer()
-    expect(onSubmit).toHaveBeenCalledWith(1440, '', 540, 540)
+    expect(onSubmit).toHaveBeenCalledWith({
+      minutes: 1440,
+      slotId: '',
+      startMinute: 540,
+      endMinute: 540,
+      lieu: 'DISTANCE',
+    })
   })
 
   // Le chemin rapide reste : le créneau nommé **pré-remplit**, il ne verrouille
@@ -204,7 +230,13 @@ describe('CellForm', () => {
     enregistrer()
     // Le créneau reste comme trace de l'origine, les heures sont celles qu'on
     // a réellement saisies.
-    expect(onSubmit).toHaveBeenCalledWith(180, 'matin', 540, 720)
+    expect(onSubmit).toHaveBeenCalledWith({
+      minutes: 180,
+      slotId: 'matin',
+      startMinute: 540,
+      endMinute: 720,
+      lieu: 'DISTANCE',
+    })
   })
 
   it('revient à la plage journée quand on repasse à la journée entière', () => {
@@ -248,7 +280,13 @@ describe('CellForm', () => {
     expect(screen.getByTestId('signalement-creneau').textContent).toContain('autorisé')
 
     enregistrer()
-    expect(onSubmit).toHaveBeenCalledWith(480, 'nuit', 1320, 360)
+    expect(onSubmit).toHaveBeenCalledWith({
+      minutes: 480,
+      slotId: 'nuit',
+      startMinute: 1320,
+      endMinute: 360,
+      lieu: 'DISTANCE',
+    })
   })
 
   it('ne signale rien sur un créneau autorisé', () => {
@@ -373,5 +411,99 @@ describe('CellForm — boîte de dialogue au clavier', () => {
     unmount()
     expect(document.activeElement).toBe(declencheur)
     declencheur.remove()
+  })
+})
+
+describe('CellForm — pause déjeuner', () => {
+  afterEach(cleanup)
+
+  it('n offre aucune pause quand aucune n est réglée', () => {
+    renderForm()
+    expect(screen.queryByLabelText('Pause déjeuner')).toBeNull()
+  })
+
+  it('ouvre une case vide sur une journée avec pause : 7 h facturées, 9 h → 17 h', () => {
+    renderForm({ line: ligneSept, pauseReglage: DEJEUNER })
+    expect([debut().value, fin().value]).toEqual(['09:00', '17:00'])
+    expect(casePause().checked).toBe(true)
+    expect(dureeCalculee()).toContain('7h')
+  })
+
+  it('transmet la pause et la durée facturée', () => {
+    const { onSubmit } = renderForm({ line: ligneSept, pauseReglage: DEJEUNER })
+    enregistrer()
+    expect(onSubmit).toHaveBeenCalledWith({
+      minutes: 420,
+      slotId: '',
+      startMinute: 540,
+      endMinute: 1020,
+      pause: DEJEUNER,
+      lieu: 'DISTANCE',
+    })
+  })
+
+  it('compte la pause dans la durée dès qu on la décoche', () => {
+    renderForm({ line: ligneSept, pauseReglage: DEJEUNER })
+    fireEvent.click(casePause())
+    expect(dureeCalculee()).toContain('8h')
+  })
+
+  it('décoche la pause quand on choisit un créneau nommé', () => {
+    renderForm({ line: ligneSept, pauseReglage: DEJEUNER })
+    fireEvent.change(creneau(), { target: { value: 'matin' } })
+    expect(casePause().checked).toBe(false)
+  })
+
+  it('refuse une pause qui ne tombe pas entre le début et la fin', () => {
+    const { onSubmit } = renderForm({ line: ligneSept, pauseReglage: DEJEUNER })
+    fireEvent.change(fin(), { target: { value: '12:00' } })
+    enregistrer()
+    expect(screen.getByRole('alert').textContent).toBe('La pause doit tomber entre le début et la fin.')
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('rouvre une saisie sur la pause qu elle porte, pas sur le réglage', () => {
+    renderForm({
+      pauseReglage: DEJEUNER,
+      etat: {
+        kind: 'JOURNEE',
+        bornes: { startMinute: 480, endMinute: 960, pause: { debutMinute: 720, finMinute: 780 } },
+      },
+    })
+    expect(casePause().checked).toBe(true)
+    expect((screen.getByLabelText('Début de la pause') as HTMLInputElement).value).toBe('12:00')
+  })
+})
+
+describe('CellForm — lieu', () => {
+  afterEach(cleanup)
+
+  function lieu(): HTMLSelectElement {
+    return screen.getByLabelText('Lieu') as HTMLSelectElement
+  }
+
+  it('reprend le lieu de la mission sur une case vide', () => {
+    renderForm({ line: { ...ligne, lieuDefaut: 'SITE' } })
+    expect(lieu().value).toBe('SITE')
+  })
+
+  it('reprend le lieu de la saisie quand elle en porte un', () => {
+    renderForm({
+      line: { ...ligne, lieuDefaut: 'SITE' },
+      etat: { kind: 'JOURNEE', bornes: { startMinute: 540, endMinute: 1020 }, lieu: 'DISTANCE' },
+    })
+    expect(lieu().value).toBe('DISTANCE')
+  })
+
+  it('annonce le trajet chez le client', () => {
+    renderForm({ line: { ...ligne, lieuDefaut: 'SITE' }, dureeTrajetMinutes: 30 })
+    expect(screen.getByTestId('annonce-trajet').textContent).toContain('30 min')
+  })
+
+  it('transmet le lieu choisi', () => {
+    const { onSubmit } = renderForm()
+    fireEvent.change(lieu(), { target: { value: 'SITE' } })
+    enregistrer()
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ lieu: 'SITE' }))
   })
 })

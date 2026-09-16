@@ -82,6 +82,11 @@ beforeEach(async () => {
     capacityMode: 'DESACTIVE',
     journeeDebutMinute: 540,
     journeeFinMinute: 1080,
+    // Cette suite éprouve le gel des heures, pas la pause déjeuner : sans ce
+    // réglage à zéro, le défaut du singleton (750/810) allongerait les
+    // journées entières que ces tests attendent pile à `minutesParJour`.
+    pauseDebutMinute: 0,
+    pauseFinMinute: 0,
   })
 })
 
@@ -969,5 +974,178 @@ describe('une ligne effacée pendant le drainage', () => {
 
     expect(r.traitees).toBe(1)
     expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+  })
+})
+
+describe('journée coupée par la pause', () => {
+  beforeEach(async () => {
+    await updateSettings({ pauseDebutMinute: 750, pauseFinMinute: 810 })
+  })
+
+  function lienSuite(entityId: string) {
+    return prisma.externalLink.findFirst({
+      where: { entityType: 'TimeEntrySuite', entityId, provider: 'GOOGLE' },
+    })
+  }
+
+  function bornesPosees(): string[][] {
+    return api
+      .appelsVers('/events')
+      .filter((a) => a.method === 'POST')
+      .map((a) => {
+        const b = a.body as { start: { dateTime: string }; end: { dateTime: string } }
+        return [b.start.dateTime, b.end.dateTime]
+      })
+  }
+
+  it('pose deux blocs, la pause libre entre les deux', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(bornesPosees()).toEqual([
+      ['2026-03-12T09:00:00', '2026-03-12T12:30:00'],
+      ['2026-03-12T13:30:00', '2026-03-12T18:00:00'],
+    ])
+    expect(await lien(entryId)).not.toBeNull()
+    expect(await lienSuite(entryId)).not.toBeNull()
+  })
+
+  it('retire le second bloc quand la pause disparaît', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const suite = await lienSuite(entryId)
+
+    // Une durée partielle n'est plus une journée entière : plus de pause.
+    await saisir('2026-03-12', 240)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(await lienSuite(entryId)).toBeNull()
+    expect(api.appelsVers(suite!.externalId).some((a) => a.method === 'DELETE')).toBe(true)
+  })
+
+  it('ouvre le conflit sur le seul bloc retouché dans Google', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const suite = await lienSuite(entryId)
+
+    api.toucherEvenement(suite!.externalId, { summary: 'Déplacé à la main' })
+    await saisir('2026-03-12', 480)
+    const r = await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(r.conflits).toBe(1)
+    const conflit = await prisma.syncConflict.findFirstOrThrow({ where: { userId, resolvedAt: null } })
+    expect([conflit.entityType, conflit.entityId]).toEqual(['TimeEntrySuite', entryId])
+  })
+
+  // L'après-midi retouché dans Google attend un arbitrage : retirer la pause
+  // ne doit pas effacer ce geste sans le demander. Il reste dans l'agenda,
+  // simplement plus suivi.
+  it('détache le second bloc en conflit au lieu de le supprimer quand la pause disparaît', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const suite = await lienSuite(entryId)
+
+    api.toucherEvenement(suite!.externalId, { summary: 'Déplacé à la main' })
+    await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const conflit = await prisma.syncConflict.findFirstOrThrow({
+      where: { userId, entityType: 'TimeEntrySuite', resolvedAt: null },
+    })
+
+    await saisir('2026-03-12', 240)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(api.appelsVers(suite!.externalId).some((a) => a.method === 'DELETE')).toBe(false)
+    expect(api.events.has(suite!.externalId)).toBe(true)
+    expect(await lienSuite(entryId)).toBeNull()
+    const resolu = await prisma.syncConflict.findUniqueOrThrow({ where: { id: conflit.id } })
+    expect(resolu.resolvedAt).not.toBeNull()
+    expect(resolu.resolution).toBe('DETACHER')
+  })
+
+  it('retire les deux blocs quand la saisie est supprimée', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 0, kind: 'REALISE' })
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(await lien(entryId)).toBeNull()
+    expect(await lienSuite(entryId)).toBeNull()
+  })
+})
+
+describe('trajets', () => {
+  let ligneSite = ''
+
+  beforeAll(async () => {
+    const c = await createClient('FLUSH trajets')
+    const m = await createMission({ clientId: c.id, label: 'Chez eux', lieuDefaut: 'SITE' })
+    ligneSite = (
+      await createLine({ missionId: m.id, userId, label: 'Atelier', soldCentiemes: 3000, tjmCents: 0 })
+    ).id
+  })
+
+  beforeEach(async () => {
+    await prisma.trajet.deleteMany({ where: { userId } })
+    await updateSettings({ dureeTrajetMinutes: 30 })
+  })
+
+  afterAll(async () => {
+    await prisma.trajet.deleteMany({ where: { userId } })
+    await prisma.client.deleteMany({ where: { name: 'FLUSH trajets' } })
+  })
+
+  /** Les événements de trajet présents chez Google, par identifiant. */
+  function trajetsChezGoogle(): string[] {
+    return [...api.events.values()]
+      .filter((e) => e.body.colorId === '8')
+      .map((e) => e.id)
+  }
+
+  async function saisirSurSite(minutes = 240): Promise<void> {
+    const r = await saveEntry({ userId, lineId: ligneSite, date: '2026-03-12', minutes, kind: 'REALISE' })
+    expect(r.ok).toBe(true)
+  }
+
+  it('pose l aller et le retour, et note qu ils sont posés', async () => {
+    await saisirSurSite()
+    const r = await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(r.echecs).toBe(0)
+    const bornes = api
+      .appelsVers('/events')
+      .filter((a) => a.method === 'POST' && (a.body as { colorId: string }).colorId === '8')
+      .map((a) => (a.body as { start: { dateTime: string } }).start.dateTime)
+      .sort()
+    expect(bornes).toEqual(['2026-03-12T08:30:00', '2026-03-12T13:00:00'])
+    expect(await prisma.trajet.count({ where: { userId, poseAt: null } })).toBe(0)
+  })
+
+  it('ne relit ni ne réécrit un trajet posé', async () => {
+    await saisirSurSite()
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const ids = trajetsChezGoogle()
+
+    for (const id of ids) api.toucherEvenement(id, { summary: 'Retouché à la main' })
+    await saisirSurSite(300)
+    const r = await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(r.conflits).toBe(0)
+    for (const id of ids) {
+      expect(api.appelsVers(id).filter((a) => a.method !== 'POST')).toEqual([])
+    }
+    expect(trajetsChezGoogle()).toHaveLength(2)
+  })
+
+  it('laisse les trajets dans l agenda quand la saisie est supprimée', async () => {
+    await saisirSurSite()
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const ids = trajetsChezGoogle()
+
+    await saveEntry({ userId, lineId: ligneSite, date: '2026-03-12', minutes: 0, kind: 'REALISE' })
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    expect(trajetsChezGoogle()).toEqual(ids)
   })
 })

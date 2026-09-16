@@ -55,6 +55,9 @@ const REGLAGES = {
   debutExerciceMois: 1,
   journeeDebutMinute: 540,
   journeeFinMinute: 1080,
+  pauseDebutMinute: 750,
+  pauseFinMinute: 810,
+  dureeTrajetMinutes: 30,
   relanceJours: 7,
   timeZone: 'Indian/Reunion',
 }
