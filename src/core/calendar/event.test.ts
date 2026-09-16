@@ -6,8 +6,10 @@ import {
   buildTrajetEvent,
   COULEUR_PREVISIONNEL,
   COULEUR_REALISE,
+  COULEUR_PAUSE,
   COULEUR_TRAJET,
   SEGMENT_APRES_PAUSE,
+  SEGMENT_PAUSE,
 } from './event'
 
 const MATIN: Slot = { id: 'matin', label: 'Matin', startMinute: 540, endMinute: 780, centiemes: 50 }
@@ -180,19 +182,36 @@ describe('buildCalendarEvents — la pause coupe le bloc', () => {
     ])
   })
 
-  it('rend deux blocs, la pause libre entre les deux', () => {
+  it('rend trois blocs : la matinée, la pause déjeuner, l après-midi', () => {
     const blocs = buildCalendarEvents({ ...base(), pause: { debutMinute: 750, finMinute: 810 } })
     expect(
       blocs.map((b) => [b.segment, b.draft.startLocal, b.draft.endLocal, b.draft.craSegment]),
     ).toEqual([
       ['PRINCIPAL', '2026-03-10T09:00:00', '2026-03-10T12:30:00', undefined],
+      ['PAUSE', '2026-03-10T12:30:00', '2026-03-10T13:30:00', SEGMENT_PAUSE],
       ['APRES_PAUSE', '2026-03-10T13:30:00', '2026-03-10T17:00:00', SEGMENT_APRES_PAUSE],
     ])
   })
 
-  it('garde la même saisie derrière les deux blocs', () => {
+  it('garde la même saisie derrière les trois blocs', () => {
     const blocs = buildCalendarEvents({ ...base(), pause: { debutMinute: 750, finMinute: 810 } })
-    expect(blocs.map((b) => b.draft.craEntryId)).toEqual(['entry-1', 'entry-1'])
+    expect(blocs.map((b) => b.draft.craEntryId)).toEqual(['entry-1', 'entry-1', 'entry-1'])
+  })
+
+  it('pose la pause comme un bloc occupé, nommé et de sa propre couleur', () => {
+    const blocs = buildCalendarEvents({ ...base(), pause: { debutMinute: 750, finMinute: 810 } })
+    const pause = blocs.find((b) => b.segment === 'PAUSE')!.draft
+    expect([pause.summary, pause.transparency, pause.colorId]).toEqual([
+      'Pause déjeuner',
+      'opaque',
+      COULEUR_PAUSE,
+    ])
+    expect(COULEUR_PAUSE).not.toBe(COULEUR_REALISE)
+    expect(COULEUR_PAUSE).not.toBe(COULEUR_TRAJET)
+  })
+
+  it('ne pose aucun bloc de pause sans pause', () => {
+    expect(buildCalendarEvents(base()).some((b) => b.segment === 'PAUSE')).toBe(false)
   })
 })
 

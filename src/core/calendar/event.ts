@@ -6,6 +6,8 @@ export const COULEUR_REALISE = '9'
 export const COULEUR_PREVISIONNEL = '5'
 /** Graphite : un trajet occupe, mais ne se confond ni avec le réalisé ni avec le prévu. */
 export const COULEUR_TRAJET = '8'
+/** Sauge : la pause déjeuner occupe l'agenda sans passer pour du travail. */
+export const COULEUR_PAUSE = '2'
 
 export interface CalendarEventDraft {
   summary: string
@@ -20,7 +22,7 @@ export interface CalendarEventDraft {
   colorId: string
   /** retrouvé côté Google dans extendedProperties.private ; vide pour un trajet */
   craEntryId: string
-  /** `'apres-pause'` sur le second bloc d'une journée coupée ; absent sinon */
+  /** `'pause'` ou `'apres-pause'` sur les blocs d'une journée coupée ; absent sinon */
   craSegment?: string
   /** identifiant du trajet ; absent pour un bloc de travail */
   craTrajetId?: string
@@ -87,16 +89,20 @@ export function buildCalendarEvent(args: BuildEventArgs): CalendarEventDraft {
 }
 
 export const SEGMENT_APRES_PAUSE = 'apres-pause'
+export const SEGMENT_PAUSE = 'pause'
 
-export type Segment = 'PRINCIPAL' | 'APRES_PAUSE'
+export type Segment = 'PRINCIPAL' | 'PAUSE' | 'APRES_PAUSE'
 
 /**
- * Les blocs d'agenda d'une saisie : un seul, ou deux quand une pause la coupe.
+ * Les blocs d'agenda d'une saisie : un seul, ou trois quand une pause la coupe
+ * — la matinée, la pause déjeuner, l'après-midi.
  *
  * Un événement Google n'a pas de trou. Poser un bloc de 9 h à 17 h et écrire
- * la pause en description laisserait l'agenda annoncer occupé à midi — le
- * contraire de ce que la pause veut dire. Le premier bloc garde exactement la
- * forme d'aujourd'hui, pour que les liens déjà posés continuent de le désigner.
+ * la pause en description laisserait l'agenda annoncer du travail à midi. La
+ * laisser vide ne valait guère mieux : un trou dans l'agenda est une invitation
+ * à y caler un rendez-vous. La pause a donc son propre bloc, occupé, qui dit ce
+ * qu'il est. Le premier bloc garde exactement la forme d'aujourd'hui, pour que
+ * les liens déjà posés continuent de le désigner.
  */
 export function buildCalendarEvents(
   args: BuildEventArgs & { pause?: Pause },
@@ -107,6 +113,20 @@ export function buildCalendarEvents(
 
   return [
     { segment: 'PRINCIPAL', draft: buildCalendarEvent({ ...args, endMinute: args.pause.debutMinute }) },
+    {
+      segment: 'PAUSE',
+      draft: {
+        summary: 'Pause déjeuner',
+        description: 'Pause posée par le CRA. Ne pas modifier ici : la saisie fait foi.',
+        startLocal: localAt(args.date, args.pause.debutMinute),
+        endLocal: localAt(args.date, args.pause.finMinute),
+        timeZone: args.timeZone,
+        transparency: 'opaque',
+        colorId: COULEUR_PAUSE,
+        craEntryId: args.entryId,
+        craSegment: SEGMENT_PAUSE,
+      },
+    },
     {
       segment: 'APRES_PAUSE',
       draft: {

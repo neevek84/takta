@@ -1,8 +1,14 @@
 import { prisma } from '@/db/client'
 import { CalendarApiError, type CalendarConnector } from '@/core/calendar/connector'
-import { buildCalendarEvents, buildTrajetEvent, type CalendarEventDraft } from '@/core/calendar/event'
+import {
+  buildCalendarEvents,
+  buildTrajetEvent,
+  type CalendarEventDraft,
+  type Segment,
+} from '@/core/calendar/event'
 import {
   abandon,
+  ENTITY_TIME_ENTRY_PAUSE,
   ENTITY_TIME_ENTRY_SUITE,
   ENTITY_TRAJET,
   MAX_PASSES,
@@ -47,6 +53,16 @@ type Cible = ReturnType<typeof cibleDe>
 /** Le second bloc d'une saisie : même saisie, autre événement, autre lien. */
 function cibleSuiteDe(row: Row): Cible {
   return { ...cibleDe(row), entityType: ENTITY_TIME_ENTRY_SUITE }
+}
+
+/** Le bloc « Pause déjeuner » d'une saisie coupée, sous son propre lien. */
+function ciblePauseDe(row: Row): Cible {
+  return { ...cibleDe(row), entityType: ENTITY_TIME_ENTRY_PAUSE }
+}
+
+function cibleDuSegment(row: Row, segment: Segment): Cible {
+  if (segment === 'PAUSE') return ciblePauseDe(row)
+  return segment === 'PRINCIPAL' ? cibleDe(row) : cibleSuiteDe(row)
 }
 
 /** Message d'échec borné : la colonne n'est pas un journal d'exécution. */
@@ -205,31 +221,32 @@ async function traiterUpsert(
   // Google sur l'après-midi ne doit pas empêcher la matinée de suivre la saisie.
   const issues: Issue[] = []
   for (const { segment, draft } of blocs) {
-    const cible = segment === 'PRINCIPAL' ? cibleDe(row) : cibleSuiteDe(row)
-    issues.push(await pousserBloc(connector, row, cible, draft, now, entry.id))
+    issues.push(await pousserBloc(connector, row, cibleDuSegment(row, segment), draft, now, entry.id))
   }
 
-  // La pause a été retirée : le second bloc n'a plus rien à occuper.
-  if (!blocs.some((b) => b.segment === 'APRES_PAUSE')) {
-    const suite = cibleSuiteDe(row)
-    const conflitSuite = await prisma.syncConflict.findFirst({
-      where: { userId: row.userId, ...suite, resolvedAt: null },
-      select: { id: true },
-    })
-    if (conflitSuite === null) {
-      await retirerBloc(connector, suite)
-    } else {
-      // Retouché dans Google et en attente d'arbitrage : le supprimer effacerait
-      // le geste de l'utilisateur sans le lui demander. On le laisse dans son
-      // agenda, simplement plus suivi — un détachement, que la saisie a rendu
-      // sans objet d'arbitrer.
-      await prisma.$transaction([
-        prisma.externalLink.deleteMany({ where: suite }),
-        prisma.syncConflict.update({
-          where: { id: conflitSuite.id },
-          data: { resolvedAt: now, resolution: 'DETACHER' },
-        }),
-      ])
+  // La pause a été retirée : ni la pause ni l'après-midi n'ont plus rien à
+  // occuper.
+  if (pause === undefined) {
+    for (const cible of [ciblePauseDe(row), cibleSuiteDe(row)]) {
+      const conflitOuvert = await prisma.syncConflict.findFirst({
+        where: { userId: row.userId, ...cible, resolvedAt: null },
+        select: { id: true },
+      })
+      if (conflitOuvert === null) {
+        await retirerBloc(connector, cible)
+      } else {
+        // Retouché dans Google et en attente d'arbitrage : le supprimer
+        // effacerait le geste de l'utilisateur sans le lui demander. On le
+        // laisse dans son agenda, simplement plus suivi — un détachement, que
+        // la saisie a rendu sans objet d'arbitrer.
+        await prisma.$transaction([
+          prisma.externalLink.deleteMany({ where: cible }),
+          prisma.syncConflict.update({
+            where: { id: conflitOuvert.id },
+            data: { resolvedAt: now, resolution: 'DETACHER' },
+          }),
+        ])
+      }
     }
   }
 
@@ -238,6 +255,7 @@ async function traiterUpsert(
 
 async function traiterSuppression(connector: CalendarConnector, row: Row): Promise<Issue> {
   await retirerBloc(connector, cibleDe(row))
+  await retirerBloc(connector, ciblePauseDe(row))
   await retirerBloc(connector, cibleSuiteDe(row))
   // `RIEN` et non `POUSSE` : `agenda.bloc.pousse` atteste qu'un bloc a été
   // écrit dans l'agenda, et un retrait n'en écrit aucun.
