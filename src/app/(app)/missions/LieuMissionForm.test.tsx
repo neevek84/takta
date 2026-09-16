@@ -28,6 +28,24 @@ describe('LieuMissionForm', () => {
     expect([formData.get('missionId'), formData.get('lieuDefaut')]).toEqual(['m1', 'SITE'])
   })
 
+  it('propose, cochée, d appliquer le lieu aux jours déjà planifiés', async () => {
+    render(<LieuMissionForm missionId="m1" lieuDefaut="DISTANCE" />)
+    const caseAPlanif = screen.getByLabelText('Appliquer aussi aux jours déjà planifiés') as HTMLInputElement
+    expect(caseAPlanif.checked).toBe(true)
+
+    fireEvent.submit(document.querySelector('form')!)
+    await waitFor(() => expect(saveLieuMission).toHaveBeenCalledTimes(1))
+    const formData = saveLieuMission.mock.calls[0]![1] as FormData
+    expect(formData.get('appliquerAuxPlanifies')).toBe('on')
+  })
+
+  it('dit combien de jours planifiés ont suivi', async () => {
+    saveLieuMission.mockResolvedValue({ ok: true, saisiesMisesAJour: 3 })
+    render(<LieuMissionForm missionId="m1" lieuDefaut="DISTANCE" />)
+    fireEvent.submit(document.querySelector('form')!)
+    expect(await screen.findByText(/3 jours planifiés mis à jour/)).toBeTruthy()
+  })
+
   it('dit ce que le lieu change dans l agenda', () => {
     render(<LieuMissionForm missionId="m1" lieuDefaut="SITE" />)
     expect(screen.getByText(/trajet/)).toBeTruthy()

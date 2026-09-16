@@ -998,29 +998,56 @@ describe('journée coupée par la pause', () => {
       })
   }
 
-  it('pose deux blocs, la pause libre entre les deux', async () => {
+  function lienPause(entityId: string) {
+    return prisma.externalLink.findFirst({
+      where: { entityType: 'TimeEntryPause', entityId, provider: 'GOOGLE' },
+    })
+  }
+
+  it('pose trois blocs : la matinée, la pause déjeuner, l après-midi', async () => {
     const entryId = await saisir('2026-03-12', 480)
     await flushSyncOutbox({ userId, now: NOW, connector: connector() })
 
     expect(bornesPosees()).toEqual([
       ['2026-03-12T09:00:00', '2026-03-12T12:30:00'],
+      ['2026-03-12T12:30:00', '2026-03-12T13:30:00'],
       ['2026-03-12T13:30:00', '2026-03-12T18:00:00'],
     ])
     expect(await lien(entryId)).not.toBeNull()
     expect(await lienSuite(entryId)).not.toBeNull()
+    const pause = await lienPause(entryId)
+    expect((api.events.get(pause!.externalId)?.body as { summary: string }).summary).toBe(
+      'Pause déjeuner',
+    )
   })
 
-  it('retire le second bloc quand la pause disparaît', async () => {
+  it('déplace le bloc de pause quand la saisie change d heures de pause', async () => {
+    const entryId = await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+    const pause = await lienPause(entryId)
+
+    await updateSettings({ pauseDebutMinute: 720, pauseFinMinute: 780 })
+    await saisir('2026-03-12', 480)
+    await flushSyncOutbox({ userId, now: NOW, connector: connector() })
+
+    const corps = api.events.get(pause!.externalId)?.body as { start: { dateTime: string } }
+    expect(corps.start.dateTime).toBe('2026-03-12T12:00:00')
+  })
+
+  it('retire le bloc de pause et le second bloc quand la pause disparaît', async () => {
     const entryId = await saisir('2026-03-12', 480)
     await flushSyncOutbox({ userId, now: NOW, connector: connector() })
     const suite = await lienSuite(entryId)
+    const pause = await lienPause(entryId)
 
     // Une durée partielle n'est plus une journée entière : plus de pause.
     await saisir('2026-03-12', 240)
     await flushSyncOutbox({ userId, now: NOW, connector: connector() })
 
     expect(await lienSuite(entryId)).toBeNull()
+    expect(await lienPause(entryId)).toBeNull()
     expect(api.appelsVers(suite!.externalId).some((a) => a.method === 'DELETE')).toBe(true)
+    expect(api.appelsVers(pause!.externalId).some((a) => a.method === 'DELETE')).toBe(true)
   })
 
   it('ouvre le conflit sur le seul bloc retouché dans Google', async () => {
@@ -1063,7 +1090,7 @@ describe('journée coupée par la pause', () => {
     expect(resolu.resolution).toBe('DETACHER')
   })
 
-  it('retire les deux blocs quand la saisie est supprimée', async () => {
+  it('retire les trois blocs quand la saisie est supprimée', async () => {
     const entryId = await saisir('2026-03-12', 480)
     await flushSyncOutbox({ userId, now: NOW, connector: connector() })
 
@@ -1072,6 +1099,7 @@ describe('journée coupée par la pause', () => {
 
     expect(await lien(entryId)).toBeNull()
     expect(await lienSuite(entryId)).toBeNull()
+    expect(await lienPause(entryId)).toBeNull()
   })
 })
 

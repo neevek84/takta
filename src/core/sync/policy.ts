@@ -33,9 +33,26 @@ export const ENTITY_CRA = 'Cra'
  * (entityType, entityId, provider) d'`ExternalLink` en demande un par bloc.
  *
  * Ce type n'entre jamais en file : c'est la saisie entière qu'on repousse, et
- * le drainage retrouve ses deux blocs à partir d'elle.
+ * le drainage retrouve tous ses blocs à partir d'elle.
  */
 export const ENTITY_TIME_ENTRY_SUITE = 'TimeEntrySuite'
+
+/**
+ * Le bloc « Pause déjeuner » posé entre les deux moitiés d'une journée coupée.
+ * Même règle que le second bloc : même `entityId`, lien à part, jamais en file.
+ *
+ * Il existe pour que l'agenda annonce midi **occupé** : un trou entre deux
+ * blocs laissait n'importe qui y caler un rendez-vous.
+ */
+export const ENTITY_TIME_ENTRY_PAUSE = 'TimeEntryPause'
+
+/**
+ * Les blocs d'une saisie autres que le premier. Aucun ne dit à lui seul ce que
+ * vaut la journée, et aucun n'entre en file : c'est la saisie qu'on repousse.
+ */
+export function estBlocSecondaire(entityType: string): boolean {
+  return entityType === ENTITY_TIME_ENTRY_SUITE || entityType === ENTITY_TIME_ENTRY_PAUSE
+}
 
 /**
  * Un trajet posé autour d'une saisie chez le client. Il entre en file pour

@@ -10,8 +10,10 @@ const ENTITE_LIGNE = 'MissionLine'
 import { getSettings } from './settings'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { LIEUX } from '@/core/types'
-import type { DisplayUnit, EngagementSource, Lieu } from '@/core/types'
+import type { CraStatus, DisplayUnit, EngagementSource, Lieu } from '@/core/types'
+import { isLocked } from '@/core/cra/state-machine'
 import { appendAudit, actorOf } from './audit'
+import { planifierTrajets } from './trajets'
 
 export interface LineForGrid {
   id: string
@@ -380,18 +382,38 @@ export async function updateMissionSignataire(
   return { ok: true }
 }
 
-export type LieuResult = { ok: true } | { ok: false; erreur: string }
+export type LieuResult =
+  | { ok: true; saisiesMisesAJour?: number }
+  | { ok: false; erreur: string }
 
 /**
  * Change le lieu par défaut d'une mission. Les saisies déjà écrites gardent le
- * leur : le lieu se fige à l'écriture, comme les heures.
+ * leur — le lieu se fige à l'écriture, comme les heures —, **sauf** si
+ * `appliquerAuxPlanifies` le demande : les jours à venir de la mission
+ * suivent alors le nouveau lieu, et ceux qui passent chez le client reçoivent
+ * leurs trajets.
  *
- * Scopé par affectation, comme le signataire.
+ * Sans cette option, passer une mission « chez le client » après en avoir
+ * planifié les jours ne posait aucun trajet sur la planification : chaque jour
+ * restait « à distance », et un clic sur la case gardait ce lieu d'origine.
+ *
+ * Les jours passés et les mois dont le CRA est validé ne bougent jamais : c'est
+ * du réalisé, ou un document arrêté. Repasser « à distance » ne retire aucun
+ * trajet déjà posé — ils sont posés une fois, puis l'agenda en fait ce qu'il
+ * veut.
+ *
+ * Scopé par affectation, comme le signataire, et aux seules saisies de la
+ * personne : un autre consultant de la mission garde sa planification.
  */
 export async function updateMissionLieu(
   userId: string,
   missionId: string,
   lieu: string,
+  options: {
+    appliquerAuxPlanifies?: boolean
+    /** 'YYYY-MM-DD' ; l'horloge du serveur par défaut, injectée par les tests */
+    aujourdhui?: string
+  } = {},
 ): Promise<LieuResult> {
   if (!(LIEUX as readonly string[]).includes(lieu)) return { ok: false, erreur: 'Lieu inconnu.' }
 
@@ -403,8 +425,50 @@ export async function updateMissionLieu(
     return { ok: false, erreur: 'Cette mission ne vous est pas affectée.' }
   }
 
-  await prisma.mission.update({ where: { id: missionId }, data: { lieuDefaut: lieu } })
-  return { ok: true }
+  if (options.appliquerAuxPlanifies !== true) {
+    await prisma.mission.update({ where: { id: missionId }, data: { lieuDefaut: lieu } })
+    return { ok: true }
+  }
+
+  const aujourdhui = options.aujourdhui ?? new Date().toISOString().slice(0, 10)
+  const [{ dureeTrajetMinutes }, cras, aVenir] = await Promise.all([
+    getSettings(),
+    prisma.cra.findMany({ where: { missionId, userId }, select: { month: true, status: true } }),
+    prisma.timeEntry.findMany({
+      where: {
+        userId,
+        line: { missionId },
+        date: { gte: new Date(`${aujourdhui}T00:00:00.000Z`) },
+      },
+      // Dans l'ordre du temps : un trajet se raccourcit contre ceux déjà
+      // posés, et le résultat ne doit pas dépendre de l'ordre de la base.
+      orderBy: [{ date: 'asc' }, { startMinute: 'asc' }],
+      select: { id: true, date: true, lieu: true },
+    }),
+  ])
+
+  const moisVerrouilles = new Set(
+    cras.filter((c) => isLocked(c.status as CraStatus)).map((c) => c.month.toISOString().slice(0, 7)),
+  )
+  const concernees = aVenir.filter(
+    (e) => e.lieu !== lieu && !moisVerrouilles.has(e.date.toISOString().slice(0, 7)),
+  )
+
+  // Tout ou rien : une mission passée chez le client dont la moitié des jours
+  // seulement aurait suivi serait pire que l'état de départ. Le délai est
+  // large, une année de planification se traite en une fois.
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.mission.update({ where: { id: missionId }, data: { lieuDefaut: lieu } })
+      for (const saisie of concernees) {
+        await tx.timeEntry.update({ where: { id: saisie.id }, data: { lieu } })
+        await planifierTrajets(tx, { userId, entryId: saisie.id, dureeMinutes: dureeTrajetMinutes })
+      }
+    },
+    { timeout: 60_000 },
+  )
+
+  return { ok: true, saisiesMisesAJour: concernees.length }
 }
 
 export type LibelleResult = { ok: true } | { ok: false; erreur: string }

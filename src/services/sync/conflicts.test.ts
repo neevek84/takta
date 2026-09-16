@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/db/client'
-import { ENTITY_TIME_ENTRY, ENTITY_TIME_ENTRY_SUITE, PROVIDER_GOOGLE } from '@/core/sync/policy'
+import {
+  ENTITY_TIME_ENTRY,
+  ENTITY_TIME_ENTRY_PAUSE,
+  ENTITY_TIME_ENTRY_SUITE,
+  PROVIDER_GOOGLE,
+} from '@/core/sync/policy'
 import { updateSettings } from '@/services/settings'
 import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
@@ -804,5 +809,55 @@ describe('accepter — le lieu de la saisie déplacée', () => {
     expect([deplacee.lieu, deplacee.trajetsCalcules]).toEqual(['DISTANCE', false])
     expect(await prisma.trajet.count({ where: { userId } })).toBe(0)
     expect(await prisma.syncOutbox.count({ where: { userId } })).toBe(0)
+  })
+})
+
+describe('le bloc de pause déjeuner', () => {
+  async function divergencePause(): Promise<{ conflictId: string; entryId: string }> {
+    const entryId = await saisirLeDouze()
+    const cible = { entityType: ENTITY_TIME_ENTRY_PAUSE, entityId: entryId, provider: PROVIDER_GOOGLE }
+    await prisma.externalLink.create({
+      data: { userId, ...cible, externalId: 'evt-pause', etag: '"1"', syncState: 'SYNCED' },
+    })
+    const conflit = await prisma.syncConflict.create({
+      data: {
+        userId,
+        ...cible,
+        kind: 'REMOTE_MODIFIED',
+        remoteSnapshotJson: JSON.stringify(
+          instantane({ startLocal: '2026-03-12T12:00:00', endLocal: '2026-03-12T13:00:00' }),
+        ),
+      },
+    })
+    // L'état que le drainage laisse derrière lui : la file vidée.
+    await prisma.syncOutbox.deleteMany({ where: { userId } })
+    return { conflictId: conflit.id, entryId }
+  }
+
+  it('se liste comme la pause déjeuner', async () => {
+    await divergencePause()
+    const [conflit] = await listOpenConflicts(userId)
+    expect(conflit?.libelle).toContain('pause déjeuner')
+  })
+
+  it('se rétablit en repoussant la saisie entière', async () => {
+    const { conflictId, entryId } = await divergencePause()
+
+    expect(await resolveConflict({ userId, conflictId, resolution: 'RETABLIR' })).toEqual({
+      ok: true,
+      resolution: 'RETABLIR',
+    })
+    expect(await prisma.syncOutbox.findFirst({ where: cibleDe(entryId) })).not.toBeNull()
+    expect(
+      await prisma.syncOutbox.count({ where: { entityType: ENTITY_TIME_ENTRY_PAUSE } }),
+    ).toBe(0)
+  })
+
+  it('refuse d être acceptée : une pause ne dit rien du temps travaillé', async () => {
+    const { conflictId, entryId } = await divergencePause()
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r.ok === false && r.reason).toBe('SEGMENT')
+    const saisie = await prisma.timeEntry.findUniqueOrThrow({ where: { id: entryId } })
+    expect(saisie.minutes).toBe(240)
   })
 })

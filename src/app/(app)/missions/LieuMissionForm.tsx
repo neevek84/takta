@@ -5,6 +5,7 @@ import { saveLieuMission, type LieuMissionState } from './actions'
 import { LIBELLES_LIEU, LIEUX, type Lieu } from '@/core/types'
 import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
+import { Checkbox } from '@/components/ui/Checkbox'
 import { Select } from '@/components/ui/Select'
 
 /**
@@ -40,13 +41,29 @@ export function LieuMissionForm({ missionId, lieuDefaut }: { missionId: string; 
           Enregistrer le lieu
         </Button>
       </div>
+      {/* Cochée par défaut : changer le lieu d'une mission sans que ses jours
+          déjà planifiés suivent laissait toute la planification sans trajets,
+          et rien ne le disait. */}
+      <Checkbox
+        label="Appliquer aussi aux jours déjà planifiés"
+        name="appliquerAuxPlanifies"
+        defaultChecked
+      />
 
       {state !== null && !state.ok && (
         <Banner tone="danger" title="Lieu non enregistré">
           {state.erreur}
         </Banner>
       )}
-      {state?.ok === true && <Banner tone="success">Lieu enregistré.</Banner>}
+      {state?.ok === true && (
+        <Banner tone="success">
+          Lieu enregistré.
+          {state.saisiesMisesAJour !== undefined &&
+            (state.saisiesMisesAJour === 1
+              ? ' 1 jour planifié mis à jour.'
+              : ` ${state.saisiesMisesAJour} jours planifiés mis à jour.`)}
+        </Banner>
+      )}
     </form>
   )
 }
