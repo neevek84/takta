@@ -270,7 +270,7 @@ export async function resolveConflict(args: {
       ok: false,
       reason: 'SEGMENT',
       message:
-        'Cette journée est coupée par la pause : un seul de ses deux blocs ne dit pas ce que vaut la journée. Rétablissez-le ou détachez-le.',
+        'Cette journée est coupée par la pause : aucun de ses blocs ne dit à lui seul ce que vaut la journée. Rétablissez-le ou détachez-le.',
     }
   }
 

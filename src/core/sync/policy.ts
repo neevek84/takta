@@ -33,7 +33,7 @@ export const ENTITY_CRA = 'Cra'
  * (entityType, entityId, provider) d'`ExternalLink` en demande un par bloc.
  *
  * Ce type n'entre jamais en file : c'est la saisie entière qu'on repousse, et
- * le drainage retrouve ses deux blocs à partir d'elle.
+ * le drainage retrouve tous ses blocs à partir d'elle.
  */
 export const ENTITY_TIME_ENTRY_SUITE = 'TimeEntrySuite'
 
