@@ -4,8 +4,9 @@ import { render, screen, cleanup } from '@testing-library/react'
 import { canTransition, type CraTransition } from '@/core/cra/state-machine'
 import { CRA_STATUSES } from '@/core/types'
 
-const { cra, introuvable } = vi.hoisted(() => ({
+const { cra, introuvable, echoues } = vi.hoisted(() => ({
   cra: { valeur: null as unknown },
+  echoues: { valeur: 0 },
   introuvable: vi.fn(),
 }))
 
@@ -16,12 +17,18 @@ vi.mock('@/services/cra', () => ({
     return cra.valeur
   },
 }))
+vi.mock('@/services/signature/envois', () => ({
+  listerEnvois: async () => [],
+  compterCourrielsEchoues: async () => echoues.valeur,
+}))
 vi.mock('next/navigation', () => ({ notFound: introuvable }))
 vi.mock('./actions', () => ({
   moveCra: vi.fn(),
   saveTracking: vi.fn(),
   envoyerPourSignature: vi.fn(),
   rafraichirSignature: vi.fn(),
+  annulerEnvoiAction: vi.fn(),
+  copierLienClient: vi.fn(),
 }))
 
 // eslint-disable-next-line import/first -- `vi.mock` est hissé au-dessus des imports.
@@ -50,6 +57,7 @@ function unCra(extra: Record<string, unknown> = {}): Record<string, unknown> {
 
 async function rendre(valeur: unknown, searchParams: Record<string, string> = {}) {
   cra.valeur = valeur
+  echoues.valeur = 0
   return render(
     await CraDetailPage({
       params: Promise.resolve({ craId: 'cra-1' }),
@@ -227,5 +235,42 @@ describe('signature du CRA', () => {
     await rendre(unCra({ signature: null }))
 
     expect(screen.queryByRole('button', { name: /rafraîchir l’état/i })).toBeNull()
+  })
+})
+
+describe('annulation, historique et courriels non partis', () => {
+  afterEach(cleanup)
+
+  const signature = {
+    provider: 'documenso',
+    status: 'EN_ATTENTE',
+    sentAt: new Date('2026-03-05T09:00:00.000Z'),
+    relances: 0,
+    lastRelanceAt: null,
+    abandoned: false,
+    archive: false,
+  }
+
+  it('sur un CRA ENVOYE avec signature, le bouton Annuler l envoi est présent', async () => {
+    await rendre(unCra({ status: 'ENVOYE', signature }))
+    expect(screen.getByRole('button', { name: 'Annuler l’envoi' })).toBeTruthy()
+  })
+
+  it('sur un CRA REFUSE, le bouton s intitule Renvoyer pour signature', async () => {
+    await rendre(unCra({ status: 'REFUSE', signature: { ...signature, status: 'REFUSE' } }))
+    expect(screen.getByRole('button', { name: 'Renvoyer pour signature' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Annuler l’envoi' })).toBeNull()
+  })
+
+  it('avec deux courriels échoués, le bandeau le dit', async () => {
+    cra.valeur = unCra({ signature })
+    echoues.valeur = 2
+    render(
+      await CraDetailPage({
+        params: Promise.resolve({ craId: 'cra-1' }),
+        searchParams: Promise.resolve({}),
+      }),
+    )
+    expect(document.body.textContent).toContain('2 courriels du circuit de signature n’ont pas pu partir')
   })
 })

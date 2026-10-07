@@ -94,3 +94,18 @@ export async function listerEnvois(userId: string, craId: string): Promise<Envoi
 
   return vues
 }
+
+/**
+ * Les courriels **non partis** depuis l'envoi en cours — pour que l'écran du
+ * CRA le dise. Lu dans le journal, en bloc : la raison est dans la charge
+ * utile, jamais interrogée finement.
+ */
+export async function compterCourrielsEchoues(userId: string, craId: string): Promise<number> {
+  const cra = await prisma.cra.findFirst({ where: { id: craId, userId }, select: { id: true } })
+  if (cra === null) return 0
+  const demande = await prisma.signatureRequest.findUnique({ where: { craId }, select: { sentAt: true } })
+  if (demande === null) return 0
+  return prisma.auditEvent.count({
+    where: { entityType: 'Cra', entityId: craId, action: 'signature.courriel.echoue', occurredAt: { gte: demande.sentAt } },
+  })
+}

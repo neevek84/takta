@@ -6,6 +6,8 @@ import { requireUser } from '@/auth'
 import { transitionCra, updateInvoiceTracking } from '@/services/cra'
 import { sendCraForSignature } from '@/services/signature/send'
 import { refreshSignatureStatus } from '@/services/signature/refresh'
+import { annulerEnvoi } from '@/services/signature/annuler'
+import { nouveauLienManuel } from '@/services/signature/lien-client'
 import type { CraTransition } from '@/core/cra/state-machine'
 import { headers } from 'next/headers'
 import { originePublique } from '@/core/http/origine'
@@ -74,4 +76,24 @@ export async function rafraichirSignature(formData: FormData): Promise<void> {
   revalidatePath(`/cra/${craId}`)
   revalidatePath('/saisie')
   retour(craId, r.ok ? undefined : r.raison)
+}
+
+export async function annulerEnvoiAction(formData: FormData): Promise<void> {
+  const user = await requireUser()
+  const craId = String(formData.get('craId'))
+  const r = await annulerEnvoi(user.id, craId)
+  revalidatePath('/cra')
+  revalidatePath(`/cra/${craId}`)
+  revalidatePath('/saisie')
+  retour(craId, r.ok ? undefined : `ANNULATION_${r.raison}`)
+}
+
+export async function copierLienClient(
+  _prev: { url: string } | { erreur: string } | null,
+  formData: FormData,
+): Promise<{ url: string } | { erreur: string }> {
+  const user = await requireUser()
+  const craId = String(formData.get('craId'))
+  const r = await nouveauLienManuel(user.id, craId, await origineDeLaRequete())
+  return r.ok ? { url: r.url } : { erreur: 'Aucun envoi en attente de signature sur ce CRA.' }
 }
