@@ -104,4 +104,23 @@ describe('annulerEnvoi', () => {
     expect(actions).toContain('signature.annulee')
     expect(actions).toContain('cra.rouvert')
   })
+
+  it('reprise : requête déjà ANNULE mais CRA encore ENVOYE, sans rappeler le prestataire', async () => {
+    await prisma.signatureRequest.update({ where: { craId }, data: { status: 'ANNULE' } })
+    await prisma.lienClient.updateMany({ where: { craId }, data: { revokedAt: new Date() } })
+    connector.faireEchouerAnnulation('panne')
+    const r = await annulerEnvoi(userId, craId, { connector, mailer })
+    expect(r).toEqual({ ok: true })
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('BROUILLON')
+    expect(connector.annulations).toEqual([])
+  })
+
+  it('deux appels simultanés : un succès, un TRANSITION_IMPOSSIBLE, aucune levée', async () => {
+    const rs = await Promise.all([
+      annulerEnvoi(userId, craId, { connector, mailer }),
+      annulerEnvoi(userId, craId, { connector, mailer }),
+    ])
+    expect(rs.filter((r) => r.ok)).toHaveLength(1)
+    expect(rs.find((r) => !r.ok)).toMatchObject({ raison: 'TRANSITION_IMPOSSIBLE' })
+  })
 })

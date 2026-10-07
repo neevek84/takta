@@ -1,5 +1,5 @@
 import { prisma } from '@/db/client'
-import { canTransition } from '@/core/cra/state-machine'
+import { canTransition, InvalidTransitionError } from '@/core/cra/state-machine'
 import { libelleMois } from '@/core/cra/document'
 import { gabaritAnnulationClient } from '@/core/notify/signature'
 import type { SignatureConnector } from '@/core/signature/connector'
@@ -39,7 +39,10 @@ export async function annulerEnvoi(
   if (cra === null || !canTransition(cra.status as CraStatus, 'ANNULER_ENVOI')) return echec('TRANSITION_IMPOSSIBLE')
 
   const demande = cra.signatureRequest
-  if (demande !== null && demande.externalId !== '') {
+  // Déjà annulée (reprise après un échec de la transition) : l'enveloppe est
+  // retirée et les liens révoqués, il ne reste que la transition.
+  const dejaAnnulee = demande !== null && demande.status === 'ANNULE'
+  if (demande !== null && !dejaAnnulee && demande.externalId !== '') {
     const connector = options.connector !== undefined ? options.connector : await getSignatureConnector()
     if (connector === null) return echec('CONNECTEUR_EN_ECHEC')
     try {
@@ -50,16 +53,29 @@ export async function annulerEnvoi(
   }
 
   const maintenant = new Date()
-  if (demande !== null) {
-    // Dans cet ordre : l'envoi clos doit recopier l'état ANNULE.
-    await prisma.$transaction(async (tx) => {
-      await tx.signatureRequest.update({ where: { craId }, data: { status: 'ANNULE', completedAt: maintenant } })
+  if (demande !== null && !dejaAnnulee) {
+    // Dans cet ordre : l'envoi clos doit recopier l'état ANNULE. Le passage à
+    // ANNULE est conditionnel : de deux appels simultanés, un seul le réussit.
+    const gagne = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.signatureRequest.updateMany({
+        where: { craId, status: { not: 'ANNULE' } },
+        data: { status: 'ANNULE', completedAt: maintenant },
+      })
+      if (count === 0) return false
       await cloreEnvoiCourant(tx, craId, maintenant)
       await revoquerLiensDuCra(tx, craId, maintenant)
+      return true
     })
+    if (!gagne) return echec('TRANSITION_IMPOSSIBLE')
   }
 
-  await transitionCra(userId, craId, 'ANNULER_ENVOI')
+  try {
+    await transitionCra(userId, craId, 'ANNULER_ENVOI')
+  } catch (e) {
+    // Un double clic : l'autre appel a déjà rouvert le CRA.
+    if (e instanceof InvalidTransitionError) return echec('TRANSITION_IMPOSSIBLE')
+    throw e
+  }
   await appendAudit({
     ...(await actorOf(userId)),
     action: 'signature.annulee',
