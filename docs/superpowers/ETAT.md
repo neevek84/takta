@@ -31,7 +31,7 @@ Elles ont été prises explicitement et coûteraient cher à défaire.
 | **Synchronisation unidirectionnelle** | L'application est maître du CRA. Pas de bidirectionnel, c'est là que ce type d'outil meurt |
 | **La conversion prévisionnel → réalisé n'est jamais automatique** | Ce serait du temps engageant créé sans décision humaine |
 | **Une saisie porte son facteur de conversion, figé à l'écriture** | Un CRA validé est un document signé ; son contenu ne peut pas changer après signature |
-| **Pas de portail client** | Le client reçoit un document et le signe. Tout un sous-système disparaît |
+| **Pas de compte client** | Le client reçoit un lien par CRA, s'identifie par un code à usage unique, voit et signe ce document-là, rien d'autre. Ni inscription, ni mot de passe, ni espace client à maintenir (affiné au lot 3b, qui a remplacé « pas de portail client ») |
 | **Aucun montant sur le CRA** | Le document atteste du temps, pas d'une somme |
 
 ---
