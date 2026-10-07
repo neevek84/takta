@@ -271,6 +271,29 @@ describe('accepter — le garde-fou', () => {
     expect((await listOpenConflicts(userId)).length).toBe(1)
   })
 
+  it("est refusé quand c'est le mois d'accueil qui est validé — aussi sur un mois ENVOYE (lot 3b)", async () => {
+    const { conflictId, entryId } = await divergence({
+      startLocal: '2026-04-02T09:00:00',
+      endLocal: '2026-04-02T13:00:00',
+    })
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-04-01T00:00:00Z'), status: 'ENVOYE' },
+    })
+
+    const r = await resolveConflict({ userId, conflictId, resolution: 'ACCEPTER' })
+    expect(r).toMatchObject({ ok: false, reason: 'VERROUILLE' })
+
+    // Rien n'a été posé dans le mois validé, et la saisie n'a pas bougé.
+    expect(
+      await prisma.timeEntry.count({
+        where: { userId, date: new Date('2026-04-02T00:00:00.000Z') },
+      }),
+    ).toBe(0)
+    const entry = await prisma.timeEntry.findUniqueOrThrow({ where: { id: entryId } })
+    expect(entry.date).toEqual(new Date('2026-03-12T00:00:00.000Z'))
+    expect((await listOpenConflicts(userId)).length).toBe(1)
+  })
+
   it('donne un motif en français', async () => {
     const { conflictId } = await divergence({
       startLocal: '2026-03-18T14:00:00',

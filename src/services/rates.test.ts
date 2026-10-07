@@ -65,6 +65,20 @@ describe('réétalonnage', () => {
     expect(e.minutesParJour).toBe(480)
   })
 
+  it('ne touche JAMAIS une saisie d un mois validé — aussi sur un mois ENVOYE (lot 3b)', async () => {
+    await saveEntry({ userId, lineId, date: '2026-07-02', minutes: 480, kind: 'REALISE' })
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-07-01T00:00:00Z'), status: 'ENVOYE' },
+    })
+    await updateSettings({ minutesParJour: 420 })
+
+    const r = await recalibrateOpenMonths(userId)
+    expect(r).toEqual({ recalibrees: 0, sauteesVerrouillees: 1 })
+
+    const e = await prisma.timeEntry.findFirstOrThrow({ where: { userId } })
+    expect(e.minutesParJour).toBe(480)
+  })
+
   it('traite le mois ouvert et saute le mois validé du même utilisateur', async () => {
     await saveEntry({ userId, lineId, date: '2026-07-03', minutes: 480, kind: 'REALISE' })
     await saveEntry({ userId, lineId, date: '2026-08-03', minutes: 480, kind: 'REALISE' })

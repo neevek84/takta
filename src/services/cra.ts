@@ -32,6 +32,10 @@ const ACTION_PAR_TRANSITION: Record<CraTransition, AuditAction> = {
   VALIDER: 'cra.valide',
   REFUSER: 'cra.refuse',
   ROUVRIR: 'cra.rouvert',
+  // Un renvoi est un envoi, une annulation est une réouverture : le catalogue
+  // public n'a pas à apprendre deux noms pour deux gestes qu'il connaît déjà.
+  RENVOYER: 'cra.envoye',
+  ANNULER_ENVOI: 'cra.rouvert',
 }
 
 export interface CraSignatureView {

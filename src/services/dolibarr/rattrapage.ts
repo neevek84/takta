@@ -23,7 +23,7 @@
  * c'est le drainage qui rejouera.
  */
 import { prisma } from '@/db/client'
-import { isLocked } from '@/core/cra/state-machine'
+import { isArrete } from '@/core/cra/state-machine'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import type { CraStatus } from '@/core/types'
 import { getInstanceCredential } from '@/services/credentials'
@@ -73,9 +73,10 @@ export async function rattraperCraValides(missionId?: string): Promise<number> {
     where: { missionId: { in: liens.map((l) => l.entityId) } },
     select: { id: true, userId: true, status: true },
   })
-  // Le verrou vient du noyau, jamais d'une comparaison recopiée : pousser un
-  // brouillon enverrait du temps qui n'est pas arrêté.
-  const valides = cras.filter((c) => isLocked(c.status as CraStatus))
+  // L'arrêt vient du noyau, jamais d'une comparaison recopiée : pousser un
+  // brouillon, ou un CRA envoyé qui attend la signature, enverrait du temps
+  // qui n'est pas arrêté.
+  const valides = cras.filter((c) => isArrete(c.status as CraStatus))
   if (valides.length === 0) return 0
 
   const ids = valides.map((c) => c.id)

@@ -135,8 +135,11 @@ const LIBELLES: Record<CraTransition, string> = {
   VALIDER: 'Marquer validé',
   REFUSER: 'Marquer refusé',
   ROUVRIR: 'Rouvrir',
+  RENVOYER: 'Marquer renvoyé',
+  ANNULER_ENVOI: 'Annuler l’envoi',
 }
-const TOUTES: CraTransition[] = ['ENVOYER', 'VALIDER', 'REFUSER', 'ROUVRIR']
+// Comme la page : `ANNULER_ENVOI` a son bouton dédié, pas de bouton générique.
+const TOUTES: CraTransition[] = ['ENVOYER', 'VALIDER', 'REFUSER', 'ROUVRIR', 'RENVOYER']
 
 describe('transitions offertes', () => {
   afterEach(cleanup)

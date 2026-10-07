@@ -215,12 +215,11 @@ describe('effet', () => {
     const rejeu = await recevoir(corps)
     expect(rejeu).toEqual({ ok: true, effet: 'REJOUE', craId: null })
 
-    // Le mois n'a pas été reverrouillé par une livraison déjà traitée.
+    // Le CRA n'a pas été revalidé par une livraison déjà traitée. (Depuis le
+    // lot 3b `ENVOYE` ferme lui-même la saisie : « le mois reste modifiable »
+    // ne distingue plus rien, seul le statut porte la preuve.)
     const cra = await prisma.cra.findUniqueOrThrow({ where: { id: craId } })
     expect(cra.status).toBe('ENVOYE')
-    expect(
-      (await saveEntry({ userId, lineId, date: '2026-06-07', minutes: 480, kind: 'REALISE' })).ok,
-    ).toBe(true)
   })
 
   it('un rejeu ne consigne pas un second événement', async () => {

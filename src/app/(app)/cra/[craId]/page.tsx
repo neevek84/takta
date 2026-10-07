@@ -41,9 +41,13 @@ const LABELS: Record<CraTransition, string> = {
   VALIDER: 'Marquer validé',
   REFUSER: 'Marquer refusé',
   ROUVRIR: 'Rouvrir',
+  RENVOYER: 'Marquer renvoyé',
+  ANNULER_ENVOI: 'Annuler l’envoi',
 }
 
-const ALL: CraTransition[] = ['ENVOYER', 'VALIDER', 'REFUSER', 'ROUVRIR']
+// `ANNULER_ENVOI` n'est pas une transition manuelle : son bouton dédié
+// (tâche 10) annule aussi l'enveloppe chez le prestataire.
+const ALL: CraTransition[] = ['ENVOYER', 'VALIDER', 'REFUSER', 'ROUVRIR', 'RENVOYER']
 
 export default async function CraDetailPage({
   params,
