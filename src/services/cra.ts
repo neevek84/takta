@@ -6,7 +6,7 @@ import {
 } from './cra-previsionnel'
 import { missionsArmeesPourDolibarr } from './dolibarr/push'
 import { syntheseParMission, SYNTHESE_VIDE, type SyntheseCra } from './cra-synthese'
-import { applyTransition, type CraTransition } from '@/core/cra/state-machine'
+import { applyTransition, InvalidTransitionError, type CraTransition } from '@/core/cra/state-machine'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import type { SignatureStatus } from '@/core/signature/connector'
 import type { CraStatus } from '@/core/types'
@@ -329,11 +329,19 @@ export async function transitionCra(
 
   let previsionnelAnnule = 0
   const row = await prisma.$transaction(async (tx) => {
-    const updated = await tx.cra.update({
-      where: { id: craId },
+    // **Écriture gardée sur l'état lu.** La lecture précède la transaction :
+    // deux appels concurrents (confirmation de la page client, webhook,
+    // balayage) liraient tous deux ENVOYE et valideraient deux fois — deux
+    // `cra.valide`, deux mises en file. La garde `status: current.status` fait
+    // de l'écriture un compare-and-set : le second ne trouve plus la ligne
+    // dans l'état attendu, et sa transition est impossible — ce qu'elle est
+    // devenue.
+    const { count } = await tx.cra.updateMany({
+      where: { id: craId, status: current.status },
       data: { status: next },
-      include: WITH_MISSION,
     })
+    if (count === 0) throw new InvalidTransitionError(current.status as CraStatus, t)
+    const updated = await tx.cra.findUniqueOrThrow({ where: { id: craId }, include: WITH_MISSION })
 
     // La mise en file est transactionnelle avec le changement d'état, dans les
     // deux sens. Un CRA validé sans ligne de file, c'est un mois verrouillé

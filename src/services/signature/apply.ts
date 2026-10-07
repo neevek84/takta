@@ -1,5 +1,5 @@
 import { prisma } from '@/db/client'
-import { canTransition, type CraTransition } from '@/core/cra/state-machine'
+import { canTransition, InvalidTransitionError, type CraTransition } from '@/core/cra/state-machine'
 import type { SignatureConnector, SignatureStatus } from '@/core/signature/connector'
 import type { CraStatus } from '@/core/types'
 import type { AuditAction } from '@/core/audit/events'
@@ -17,6 +17,9 @@ import { nomFichierCra } from '@/services/cra-pdf'
 import { envoyerCourriel } from './courriels'
 
 export type SignatureEffet = 'VALIDE' | 'REFUSE' | 'EXPIRE' | 'AUCUN'
+
+/** Les états d'une demande que le retour du prestataire peut encore trancher. */
+const STATUTS_RECLAMABLES = ['EN_ATTENTE', 'EXPIRE']
 
 const TRANSITION_PAR_STATUT: Partial<Record<SignatureStatus, CraTransition>> = {
   SIGNE: 'VALIDER',
@@ -57,8 +60,17 @@ const EVENEMENT_PAR_STATUT: Partial<Record<SignatureStatus, AuditAction>> = {
  * charge utile. Le propriétaire est relu sur la ligne du CRA, puisque c'est
  * lui que `transitionCra` exige — le scope reste donc entier.
  *
- * Idempotent par construction : si la transition n'est pas franchissable
- * depuis l'état courant — parce qu'elle l'a déjà été — l'effet est `AUCUN`.
+ * **Idempotent et sûr en concurrence.** La confirmation de la page client, un
+ * ou plusieurs webhooks et le balayage peuvent arriver au même instant. Deux
+ * verrous, l'un après l'autre, font qu'un seul appel produit les effets :
+ *
+ * 1. **La demande est réclamée** par un compare-and-set (`updateMany` gardé
+ *    sur l'état, l'enveloppe et le statut lus) **avant tout effet** —
+ *    téléchargement, journal, courriels. Le second appel ne la trouve plus
+ *    dans l'état attendu et rend `AUCUN`.
+ * 2. **`transitionCra` garde son écriture** sur l'état du CRA. Si le CRA a
+ *    quitté ENVOYE entre-temps (transition manuelle), elle lève
+ *    `InvalidTransitionError` : on rend `AUCUN`, sans courriel ni journal.
  */
 export async function applySignatureStatus(args: {
   craId: string
@@ -81,7 +93,7 @@ export async function applySignatureStatus(args: {
   // correspondance en amont.
   const demande = await prisma.signatureRequest.findUnique({
     where: { craId: args.craId },
-    select: { externalId: true, status: true },
+    select: { externalId: true, status: true, completedAt: true, motifRefus: true },
   })
   if (demande !== null && demande.externalId !== '' && demande.externalId !== args.externalId) {
     return 'AUCUN'
@@ -93,32 +105,76 @@ export async function applySignatureStatus(args: {
   if (args.statut === 'EXPIRE') {
     // L'expiration est un fait du prestataire, pas une décision du client :
     // le CRA reste ENVOYE et remonte dans la liste des CRA en souffrance.
-    await marquerDemande(args.craId, { status: 'EXPIRE' })
-    return 'EXPIRE'
+    // Gardée elle aussi : une expiration tardive n'écrase jamais une demande
+    // déjà signée ou refusée.
+    if (demande === null) return 'EXPIRE'
+    const { count } = await prisma.signatureRequest.updateMany({
+      where: { craId: args.craId, status: { in: STATUTS_RECLAMABLES } },
+      data: { status: 'EXPIRE' },
+    })
+    return count === 1 ? 'EXPIRE' : 'AUCUN'
   }
 
   const transition = TRANSITION_PAR_STATUT[args.statut]
   if (transition === undefined) return 'AUCUN'
 
+  // Pré-contrôle sur une lecture qui peut être périmée : il évite de réclamer
+  // une demande pour un CRA qui n'est plus franchissable (validé ou refusé à
+  // la main — sa demande reste alors intacte, ce que le balayage attend). La
+  // garantie, elle, vient des deux compare-and-set qui suivent.
   const statut = cra.status as CraStatus
   if (!canTransition(statut, transition)) return 'AUCUN'
 
+  // 1. La réclamation. Une demande déjà achevée (SIGNE, REFUSE) ne l'est pas :
+  //    un rejeu — ou une relivraison après un ROUVRIR puis ENVOYER manuels,
+  //    qui ne passent pas par une nouvelle enveloppe — ne revalide jamais un
+  //    mois sur une signature donnée à un document antérieur.
+  if (demande !== null) {
+    if (!STATUTS_RECLAMABLES.includes(demande.status)) return 'AUCUN'
+    const { count } = await prisma.signatureRequest.updateMany({
+      where: { craId: args.craId, status: demande.status, externalId: demande.externalId },
+      data: {
+        status: args.statut,
+        completedAt: maintenant,
+        ...(args.statut === 'REFUSE' ? { motifRefus: (args.motifRefus ?? '').trim() } : {}),
+      },
+    })
+    if (count !== 1) return 'AUCUN'
+  }
+
+  // 2. La transition, gardée sur l'état du CRA.
+  try {
+    await transitionCra(cra.userId, args.craId, transition)
+  } catch (err) {
+    if (!(err instanceof InvalidTransitionError)) throw err
+    // Le CRA a quitté ENVOYE entre la lecture et l'écriture : c'est une
+    // transition manuelle qui l'a emporté. **La demande est restaurée** à ce
+    // qu'elle était — gardé sur ce qu'on vient d'y écrire — pour qu'elle
+    // raconte la même histoire que le CRA : rien n'a été signé ni refusé
+    // *par ce chemin*. C'est aussi l'état que laisse le pré-contrôle quand la
+    // transition manuelle arrive plus tôt.
+    if (demande !== null) {
+      await prisma.signatureRequest.updateMany({
+        where: { craId: args.craId, status: args.statut, completedAt: maintenant },
+        data: {
+          status: demande.status,
+          completedAt: demande.completedAt,
+          motifRefus: demande.motifRefus,
+        },
+      })
+    }
+    return 'AUCUN'
+  }
+
+  // 3. Les effets, une seule fois. L'archive **avant** les courriels : le PDF
+  //    signé s'y joint s'il a pu être téléchargé.
   if (args.statut === 'SIGNE') {
     await archiverSiPossible(args.craId, args.externalId, args.connector ?? null)
   }
 
-  await marquerDemande(args.craId, {
-    status: args.statut,
-    completedAt: maintenant,
-    ...(args.statut === 'REFUSE' ? { motifRefus: (args.motifRefus ?? '').trim() } : {}),
-  })
-
-  await transitionCra(cra.userId, args.craId, transition)
-
-  // Après la transition, et sous la garde d'idempotence qui précède : un rejeu
-  // rend `AUCUN` bien avant d'arriver ici, donc aucune seconde entrée. Un
-  // abonné qui facture sur `signature.recue` ne facture pas deux fois le même
-  // mois parce que le prestataire a relivré son webhook.
+  // Un abonné qui facture sur `signature.recue` ne facture pas deux fois le
+  // même mois parce que le prestataire a relivré son webhook : seul l'appel
+  // qui a réclamé la demande et franchi la transition arrive ici.
   await appendAudit({
     ...ACTEUR_SYSTEME,
     action: EVENEMENT_PAR_STATUT[args.statut]!,
@@ -127,20 +183,9 @@ export async function applySignatureStatus(args: {
     payload: { statut: args.statut, statutAvant: statut },
   })
 
-  // Après tout le reste, et sous la garde d'idempotence : un rejeu rend
-  // `AUCUN` bien avant d'arriver ici, donc pas de second courriel.
   await notifierIssue(args.craId, args.statut === 'SIGNE' ? 'VALIDE' : 'REFUSE', args.mailer ?? null)
 
   return args.statut === 'SIGNE' ? 'VALIDE' : 'REFUSE'
-}
-
-async function marquerDemande(
-  craId: string,
-  data: { status: string; completedAt?: Date; motifRefus?: string },
-): Promise<void> {
-  // `updateMany` plutôt que `update` : une transition manuelle a pu faire
-  // arriver le CRA ici sans qu'aucune demande n'ait jamais été ouverte.
-  await prisma.signatureRequest.updateMany({ where: { craId }, data })
 }
 
 /**

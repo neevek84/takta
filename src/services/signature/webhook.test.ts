@@ -401,4 +401,36 @@ describe('lot 3b — le webhook est un signal, pas une source de vérité', () =
     })
     expect(recues).toBe(1)
   })
+
+  // Revue finale lot 3b : la même chose, mais au même instant — deux
+  // livraisons du prestataire et une confirmation de la page client.
+  it('webhooks et confirmation de page CONCURRENTS : un seul effet, deux courriels, aucune levée', async () => {
+    connector.regler('ext-1', 'SIGNE')
+    await prisma.auditEvent.deleteMany({ where: { entityId: craId } })
+    const envoyes: string[] = []
+    const mailer: Mailer = async (m) => {
+      envoyes.push(m.to)
+    }
+
+    const issues = await Promise.allSettled([
+      recevoirSecret(charge('DOCUMENT_COMPLETED', 'ext-1'), SECRET, mailer),
+      handleSignatureWebhook({
+        // Un autre événement de la même enveloppe : il passe la déduplication.
+        rawBody: charge('DOCUMENT_SIGNED', 'ext-1'),
+        secretHeader: SECRET,
+        signatureHeader: '',
+        secret: SECRET,
+        connector,
+        mailer,
+      }),
+      refreshSignatureStatus(userId, craId, { connector, mailer }),
+    ])
+
+    expect(issues.every((i) => i.status === 'fulfilled')).toBe(true)
+    expect(envoyes).toHaveLength(2)
+    const actions = (await prisma.auditEvent.findMany({ where: { entityId: craId } })).map((e) => e.action)
+    expect(actions.filter((a) => a === 'signature.recue')).toHaveLength(1)
+    expect(actions.filter((a) => a === 'cra.valide')).toHaveLength(1)
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('VALIDE')
+  })
 })
