@@ -115,6 +115,27 @@ describe('annulerEnvoi', () => {
     expect(connector.annulations).toEqual([])
   })
 
+  // Revue finale lot 3b : un envoi hérité n'a son identifiant que dans
+  // ExternalLink — l'ignorer laissait l'enveloppe signable chez le prestataire.
+  it('ENVOI HÉRITÉ : annule l enveloppe connue par ExternalLink', async () => {
+    await prisma.signatureRequest.update({ where: { craId }, data: { externalId: '' } })
+    await prisma.externalLink.updateMany({ where: { entityId: craId }, data: { externalId: '42' } })
+    const r = await annulerEnvoi(userId, craId, { connector, mailer })
+    expect(r).toEqual({ ok: true })
+    expect(connector.annulations).toEqual(['42'])
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('BROUILLON')
+  })
+
+  it('ENVOI EXPIRÉ : n appelle pas le prestataire, et son refus ne bloque rien', async () => {
+    await prisma.signatureRequest.update({ where: { craId }, data: { status: 'EXPIRE' } })
+    connector.faireEchouerAnnulation('enveloppe déjà expirée')
+    const r = await annulerEnvoi(userId, craId, { connector, mailer })
+    expect(r).toEqual({ ok: true })
+    expect(connector.annulations).toEqual([])
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('BROUILLON')
+    expect(await prisma.signatureEnvoiClos.findMany({ where: { craId } })).toMatchObject([{ status: 'ANNULE' }])
+  })
+
   it('deux appels simultanés : un succès, un TRANSITION_IMPOSSIBLE, aucune levée', async () => {
     const rs = await Promise.all([
       annulerEnvoi(userId, craId, { connector, mailer }),

@@ -8,7 +8,7 @@ import { actorOf, appendAudit } from '@/services/audit'
 import { transitionCra } from '@/services/cra'
 import type { Mailer } from '@/services/notify'
 import { envoyerCourriel } from './courriels'
-import { cloreEnvoiCourant } from './envois'
+import { cloreEnvoiCourant, enveloppeDeLEnvoi } from './envois'
 import { revoquerLiensDuCra } from './lien-client'
 import { getSignatureConnector } from './registry'
 
@@ -42,13 +42,22 @@ export async function annulerEnvoi(
   // Déjà annulée (reprise après un échec de la transition) : l'enveloppe est
   // retirée et les liens révoqués, il ne reste que la transition.
   const dejaAnnulee = demande !== null && demande.status === 'ANNULE'
-  if (demande !== null && !dejaAnnulee && demande.externalId !== '') {
-    const connector = options.connector !== undefined ? options.connector : await getSignatureConnector()
-    if (connector === null) return echec('CONNECTEUR_EN_ECHEC')
-    try {
-      await connector.annuler(demande.externalId)
-    } catch {
-      return echec('CONNECTEUR_EN_ECHEC')
+  // Une enveloppe expirée n'est plus signable : la retirer n'apporte rien, et
+  // un refus du prestataire (« déjà expirée ») ne doit pas bloquer le
+  // consultant sur un CRA que plus personne ne peut signer.
+  const expiree = demande !== null && demande.status === 'EXPIRE'
+  if (demande !== null && !dejaAnnulee && !expiree) {
+    // Un envoi hérité (antérieur au lot 3b) n'a son identifiant que dans
+    // `ExternalLink` : sans ce repli, l'enveloppe resterait signable.
+    const externalId = await enveloppeDeLEnvoi(demande)
+    if (externalId !== null) {
+      const connector = options.connector !== undefined ? options.connector : await getSignatureConnector()
+      if (connector === null) return echec('CONNECTEUR_EN_ECHEC')
+      try {
+        await connector.annuler(externalId)
+      } catch {
+        return echec('CONNECTEUR_EN_ECHEC')
+      }
     }
   }
 

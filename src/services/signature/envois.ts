@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/db/client'
+import { ENTITY_CRA } from './constants'
 
 export type EnvoiStatut = 'EN_ATTENTE' | 'SIGNE' | 'REFUSE' | 'EXPIRE' | 'ANNULE'
 
@@ -13,6 +14,34 @@ export interface EnvoiVue {
   empreinte: string
   /** l'envoi en cours, celui que porte `SignatureRequest` */
   enCours: boolean
+}
+
+/**
+ * L'identifiant de l'enveloppe de l'envoi en cours, chez le prestataire.
+ *
+ * Un envoi antérieur au lot 3b n'a pas d'`externalId` sur sa demande : son
+ * identifiant n'est que dans `ExternalLink`. Toute opération sur l'enveloppe
+ * (relance, annulation) passe par ici, sans quoi l'envoi hérité serait
+ * silencieusement ignoré — et, pour une annulation, resterait signable.
+ * `null` : aucune enveloppe connue.
+ */
+export async function enveloppeDeLEnvoi(demande: {
+  craId: string
+  provider: string
+  externalId: string
+}): Promise<string | null> {
+  if (demande.externalId !== '') return demande.externalId
+  const lien = await prisma.externalLink.findUnique({
+    where: {
+      entityType_entityId_provider: {
+        entityType: ENTITY_CRA,
+        entityId: demande.craId,
+        provider: demande.provider,
+      },
+    },
+    select: { externalId: true },
+  })
+  return lien === null || lien.externalId === '' ? null : lien.externalId
 }
 
 /**

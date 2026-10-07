@@ -5,8 +5,8 @@ import { libelleMois } from '@/core/cra/document'
 import { gabaritRelanceClient } from '@/core/notify/signature'
 import type { Mailer } from '@/services/notify'
 import { getSettings } from '@/services/settings'
-import { ENTITY_CRA } from './constants'
 import { envoyerCourriel } from './courriels'
+import { enveloppeDeLEnvoi } from './envois'
 import { creerLienClient } from './lien-client'
 import { getSignatureConnector } from './registry'
 
@@ -171,10 +171,7 @@ export async function runSignatureReminders(
         rapport.sansConnecteur += 1
         continue
       }
-      const externalId =
-        demande.externalId !== ''
-          ? demande.externalId
-          : await lienExterne(demande.craId, demande.provider)
+      const externalId = await enveloppeDeLEnvoi(demande)
       if (externalId === null) {
         rapport.echecs += 1
         continue
@@ -205,12 +202,4 @@ export async function runSignatureReminders(
   }
 
   return rapport
-}
-
-async function lienExterne(craId: string, provider: string): Promise<string | null> {
-  const lien = await prisma.externalLink.findUnique({
-    where: { entityType_entityId_provider: { entityType: ENTITY_CRA, entityId: craId, provider } },
-    select: { externalId: true },
-  })
-  return lien?.externalId ?? null
 }
