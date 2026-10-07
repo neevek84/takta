@@ -121,8 +121,29 @@ describe('runSignatureReminders', () => {
     expect(await prisma.lienClient.count({ where: { craId } })).toBe(0)
   })
 
+  it('sans lien ouvert pour l envoi : échec compté, ni lien ni courriel', async () => {
+    await demande({ origine: 'https://cra.test', signataireEmail: 'claire@client.test' })
+    await prisma.lienClient.create({
+      data: { craId, numero: 1, jetonEmpreinte: 'revoque', jetonSignataire: 'sig-1', revokedAt: new Date() },
+    })
+    let envoyes = 0
+    const r = await runSignatureReminders({
+      now: APRES_ECHEANCE,
+      connector: createFakeSignatureConnector(),
+      mailer: async () => {
+        envoyes += 1
+      },
+    })
+    expect(r.echecs).toBe(1)
+    expect(envoyes).toBe(0)
+    expect(await prisma.lienClient.count({ where: { craId } })).toBe(1)
+  })
+
   it('un courriel de relance non parti ne consomme pas de relance', async () => {
     await demande({ origine: 'https://cra.test', signataireEmail: 'claire@client.test' })
+    await prisma.lienClient.create({
+      data: { craId, numero: 1, jetonEmpreinte: 'initial', jetonSignataire: 'sig-1' },
+    })
     const r = await runSignatureReminders({
       now: APRES_ECHEANCE,
       connector: createFakeSignatureConnector(),
@@ -132,6 +153,7 @@ describe('runSignatureReminders', () => {
     })
     expect(r.echecs).toBe(1)
     expect((await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })).relances).toBe(0)
+    expect(await prisma.lienClient.count({ where: { craId } })).toBe(1)
   })
 
   it('relance une demande dont le délai est écoulé', async () => {

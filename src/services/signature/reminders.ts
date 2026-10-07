@@ -1,5 +1,6 @@
 import { prisma } from '@/db/client'
 import type { SignatureConnector } from '@/core/signature/connector'
+import { empreinteJeton } from '@/core/auth/reinitialisation'
 import { libelleMois } from '@/core/cra/document'
 import { gabaritRelanceClient } from '@/core/notify/signature'
 import type { Mailer } from '@/services/notify'
@@ -127,12 +128,19 @@ export async function runSignatureReminders(
       const ligne = await prisma.lienClient.findFirst({
         where: { craId: demande.craId, numero: demande.numero, revokedAt: null },
         select: { jetonSignataire: true },
+        orderBy: { createdAt: 'desc' },
       })
+      if (ligne === null) {
+        // Aucun lien ouvert pour cet envoi : un lien neuf n'aurait pas de jeton
+        // prestataire. On ne devine rien, on le compte.
+        rapport.echecs += 1
+        continue
+      }
       const jeton = await prisma.$transaction((tx) =>
         creerLienClient(tx, {
           craId: demande.craId,
           numero: demande.numero,
-          jetonSignataire: ligne?.jetonSignataire ?? '',
+          jetonSignataire: ligne.jetonSignataire,
         }),
       )
       const mois = demande.cra.month.toISOString().slice(0, 7)
@@ -150,6 +158,11 @@ export async function runSignatureReminders(
         mailer: args.mailer ?? null,
       })
       relancee = r.envoye
+      if (!relancee) {
+        // Le courriel n'est pas parti : le lien neuf n'a servi à personne. Le
+        // laisser ouvert en accumulerait un de plus à chaque passage en panne.
+        await prisma.lienClient.deleteMany({ where: { jetonEmpreinte: empreinteJeton(jeton) } })
+      }
     } else {
       // Envoi hérité : distribué par courriel du prestataire, c'est lui qui
       // relance quand on renouvelle son lien.
