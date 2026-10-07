@@ -194,6 +194,25 @@ function contenu(
   }
 }
 
+/** Une autre prestation saisie ce jour-là, telle que la case la détaille. */
+type AutreDuJour = { line: LineForGrid; valeur: string; previsionnel: boolean }
+
+const AUCUNE_AUTRE: AutreDuJour[] = []
+
+/**
+ * La quantité d'une autre prestation sur un jour, dans son unité de vente —
+ * le chemin exact de `quantiteAffichee` dans `MonthGrid` : en heures les
+ * minutes s'additionnent, en journées chaque saisie se convertit sous son
+ * facteur figé.
+ */
+function quantiteAutre(line: LineForGrid, saisies: readonly MinutesAuFacteur[]): string {
+  if (line.displayUnit === 'HEURE') {
+    const minutes = saisies.reduce((somme, s) => somme + s.minutes, 0)
+    return formatQuantity(minutes, 'HEURE', line.minutesParJour)
+  }
+  return formatJours(centiemesParFacteur(saisies))
+}
+
 function description(etat: CellState, slots: readonly Slot[]): string {
   switch (etat.kind) {
     case 'VIDE':
@@ -373,21 +392,45 @@ export function MonthCalendar({
     [optimiste, saisiesParDate, line.minutesParJour],
   )
 
-  // Les autres prestations ne servent qu'à voir si un jour est déjà pris
-  // ailleurs : on n'a besoin que de leur présence, jamais de leur détail.
+  // Les autres prestations, avec leur quantité du jour : la case dit le détail
+  // de la journée — ce que le tableau multi-CRA montre sur une ligne par
+  // prestation —, pas seulement que le jour est déjà pris ailleurs. Les
+  // saisies se regroupent d'abord par prestation, puis se convertissent par
+  // `quantiteAutre`, le même chemin que le tableau.
   const autresParDate = useMemo(() => {
-    if (!toutLeMois) return new Map<string, LineForGrid[]>()
+    if (!toutLeMois) return new Map<string, AutreDuJour[]>()
 
     const parId = new Map(autresLignes.map((l) => [l.id, l]))
-    const parDate = new Map<string, LineForGrid[]>()
+    const parDate = new Map<string, Map<string, { saisies: MinutesAuFacteur[]; kinds: TimeEntryKind[] }>>()
     for (const e of entries) {
-      const autre = parId.get(e.lineId)
-      if (autre === undefined || e.minutes === 0) continue
-      const bucket = parDate.get(e.date)
-      if (bucket === undefined) parDate.set(e.date, [autre])
-      else if (!bucket.some((l) => l.id === autre.id)) bucket.push(autre)
+      if (!parId.has(e.lineId) || e.minutes === 0) continue
+      let duJour = parDate.get(e.date)
+      if (duJour === undefined) parDate.set(e.date, (duJour = new Map()))
+      let cumul = duJour.get(e.lineId)
+      if (cumul === undefined) duJour.set(e.lineId, (cumul = { saisies: [], kinds: [] }))
+      cumul.saisies.push({ minutes: e.minutes, minutesParJour: e.minutesParJour })
+      cumul.kinds.push(e.kind)
     }
-    return parDate
+
+    const resultat = new Map<string, AutreDuJour[]>()
+    for (const [date, duJour] of parDate) {
+      // L'ordre des prestations, pas celui des saisies : d'un jour à l'autre,
+      // une même prestation reste à la même hauteur dans la case.
+      resultat.set(
+        date,
+        autresLignes
+          .filter((l) => duJour.has(l.id))
+          .map((l) => {
+            const cumul = duJour.get(l.id)!
+            return {
+              line: l,
+              valeur: quantiteAutre(l, cumul.saisies),
+              previsionnel: kindDeLaJournee(cumul.kinds) === 'PREVISIONNEL',
+            }
+          }),
+      )
+    }
+    return resultat
   }, [toutLeMois, autresLignes, entries])
 
   // `useDragSelect` applique une chaîne brute dans la vue tableau ; ici on ne
@@ -661,13 +704,14 @@ export function MonthCalendar({
                 previsionnel={previsionnelles.has(jour.date)}
                 occupe={occupes.has(jour.date)}
                 aujourdhui={jour.date === aujourdhui}
-                autres={autresParDate.get(jour.date) ?? []}
+                autres={autresParDate.get(jour.date) ?? AUCUNE_AUTRE}
                 selected={drag.isSelected(line.id, jour.date)}
                 position={positionDansLaPlage(i * 7 + j, clesDePlage)}
                 slots={slots}
                 line={line}
                 couleur={couleur}
                 densite={densite}
+                detaille={toutLeMois}
                 consommerGlissement={consommerGlissement}
                 onClick={() => void cliquer(jour.date)}
                 onFormulaire={() => onFormulaire(jour.date, etatDe(jour.date))}
@@ -764,6 +808,7 @@ function Case({
   line,
   couleur,
   densite,
+  detaille,
   consommerGlissement,
   onClick,
   onFormulaire,
@@ -782,8 +827,8 @@ function Case({
   occupe: boolean
   /** ce jour est le jour courant */
   aujourdhui: boolean
-  /** autres prestations occupant ce jour, en lecture seule */
-  autres: LineForGrid[]
+  /** autres prestations saisies ce jour, avec leur quantité — lecture seule */
+  autres: AutreDuJour[]
   selected: boolean
   /** place du jour dans sa suite de jours contigus au même état */
   position: Position
@@ -793,6 +838,13 @@ function Case({
   couleur: LineColor
   /** voir la documentation de la prop du même nom sur `MonthCalendar` */
   densite: 'NORMALE' | 'COMPACTE'
+  /**
+   * la case détaille la journée — portée « Toutes les prestations ». La
+   * quantité de la prestation saisie se lit alors même en densité compacte :
+   * les autres prestations affichent la leur juste dessous, et la taire
+   * laisserait le détail de la journée sans sa ligne principale.
+   */
+  detaille: boolean
   consommerGlissement: () => boolean
   onClick: () => void
   onFormulaire: () => void
@@ -834,8 +886,10 @@ function Case({
 
   // La densité compacte perd le libellé — les valeurs en heures ou en
   // créneau ne survivent pas à la réduction —, jamais l'aplat qui le remplace
-  // déjà à l'œil : `remplie` reste vrai, seul le chiffre disparaît.
-  const valeur = densite === 'COMPACTE' ? '' : contenu(etat, slots, line, saisies)
+  // déjà à l'œil : `remplie` reste vrai, seul le chiffre disparaît. Sauf quand
+  // la case détaille la journée : voir `detaille`.
+  const valeur =
+    densite === 'COMPACTE' && !detaille ? '' : contenu(etat, slots, line, saisies)
 
   // Le passé est froid, le futur est chaud : le prévisionnel prend sa teinte
   // au lieu d'emprunter celle de la prestation. Le tireté de la case porte la
@@ -988,18 +1042,33 @@ function Case({
           {valeur}
         </span>
       </button>
-      {autres.map((a) => {
+      {autres.map(({ line: a, valeur: quantite, previsionnel: prevu }) => {
         const couleur = colorForLine(a.id)
         return (
           <span
             key={a.id}
             data-testid={`autre-${a.id}-${jour.date}`}
-            title={`${a.label} — lecture seule`}
+            data-previsionnel={prevu ? 'true' : undefined}
+            title={`${a.label} — ${quantite}${prevu ? ' — Prévisionnel' : ''} — lecture seule`}
             // Coins hauts vifs : le libellé continue la case au lieu de
             // flotter sous elle. Le premier reprend le coin arrondi du bas.
-            className={`truncate rounded-b-sm border px-1 text-[10px] ${couleur.bg} ${couleur.text} ${couleur.border}`}
+            //
+            // Le libellé se tronque, jamais la quantité : dans une case de la
+            // vue 3 mois, « GU_2002… 0,5 » dit encore le détail de la
+            // journée, « GU_20026098-… » ne le dirait plus. Le prévisionnel se
+            // dit comme sur la case : tireté et italique, sans la teinte seule.
+            className={cn(
+              'flex items-baseline gap-1 rounded-b-sm border px-1 text-[10px] leading-tight',
+              couleur.bg,
+              couleur.text,
+              couleur.border,
+              prevu && 'border-dashed italic',
+            )}
           >
-            {a.label}
+            <span className="min-w-0 flex-1 truncate">{a.label}</span>
+            <span data-testid={`autre-valeur-${a.id}-${jour.date}`} className="shrink-0 tabular-nums">
+              {quantite}
+            </span>
           </span>
         )
       })}

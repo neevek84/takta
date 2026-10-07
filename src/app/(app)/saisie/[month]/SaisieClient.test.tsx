@@ -1056,6 +1056,17 @@ describe('SaisieClient — vue 3 mois', () => {
     expect(screen.getByTestId('piste-engagement-l1').className).toContain('w-full')
   })
 
+  // Comme au calendrier : la bascule de portée détaille chaque journée des
+  // trois grilles avec les autres prestations et leur quantité.
+  it('montre toutes les prestations dans les trois grilles', () => {
+    renderClient({ entries: deuxJournees })
+    ouvrirTroisMois()
+
+    expect(screen.queryByTestId('autre-l2-2026-03-12')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Toutes les prestations' }))
+    expect(screen.getByTestId('autre-valeur-l2-2026-03-12').textContent).toBe('1')
+  })
+
   // Vingt et une colonnes ne tiennent pas sur un téléphone. Le calendrier
   // reste la surface de saisie mobile.
   it('reste inatteignable sous md', () => {

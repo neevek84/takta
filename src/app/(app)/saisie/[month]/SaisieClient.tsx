@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { MonthGrid } from '@/components/grid/MonthGrid'
 import { MonthCalendar } from '@/components/calendar/MonthCalendar'
@@ -61,15 +61,6 @@ function bornesTroisMois(joursParMois: MonthDay[][]): { du: string; au: string }
  * JSX serait un tableau neuf à chaque rendu.
  */
 const AUCUN_TOTAL: LineEngagementTotals = []
-
-/**
- * La vue 3 mois n'offre pas la bascule « Toutes les prestations » : trois
- * grilles côte à côte, chacune déjà réduite pour tenir, n'ont pas la place
- * d'empiler en plus les libellés des autres prestations. `autresLignes` reste
- * donc vide, dans les trois grilles, tout le temps — une constante de module
- * pour la même raison que `AUCUN_TOTAL`.
- */
-const AUCUNE_AUTRE_LIGNE: LineForGrid[] = []
 
 /**
  * Centièmes de jour → jours, comme la charge et l'engagement les affichent
@@ -317,6 +308,12 @@ export function SaisieClient(props: {
   }, [props.lines])
 
   const ligne = props.lines.find((l) => l.id === lineId)
+  // Mémorisé : un tableau neuf à chaque rendu invaliderait, dans chacune des
+  // grilles, le regroupement des autres prestations par jour.
+  const autresLignes = useMemo(
+    () => props.lines.filter((l) => l.id !== lineId),
+    [props.lines, lineId],
+  )
 
   // La plage que `BoutonAgenda` vérifie : le mois affiché en calendrier et en
   // tableau, les trois mois en vue 3 mois — jamais recalculée, `props.days` et
@@ -468,10 +465,11 @@ export function SaisieClient(props: {
           {ecranLarge && <option value="TABLEAU">Tableau multi-CRA</option>}
         </Select>
 
-        {/* La bascule de portée ne vaut que pour le calendrier : elle n'est
-            transmise qu'à lui, et un réglage sans effet visible apprend à
-            l'utilisateur que l'interface ment. */}
-        {vue === 'CALENDRIER' && (
+        {/* La bascule de portée vaut pour le calendrier et la vue 3 mois —
+            les deux dessinent des cases `MonthCalendar` —, jamais pour le
+            tableau, qui montre déjà toutes les prestations : un réglage sans
+            effet visible apprend à l'utilisateur que l'interface ment. */}
+        {(vue === 'CALENDRIER' || vue === 'TROIS_MOIS') && (
           <>
             {/* Séparateur tracé par un filet et non par un aplat : un fond de
                 jeton doit porter une encre déclarée, ce que ce trait n'a pas. */}
@@ -640,7 +638,7 @@ export function SaisieClient(props: {
             line={ligne}
             slots={props.slots}
             entries={props.entries}
-            autresLignes={props.lines.filter((l) => l.id !== ligne.id)}
+            autresLignes={autresLignes}
             toutLeMois={toutLeMois}
             // Le calendrier est la seule surface de saisie sous la largeur
             // `md` : un marquage réservé au tableau n'existerait pas pour un
@@ -687,8 +685,8 @@ export function SaisieClient(props: {
                   line={ligne}
                   slots={props.slots}
                   entries={props.entries}
-                  autresLignes={AUCUNE_AUTRE_LIGNE}
-                  toutLeMois={false}
+                  autresLignes={autresLignes}
+                  toutLeMois={toutLeMois}
                   busyDates={occupations}
                   aujourdhui={props.aujourdhui}
                   onApply={handleApply}

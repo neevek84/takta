@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { formatQuantity } from '@/core/time/units'
 import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react'
 import { MonthCalendar } from './MonthCalendar'
 import { colorForLine, LINE_COLORS } from '@/core/saisie/colors'
@@ -588,6 +589,77 @@ describe('MonthCalendar', () => {
       // Et la grille garde la sienne : c'est le budget des 44 points.
       expect(gouttiere(grille)).toBeGreaterThan(0)
       expect(gouttiere(colonne)).toBeLessThan(gouttiere(grille))
+    })
+
+    // La case détaille la journée : chaque autre prestation dit sa quantité,
+    // comme une ligne du tableau multi-CRA, et non sa seule présence.
+    it('affiche la quantité du jour de chaque autre prestation', () => {
+      renderCalendar({
+        entries: [
+          ...surLigneB,
+          { ...surLigneB[0]!, id: 'b2', date: '2026-03-11', minutes: 240, startMinute: 540, endMinute: 780 },
+        ],
+        autresLignes: [ligneB],
+        toutLeMois: true,
+      })
+      expect(screen.getByTestId('autre-valeur-lB-2026-03-10').textContent).toBe('1')
+      expect(screen.getByTestId('autre-valeur-lB-2026-03-11').textContent).toBe('0,5')
+      expect(screen.getByTestId('autre-lB-2026-03-10').textContent).toContain('Consultant ITSM Nuit')
+    })
+
+    it('additionne les saisies d une autre prestation sur le même jour', () => {
+      renderCalendar({
+        entries: [
+          { ...surLigneB[0]!, id: 'b1', minutes: 240, startMinute: 540, endMinute: 780 },
+          { ...surLigneB[0]!, id: 'b2', minutes: 240, startMinute: 840, endMinute: 1080 },
+        ],
+        autresLignes: [ligneB],
+        toutLeMois: true,
+      })
+      expect(screen.getAllByTestId('autre-lB-2026-03-10')).toHaveLength(1)
+      expect(screen.getByTestId('autre-valeur-lB-2026-03-10').textContent).toBe('1')
+    })
+
+    it('affiche une autre prestation vendue à l heure en heures', () => {
+      renderCalendar({
+        entries: [{ ...surLigneB[0]!, lineId: 'l2', minutes: 180, startMinute: 540, endMinute: 720 }],
+        autresLignes: [ligneHeure],
+        toutLeMois: true,
+      })
+      expect(screen.getByTestId('autre-valeur-l2-2026-03-10').textContent).toBe(
+        formatQuantity(180, 'HEURE', 480),
+      )
+    })
+
+    // Le prévisionnel d'une autre prestation se dit comme celui de la case :
+    // par le tireté, jamais par la teinte seule.
+    it('marque le prévisionnel d une autre prestation par un tireté', () => {
+      renderCalendar({
+        entries: [{ ...surLigneB[0]!, kind: 'PREVISIONNEL' }],
+        autresLignes: [ligneB],
+        toutLeMois: true,
+      })
+      const badge = screen.getByTestId('autre-lB-2026-03-10')
+      expect(badge.getAttribute('data-previsionnel')).toBe('true')
+      expect(classes(badge)).toContain('border-dashed')
+    })
+
+    // En densité compacte, la portée « Toutes les prestations » rend sa
+    // quantité à la prestation saisie : le détail de la journée ne peut pas
+    // taire sa ligne principale quand les autres affichent la leur.
+    it('garde la quantité de la prestation saisie en densité compacte détaillée', () => {
+      renderCalendar({
+        densite: 'COMPACTE',
+        entries: [entree(), ...surLigneB],
+        autresLignes: [ligneB],
+        toutLeMois: true,
+      })
+      expect(valeurDu('2026-03-10').textContent).toBe('1')
+    })
+
+    it('tait la quantité en densité compacte sur la seule prestation', () => {
+      renderCalendar({ densite: 'COMPACTE', entries: [entree()], toutLeMois: false })
+      expect(valeurDu('2026-03-10').textContent).toBe('')
     })
 
     it('donne à une prestation la même couleur entre deux chargements', () => {
