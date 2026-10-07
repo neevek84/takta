@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import { prisma } from '@/db/client'
+import { CODE_ESSAIS_MAX } from '@/core/signature/code-client'
 import { createClient } from '@/services/clients'
 import { createMission, createLine } from '@/services/missions'
 import { saveEntry } from '@/services/time-entries'
@@ -166,6 +167,48 @@ describe('demanderCode et verifierCode', () => {
     for (let i = 0; i < 5; i += 1) expect((await demanderCode(jeton, { maintenant: plus(i), mailer })).ok).toBe(true)
     expect(await demanderCode(jeton, { maintenant: plus(6), mailer })).toEqual({ ok: false, raison: 'TROP_DE_CODES' })
     expect((await demanderCode(jeton, { maintenant: plus(61), mailer })).ok).toBe(true)
+  })
+
+  it('huit essais faux en parallèle : le compteur s arrête à cinq, le bon code ne passe plus', async () => {
+    const jeton = jetonDuDernierCourriel()
+    await demanderCode(jeton, { maintenant: T0, mailer })
+    const bon = codeDuDernierCourriel()
+    const faux = bon === '000000' ? '111111' : '000000'
+    await Promise.all(Array.from({ length: 8 }, () => verifierCode(jeton, faux, { maintenant: plus(1) })))
+    const lien = await prisma.lienClient.findFirstOrThrow({ where: { craId } })
+    expect(lien.codeEssais).toBe(CODE_ESSAIS_MAX)
+    expect(await verifierCode(jeton, bon, { maintenant: plus(1) })).toEqual({ ok: false, raison: 'EPUISE' })
+  })
+
+  it('deux soumissions parallèles du bon code : une seule ouvre', async () => {
+    const jeton = jetonDuDernierCourriel()
+    await demanderCode(jeton, { maintenant: T0, mailer })
+    const bon = codeDuDernierCourriel()
+    const r = await Promise.all([
+      verifierCode(jeton, bon, { maintenant: plus(1) }),
+      verifierCode(jeton, bon, { maintenant: plus(1) }),
+    ])
+    expect(r.filter((x) => x.ok)).toHaveLength(1)
+  })
+
+  it('huit demandes de code en parallèle : cinq passent', async () => {
+    const jeton = jetonDuDernierCourriel()
+    const r = await Promise.all(Array.from({ length: 8 }, () => demanderCode(jeton, { maintenant: plus(1), mailer })))
+    expect(r.filter((x) => x.ok)).toHaveLength(5)
+  })
+
+  it('courriel non parti : COURRIEL, aucun code gardé, compteur inchangé, rien au journal', async () => {
+    const jeton = jetonDuDernierCourriel()
+    const casse: Mailer = async () => {
+      throw new Error('smtp')
+    }
+    const avant = await prisma.lienClient.findFirstOrThrow({ where: { craId } })
+    expect(await demanderCode(jeton, { maintenant: T0, mailer: casse })).toEqual({ ok: false, raison: 'COURRIEL' })
+    const apres = await prisma.lienClient.findFirstOrThrow({ where: { craId } })
+    expect(apres.codeEmpreinte).toBe('')
+    expect(apres.codeExpireAt).toBeNull()
+    expect(apres.codesEnvoyes).toBe(avant.codesEnvoyes)
+    expect(await prisma.auditEvent.count({ where: { entityId: craId, action: 'signature.code.envoye' } })).toBe(0)
   })
 
   it('refuse un lien inconnu, révoqué ou remplacé, sans envoyer de courriel', async () => {

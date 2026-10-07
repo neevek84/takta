@@ -105,10 +105,16 @@ export async function resoudreLien(jeton: string): Promise<{ etat: EtatLien; lie
   return { etat: 'ACTIF', lienId: lien.id }
 }
 
+/**
+ * Les compteurs (codes par heure, essais, usage unique) sont tenus par des
+ * `updateMany` conditionnels : la condition et l'écriture forment une seule
+ * instruction SQL, donc des requêtes parallèles ne peuvent pas franchir un
+ * plafond en lisant toutes la même valeur.
+ */
 export async function demanderCode(
   jeton: string,
   deps: { maintenant?: Date; mailer?: Mailer | null } = {},
-): Promise<{ ok: true; adresseMasquee: string } | { ok: false; raison: 'LIEN' | 'TROP_DE_CODES' }> {
+): Promise<{ ok: true; adresseMasquee: string } | { ok: false; raison: 'LIEN' | 'TROP_DE_CODES' | 'COURRIEL' }> {
   const maintenant = deps.maintenant ?? new Date()
   const { etat, lienId } = await resoudreLien(jeton)
   if (etat !== 'ACTIF' || lienId === null) return { ok: false, raison: 'LIEN' }
@@ -119,34 +125,71 @@ export async function demanderCode(
     select: { signataireEmail: true },
   })
 
-  const fenetreNeuve =
-    lien.codesFenetreAt === null || maintenant.getTime() - lien.codesFenetreAt.getTime() >= HEURE_MS
-  const envoyes = fenetreNeuve ? 0 : lien.codesEnvoyes
-  if (envoyes >= CODES_PAR_HEURE_MAX) return { ok: false, raison: 'TROP_DE_CODES' }
-
   const code = fabriquerCode()
+  const empreinte = empreinteCode(lien.id, code, secretClient())
   // Un nouveau code remplace le précédent et remet les essais à zéro : seul le
   // dernier code reçu vaut.
-  await prisma.lienClient.update({
-    where: { id: lien.id },
-    data: {
-      codeEmpreinte: empreinteCode(lien.id, code, secretClient()),
-      codeExpireAt: new Date(maintenant.getTime() + CODE_DUREE_MINUTES * 60_000),
-      codeEssais: 0,
-      codesEnvoyes: envoyes + 1,
-      codesFenetreAt: fenetreNeuve ? maintenant : lien.codesFenetreAt,
-    },
-  })
+  const champsCode = {
+    codeEmpreinte: empreinte,
+    codeExpireAt: new Date(maintenant.getTime() + CODE_DUREE_MINUTES * 60_000),
+    codeEssais: 0,
+  }
+
+  const limiteFenetre = new Date(maintenant.getTime() - HEURE_MS)
+  // Deux branches conditionnelles : fenêtre neuve (un seul écrivain parallèle
+  // l'ouvre, la condition porte sur la fenêtre lue) ou fenêtre en cours
+  // (plafond testé dans la même instruction). Un perdant de la fenêtre neuve
+  // relit et retente : la fenêtre est désormais ouverte, il compte dedans.
+  let courant = lien
+  let fenetreNeuve = false
+  let reserve = { count: 0 }
+  for (let tentative = 0; tentative < 3 && reserve.count === 0; tentative += 1) {
+    fenetreNeuve = courant.codesFenetreAt === null || courant.codesFenetreAt.getTime() <= limiteFenetre.getTime()
+    reserve = fenetreNeuve
+      ? await prisma.lienClient.updateMany({
+          where: { id: lien.id, codesFenetreAt: courant.codesFenetreAt },
+          data: { ...champsCode, codesEnvoyes: 1, codesFenetreAt: maintenant },
+        })
+      : await prisma.lienClient.updateMany({
+          where: { id: lien.id, codesEnvoyes: { lt: CODES_PAR_HEURE_MAX }, codesFenetreAt: courant.codesFenetreAt },
+          data: { ...champsCode, codesEnvoyes: { increment: 1 } },
+        })
+    if (reserve.count === 0) {
+      if (!fenetreNeuve && courant.codesEnvoyes >= CODES_PAR_HEURE_MAX) break
+      courant = await prisma.lienClient.findUniqueOrThrow({ where: { id: lien.id } })
+    }
+  }
+  if (reserve.count === 0) return { ok: false, raison: 'TROP_DE_CODES' }
 
   // À l'adresse **figée à l'envoi**, jamais à celle de la mission aujourd'hui :
   // un lien transféré ne fait pas changer le destinataire du code.
-  await envoyerCourriel({
+  const envoi = await envoyerCourriel({
     craId: lien.craId,
     raison: 'CODE',
     to: demande.signataireEmail,
     gabarit: gabaritCodeClient({ code, minutes: CODE_DUREE_MINUTES }),
     mailer: deps.mailer ?? null,
   })
+  if (!envoi.envoye) {
+    // Rien n'est parti : le code n'existe pour personne, et la tentative ne
+    // compte pas contre le plafond. On ne touche qu'à notre propre code.
+    await prisma.lienClient.updateMany({
+      where: { id: lien.id, codeEmpreinte: empreinte },
+      data: { codeEmpreinte: '', codeExpireAt: null },
+    })
+    if (fenetreNeuve) {
+      await prisma.lienClient.updateMany({
+        where: { id: lien.id, codesFenetreAt: maintenant },
+        data: { codesEnvoyes: courant.codesEnvoyes, codesFenetreAt: courant.codesFenetreAt },
+      })
+    } else {
+      await prisma.lienClient.updateMany({
+        where: { id: lien.id, codesFenetreAt: courant.codesFenetreAt, codesEnvoyes: { gt: 0 } },
+        data: { codesEnvoyes: { decrement: 1 } },
+      })
+    }
+    return { ok: false, raison: 'COURRIEL' }
+  }
   await journal(lien.craId, 'signature.code.envoye', lien.numero)
 
   return { ok: true, adresseMasquee: masquerEmail(demande.signataireEmail) }
@@ -167,20 +210,35 @@ export async function verifierCode(
     return { ok: false, raison: 'CODE' }
   }
 
+  // On réserve l'essai **avant** de comparer : cinq requêtes parallèles ne
+  // peuvent pas toutes passer sous le plafond. La condition sur l'empreinte
+  // lie la réservation au code lu (un code renouvelé entre-temps l'écarte).
+  const reserve = await prisma.lienClient.updateMany({
+    where: { id: lien.id, codeEssais: { lt: CODE_ESSAIS_MAX }, codeEmpreinte: lien.codeEmpreinte },
+    data: { codeEssais: { increment: 1 } },
+  })
+  if (reserve.count === 0) {
+    const relu = await prisma.lienClient.findUnique({ where: { id: lien.id }, select: { codeEssais: true } })
+    return { ok: false, raison: relu !== null && relu.codeEssais >= CODE_ESSAIS_MAX ? 'EPUISE' : 'CODE' }
+  }
+
   const attendu = Buffer.from(lien.codeEmpreinte, 'hex')
   const fourni = Buffer.from(empreinteCode(lien.id, code.trim(), secretClient()), 'hex')
   if (attendu.length !== fourni.length || !timingSafeEqual(attendu, fourni)) {
-    const essais = lien.codeEssais + 1
-    await prisma.lienClient.update({ where: { id: lien.id }, data: { codeEssais: essais } })
+    // Compteur relu après notre réservation : le 5e essai (quel que soit
+    // l'ordre d'arrivée) est celui qui épuise le code.
+    const relu = await prisma.lienClient.findUnique({ where: { id: lien.id }, select: { codeEssais: true } })
     await journal(lien.craId, 'signature.code.echoue', lien.numero)
-    return { ok: false, raison: essais >= CODE_ESSAIS_MAX ? 'EPUISE' : 'CODE' }
+    return { ok: false, raison: relu !== null && relu.codeEssais >= CODE_ESSAIS_MAX ? 'EPUISE' : 'CODE' }
   }
 
-  // Usage unique : le code juste est effacé dès qu'il a servi.
-  await prisma.lienClient.update({
-    where: { id: lien.id },
+  // Usage unique : la consommation est conditionnelle à l'empreinte encore en
+  // place, donc une seule de deux soumissions parallèles du bon code passe.
+  const consomme = await prisma.lienClient.updateMany({
+    where: { id: lien.id, codeEmpreinte: lien.codeEmpreinte },
     data: { codeEmpreinte: '', codeExpireAt: null, codeEssais: 0 },
   })
+  if (consomme.count !== 1) return { ok: false, raison: 'CODE' }
   await journal(lien.craId, 'signature.code.valide', lien.numero)
   return { ok: true, lienId: lien.id }
 }
