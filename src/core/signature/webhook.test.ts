@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { signWebhookPayload, verifyWebhookSignature } from './webhook'
+import { signWebhookPayload, verifierSecretDocumenso, verifyWebhookSignature } from './webhook'
 
 const SECRET = 'un-secret-de-webhook'
 const CHARGE = JSON.stringify({ event: 'DOCUMENT_COMPLETED', payload: { id: 42 } })
@@ -83,5 +83,26 @@ describe('verifyWebhookSignature', () => {
     const espace = `${CHARGE}\n`
     expect(verifyWebhookSignature(espace, signWebhookPayload(CHARGE, SECRET), SECRET)).toBe(false)
     expect(verifyWebhookSignature(espace, signWebhookPayload(espace, SECRET), SECRET)).toBe(true)
+  })
+})
+
+describe('verifierSecretDocumenso — Documenso envoie son secret tel quel', () => {
+  it('accepte le secret exact', () => {
+    expect(verifierSecretDocumenso('s3cret', 's3cret')).toBe(true)
+  })
+
+  it('refuse un autre secret, un préfixe, un suffixe', () => {
+    expect(verifierSecretDocumenso('s3cre', 's3cret')).toBe(false)
+    expect(verifierSecretDocumenso('s3cret!', 's3cret')).toBe(false)
+    expect(verifierSecretDocumenso('autre', 's3cret')).toBe(false)
+  })
+
+  it('refuse tout quand aucun secret n est configuré, même un en-tête vide', () => {
+    expect(verifierSecretDocumenso('', '')).toBe(false)
+    expect(verifierSecretDocumenso('x', '')).toBe(false)
+  })
+
+  it('refuse un en-tête absent sans lever', () => {
+    expect(verifierSecretDocumenso('', 's3cret')).toBe(false)
   })
 })

@@ -11,16 +11,18 @@
  */
 import type { SignatureChamp } from './connector'
 
-/** Un champ tel que l'API v1 de Documenso l'attend. */
+/** Un champ tel que l'API v2 de Documenso l'attend à la création d'une enveloppe. */
 export interface DocumensoField {
-  formType: 'SIGNATURE' | 'DATE'
+  type: 'SIGNATURE' | 'DATE'
+  /** l'index du fichier téléversé qui porte le champ — il n'y en a qu'un */
+  identifier: 0
   /** à partir de 1 */
-  pageNumber: number
+  page: number
   /** pourcentages de la page, origine en **haut** à gauche */
-  pageX: number
-  pageY: number
-  pageWidth: number
-  pageHeight: number
+  positionX: number
+  positionY: number
+  width: number
+  height: number
 }
 
 /** Arrondi au centième de pourcent : au-delà, c'est du bruit. */
@@ -33,13 +35,14 @@ function pourcent(part: number, tout: number): number {
 
 export function versDocumensoField(champ: SignatureChamp): DocumensoField {
   return {
-    formType: champ.nature,
-    pageNumber: champ.page,
-    pageX: pourcent(champ.x, champ.pageLargeur),
+    type: champ.nature,
+    identifier: 0,
+    page: champ.page,
+    positionX: pourcent(champ.x, champ.pageLargeur),
     // `y` désigne le **bas** du champ ; Documenso attend son **haut**, compté
     // depuis le haut de la page. Les deux inversions se composent.
-    pageY: pourcent(champ.pageHauteur - (champ.y + champ.hauteur), champ.pageHauteur),
-    pageWidth: pourcent(champ.largeur, champ.pageLargeur),
-    pageHeight: pourcent(champ.hauteur, champ.pageHauteur),
+    positionY: pourcent(champ.pageHauteur - (champ.y + champ.hauteur), champ.pageHauteur),
+    width: pourcent(champ.largeur, champ.pageLargeur),
+    height: pourcent(champ.hauteur, champ.pageHauteur),
   }
 }

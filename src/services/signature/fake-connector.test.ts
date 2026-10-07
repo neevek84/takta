@@ -25,12 +25,13 @@ describe('createFakeSignatureConnector — sévérité', () => {
         pageHauteur: 595,
       },
     ],
+    reference: 'cra-x',
   }
 
   it('GARDE-FOU INVERSE : un envoi complet passe et rend une référence', async () => {
     const c = createFakeSignatureConnector()
-    expect(await c.send(envoiValide)).toBe('ext-1')
-    expect(await c.send(envoiValide)).toBe('ext-2')
+    expect(await c.send(envoiValide)).toEqual({ externalId: 'ext-1', jetonSignataire: 'jeton-1' })
+    expect(await c.send(envoiValide)).toEqual({ externalId: 'ext-2', jetonSignataire: 'jeton-2' })
     expect(c.envois).toHaveLength(2)
   })
 
@@ -53,7 +54,7 @@ describe('createFakeSignatureConnector — sévérité', () => {
 
   it('rend EN_ATTENTE pour une référence inconnue, jamais une issue inventée', async () => {
     const c = createFakeSignatureConnector()
-    expect(await c.status('jamais-vu')).toBe('EN_ATTENTE')
+    expect(await c.status('jamais-vu')).toEqual({ statut: 'EN_ATTENTE', motifRefus: null })
   })
 
   it('rejoue les pannes qui comptent — envoi refusé, téléchargement impossible', async () => {
@@ -65,5 +66,19 @@ describe('createFakeSignatureConnector — sévérité', () => {
     d.faireEchouerTelechargement('injoignable')
     await expect(d.download('ext-1')).rejects.toMatchObject({ statusCode: 503 })
     expect(d.telechargements).toEqual([])
+  })
+
+  it('annule, et peut échouer à annuler', async () => {
+    const c = createFakeSignatureConnector()
+    await c.annuler('ext-1')
+    expect(c.annulations).toEqual(['ext-1'])
+    c.faireEchouerAnnulation('panne')
+    await expect(c.annuler('ext-2')).rejects.toThrow('panne')
+  })
+
+  it('rend le motif de refus réglé', async () => {
+    const c = createFakeSignatureConnector()
+    c.regler('ext-9', 'REFUSE', 'Il manque le 15.')
+    expect(await c.status('ext-9')).toEqual({ statut: 'REFUSE', motifRefus: 'Il manque le 15.' })
   })
 })

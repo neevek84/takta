@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
 /**
  * Authentification d'un webhook de signature.
@@ -50,5 +50,26 @@ export function verifyWebhookSignature(
   // les garantit égales, ce test reste une ceinture de sécurité.
   if (a.length !== b.length) return false
 
+  return timingSafeEqual(a, b)
+}
+
+/**
+ * **Documenso ne signe pas ses webhooks** : il recopie le secret configuré
+ * dans l'en-tête `X-Documenso-Secret` (`execute-webhook-call.ts`, et sa
+ * documentation « Verification »). Le lot 3 attendait un HMAC ; chaque
+ * webhook réel recevait donc 401.
+ *
+ * Un secret partagé prouve l'**origine**, pas l'**intégrité** : c'est pourquoi
+ * le service ne croit plus la charge et relit l'état chez le prestataire
+ * (`services/signature/webhook.ts`).
+ *
+ * Les deux valeurs sont hachées avant comparaison : `timingSafeEqual` exige
+ * deux longueurs égales, et comparer les longueurs d'abord révélerait celle du
+ * secret.
+ */
+export function verifierSecretDocumenso(header: string, secret: string): boolean {
+  if (secret === '' || header === '') return false
+  const a = createHash('sha256').update(header, 'utf8').digest()
+  const b = createHash('sha256').update(secret, 'utf8').digest()
   return timingSafeEqual(a, b)
 }
