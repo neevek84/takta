@@ -1,5 +1,6 @@
 import type { Gabarit } from '@/core/notify/templates'
 import { ACTEUR_SYSTEME, appendAudit } from '@/services/audit'
+import { journalErreur } from '@/services/log'
 import { notify, type Mailer, type PieceJointe } from '@/services/notify'
 
 export type CourrielRaison =
@@ -15,7 +16,7 @@ export type CourrielRaison =
 /**
  * Envoie un courriel du circuit de signature, et le dit au journal.
  *
- * **Ne lève jamais.** Le courriel ne commande rien : une transition a déjà eu
+ * **Ne lève jamais** (ni l'envoi, ni l'écriture au journal). Le courriel ne commande rien : une transition a déjà eu
  * lieu, ou va avoir lieu, quoi qu'il arrive au SMTP. Laisser remonter une
  * panne d'envoi ferait échouer une validation que le client a pourtant
  * signée.
@@ -51,13 +52,21 @@ export async function envoyerCourriel(args: {
     }
   }
 
-  await appendAudit({
-    ...ACTEUR_SYSTEME,
-    action: resultat.envoye ? 'signature.courriel.envoye' : 'signature.courriel.echoue',
-    entityType: 'Cra',
-    entityId: args.craId,
-    payload: { raison: args.raison },
-  })
+  // L'écriture au journal ne doit pas non plus faire échouer l'appelant : la
+  // transition est déjà validée. Texte fixe, sans le message de l'erreur.
+  try {
+    await appendAudit({
+      ...ACTEUR_SYSTEME,
+      action: resultat.envoye ? 'signature.courriel.envoye' : 'signature.courriel.echoue',
+      entityType: 'Cra',
+      entityId: args.craId,
+      payload: { raison: args.raison },
+    })
+  } catch {
+    journalErreur('signature.courriel.journal', new Error('écriture au journal impossible'), {
+      raison: args.raison,
+    })
+  }
 
   return resultat
 }
