@@ -17,9 +17,22 @@ function jetonDe(formData: FormData): string {
   return /^[0-9a-f]{64}$/.test(j) ? j : '0'.repeat(64)
 }
 
-async function ip(): Promise<string> {
+/**
+ * L'adresse du client **telle que le proxy de confiance l'a vue** : la
+ * dernière entrée de `x-forwarded-for` (celle qu'il ajoute lui-même — les
+ * précédentes viennent du client et se falsifient), sinon `x-real-ip`.
+ *
+ * Sans aucun des deux, `null` : la limite par IP est alors sautée plutôt que
+ * de ranger tous les clients dans un même seau. Les limites par lien (5 essais
+ * par code, 5 codes par heure) restent la garde.
+ */
+async function ip(): Promise<string | null> {
   const h = await headers()
-  return (h.get('x-forwarded-for') ?? h.get('x-real-ip') ?? 'inconnue').split(',')[0]!.trim()
+  const chaine = h.get('x-forwarded-for')
+  const derniere = chaine?.split(',').pop()?.trim()
+  if (derniere !== undefined && derniere !== '') return derniere
+  const reelle = h.get('x-real-ip')?.trim()
+  return reelle !== undefined && reelle !== '' ? reelle : null
 }
 
 export async function demanderCodeAction(formData: FormData): Promise<void> {
@@ -30,7 +43,8 @@ export async function demanderCodeAction(formData: FormData): Promise<void> {
 
 export async function validerCodeAction(formData: FormData): Promise<void> {
   const jeton = jetonDe(formData)
-  if (!autoriser(await ip())) redirect(`/v/${jeton}?etape=code&erreur=LIMITE`)
+  const adresse = await ip()
+  if (adresse !== null && !autoriser(adresse)) redirect(`/v/${jeton}?etape=code&erreur=LIMITE`)
 
   const r = await verifierCode(jeton, String(formData.get('code') ?? ''))
   if (!r.ok) redirect(`/v/${jeton}?etape=code&erreur=${r.raison}`)

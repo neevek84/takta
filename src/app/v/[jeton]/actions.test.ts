@@ -59,11 +59,19 @@ describe('page client — actions', () => {
     expect(m.ouvrirSession).not.toHaveBeenCalled()
   })
 
-  it('la limite par IP s applique avant toute vérification, sur la première adresse de la chaîne', async () => {
+  it('la limite par IP s applique avant toute vérification, sur la dernière adresse de la chaîne (celle du proxy)', async () => {
     m.autoriser.mockReturnValue(false)
     await expect(validerCodeAction(fd({ jeton: J, code: '123456' }))).rejects.toThrow('erreur=LIMITE')
-    expect(m.autoriser).toHaveBeenCalledWith('1.2.3.4')
+    expect(m.autoriser).toHaveBeenCalledWith('10.0.0.1')
     expect(m.verifierCode).not.toHaveBeenCalled()
+  })
+
+  it('sans en-tête de transfert, la limite par IP est sautée et la vérification a lieu', async () => {
+    m.headers.mockResolvedValue({ get: () => null })
+    m.verifierCode.mockResolvedValue({ ok: false, raison: 'CODE' })
+    await expect(validerCodeAction(fd({ jeton: J, code: '000000' }))).rejects.toThrow('erreur=CODE')
+    expect(m.autoriser).not.toHaveBeenCalled()
+    expect(m.verifierCode).toHaveBeenCalled()
   })
 
   it('confirmer sans session ne fait rien', async () => {

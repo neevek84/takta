@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, vi, afterEach } from 'vitest'
+// (jsdom ne démarre pas ici : voir le commentaire de vitest.config.ts sur Node.)
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, cleanup, waitFor } from '@testing-library/react'
 
 const refresh = vi.fn()
@@ -7,10 +8,29 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }))
 
 import { CadreSignature } from './CadreSignature'
 
-afterEach(cleanup)
-
-// Le cadre ne doit rien charger pour de bon : le test n'a besoin que de sa fenêtre.
+// Le cadre ne doit rien charger pour de bon : le test n'a besoin que de sa
+// fenêtre. happy-dom écrit alors « Iframe page loading is disabled » (avec sa
+// pile) directement sur stderr ; ce message-là seul est retenu, toute autre
+// écriture sur stderr fait échouer le test.
 ;(window as unknown as { happyDOM: { settings: { disableIframePageLoading: boolean } } }).happyDOM.settings.disableIframePageLoading = true
+const autres: string[] = []
+let ecriture: ReturnType<typeof vi.spyOn> | null = null
+
+beforeEach(() => {
+  autres.length = 0
+  ecriture = vi.spyOn(process.stderr, 'write').mockImplementation(((morceau: unknown) => {
+    const texte = String(morceau)
+    // Ni la pile ni le saut de ligne qui suit ne sont des messages à part.
+    if (/Iframe page loading is disabled|^\s*at |^\s*$/.test(texte)) return true
+    autres.push(texte)
+    return true
+  }) as never)
+})
+afterEach(() => {
+  cleanup()
+  ecriture?.mockRestore()
+  expect(autres).toEqual([])
+})
 
 const URL_CADRE = 'https://sign.exemple.fr/embed/sign/jeton-1#abc'
 
