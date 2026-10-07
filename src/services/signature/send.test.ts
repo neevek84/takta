@@ -393,4 +393,23 @@ describe('lot 3b — envoi par l outil', () => {
     expect(tout).not.toContain('Claire')
     expect(tout).not.toContain('jeton-1')
   })
+
+  it('un CRA qui bouge entre la lecture et la transaction : rien n est écrit, l enveloppe est annulée', async () => {
+    const connector = createFakeSignatureConnector()
+    const envoiOrigine = connector.send.bind(connector)
+    connector.send = async (e) => {
+      const depot = await envoiOrigine(e)
+      await new Promise((r) => setTimeout(r, 5))
+      await prisma.cra.update({ where: { id: craId }, data: { invoiceNumber: 'X' } })
+      return depot
+    }
+    const r = await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
+    expect(r).toMatchObject({ ok: false, raison: 'TRANSITION_IMPOSSIBLE' })
+    expect(connector.annulations).toEqual(['ext-1'])
+    expect(await prisma.signatureRequest.findUnique({ where: { craId } })).toBeNull()
+    expect(await prisma.lienClient.count({ where: { craId } })).toBe(0)
+    expect(await prisma.signatureEnvoiClos.count({ where: { craId } })).toBe(0)
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('BROUILLON')
+    expect(courriels).toHaveLength(0)
+  })
 })

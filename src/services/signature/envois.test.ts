@@ -78,6 +78,15 @@ describe('listerEnvois', () => {
     expect(envois[1]!.motifRefus).toBe('motif 1')
   })
 
+  it("l'envoi en cours l'emporte sur une copie close du même numéro", async () => {
+    await demande(1, 'EN_ATTENTE')
+    await prisma.$transaction((tx) => cloreEnvoiCourant(tx, craId, new Date()))
+    await prisma.signatureRequest.update({ where: { craId }, data: { status: 'ANNULE' } })
+    const envois = await listerEnvois(userId, craId)
+    expect(envois).toHaveLength(1)
+    expect(envois[0]).toMatchObject({ numero: 1, status: 'ANNULE', enCours: false })
+  })
+
   it("ne rend rien du CRA d'un autre", async () => {
     await demande(1, 'EN_ATTENTE')
     expect(await listerEnvois(autreId, craId)).toEqual([])

@@ -74,8 +74,10 @@ export async function listerEnvois(userId: string, craId: string): Promise<Envoi
     enCours: false,
   }))
 
-  if (courant !== null && !vues.some((v) => v.numero === courant.numero)) {
-    vues.unshift({
+  if (courant !== null) {
+    // L'envoi en cours fait foi : une copie close du même numéro (annulation)
+    // ne le masque pas.
+    const vue: EnvoiVue = {
       numero: courant.numero,
       status: courant.status as EnvoiStatut,
       sentAt: courant.sentAt,
@@ -83,8 +85,11 @@ export async function listerEnvois(userId: string, craId: string): Promise<Envoi
       motifRefus: courant.motifRefus,
       signataireNom: courant.signataireNom,
       empreinte: courant.empreinte,
-      enCours: true,
-    })
+      enCours: courant.status !== 'ANNULE',
+    }
+    const i = vues.findIndex((v) => v.numero === courant.numero)
+    if (i >= 0) vues[i] = vue
+    else vues.unshift(vue)
   }
 
   return vues

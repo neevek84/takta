@@ -38,6 +38,9 @@ const MESSAGES: Record<SendCraRaison, string> = {
     'L’outil de signature n’a pas accepté le document. Le CRA n’a pas changé d’état.',
 }
 
+/** Sentinelle : un autre appel a pris le CRA entre la lecture et la transaction. */
+class EnvoiConcurrent extends Error {}
+
 function echec(raison: SendCraRaison): SendCraResult {
   return { ok: false, raison, message: MESSAGES[raison] }
 }
@@ -99,10 +102,22 @@ export async function sendCraForSignature(
   }
 
   const maintenant = new Date()
-  const precedent = await prisma.signatureRequest.findUnique({ where: { craId }, select: { numero: true } })
-  const numero = (precedent?.numero ?? 0) + 1
+  let numero = 0
 
-  const jeton = await prisma.$transaction(async (tx) => {
+  let jeton: string
+  try {
+    jeton = await prisma.$transaction(async (tx) => {
+    // Prise de possession optimiste : si le CRA a bougé depuis la lecture
+    // (double envoi, autre onglet), on annule tout plutôt que d'écraser
+    // l'envoi que l'autre appel vient de faire partir.
+    const claim = await tx.cra.updateMany({
+      where: { id: craId, status: statut, updatedAt: cra.updatedAt },
+      data: { updatedAt: new Date() },
+    })
+    if (claim.count !== 1) throw new EnvoiConcurrent()
+    const precedent = await tx.signatureRequest.findUnique({ where: { craId }, select: { numero: true } })
+    numero = (precedent?.numero ?? 0) + 1
+
     await cloreEnvoiCourant(tx, craId, maintenant)
     await revoquerLiensDuCra(tx, craId, maintenant)
 
@@ -150,7 +165,15 @@ export async function sendCraForSignature(
     })
 
     return creerLienClient(tx, { craId, numero, jetonSignataire: depot.jetonSignataire })
-  })
+    })
+  } catch (e) {
+    if (e instanceof EnvoiConcurrent) {
+      // L'enveloppe créée chez le prestataire est orpheline : on la retire, au mieux.
+      await connector.annuler(depot.externalId).catch(() => {})
+      return echec('TRANSITION_IMPOSSIBLE')
+    }
+    throw e
+  }
 
   // `transitionCra`, jamais un `cra.update` direct : c'est lui qui consigne
   // `cra.envoye` au journal.
