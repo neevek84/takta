@@ -160,4 +160,17 @@ describe('notification', () => {
     await notify(GABARIT, { mailer, destinataire: 'autre@exemple.test' })
     expect(envois[0]!.to).toBe('autre@exemple.test')
   })
+
+  it('transmet les pièces jointes au transport, telles quelles', async () => {
+    const recus: Array<Parameters<Mailer>[0]> = []
+    const mailer: Mailer = async (m) => {
+      recus.push(m)
+    }
+    const octets = new Uint8Array([0x25, 0x50, 0x44, 0x46])
+    await notify(
+      { sujet: 'S', corps: 'C' },
+      { mailer, destinataire: 'a@b.test', pieces: [{ nom: 'cra.pdf', type: 'application/pdf', octets }] },
+    )
+    expect(recus[0]!.pieces).toEqual([{ nom: 'cra.pdf', type: 'application/pdf', octets }])
+  })
 })

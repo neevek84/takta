@@ -1,7 +1,19 @@
 import { prisma } from '@/db/client'
 import type { Gabarit } from '@/core/notify/templates'
 
-export type Mailer = (message: { to: string; sujet: string; corps: string }) => Promise<void>
+/** Une pièce jointe, en octets — le transport ne relit jamais un fichier du disque. */
+export interface PieceJointe {
+  nom: string
+  type: string
+  octets: Uint8Array
+}
+
+export type Mailer = (message: {
+  to: string
+  sujet: string
+  corps: string
+  pieces?: PieceJointe[]
+}) => Promise<void>
 
 export interface SmtpConfig {
   host: string
@@ -81,7 +93,7 @@ export async function readSmtpConfig(): Promise<SmtpConfig | null> {
  */
 export async function notify(
   gabarit: Gabarit,
-  deps: { mailer?: Mailer | null; destinataire?: string } = {},
+  deps: { mailer?: Mailer | null; destinataire?: string; pieces?: PieceJointe[] } = {},
 ): Promise<NotifyResult> {
   const reglages = await prisma.settings.findUnique({
     where: { id: 'singleton' },
@@ -111,6 +123,11 @@ export async function notify(
     mailer = buildSmtpMailer(config)
   }
 
-  await mailer({ to, sujet: gabarit.sujet, corps: gabarit.corps })
+  await mailer({
+    to,
+    sujet: gabarit.sujet,
+    corps: gabarit.corps,
+    ...(deps.pieces !== undefined && deps.pieces.length > 0 ? { pieces: deps.pieces } : {}),
+  })
   return { envoye: true, motif: '' }
 }

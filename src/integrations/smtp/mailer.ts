@@ -18,7 +18,19 @@ export function buildSmtpMailer(config: SmtpConfig): Mailer {
     ...(config.user !== '' && { auth: { user: config.user, pass: config.password } }),
   })
 
-  return async ({ to, sujet, corps }) => {
-    await transport.sendMail({ from: config.from, to, subject: sujet, text: corps })
+  return async ({ to, sujet, corps, pieces }) => {
+    await transport.sendMail({
+      from: config.from,
+      to,
+      subject: sujet,
+      text: corps,
+      ...(pieces !== undefined && {
+        attachments: pieces.map((p) => ({
+          filename: p.nom,
+          contentType: p.type,
+          content: Buffer.from(p.octets),
+        })),
+      }),
+    })
   }
 }
