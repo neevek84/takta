@@ -504,12 +504,21 @@ function Nouvelle({
                         </form>
                       ) : (
                         // En créer une seconde sur le même projet ferait partir
-                        // deux CRA vers les mêmes tâches.
-                        <p className="mt-2 text-sm text-muted">
-                          {c.missionLabel === null
-                            ? 'Son projet est déjà suivi par la mission d’un autre consultant.'
-                            : `Son projet est déjà suivi par la mission « ${c.missionLabel} ».`}
-                        </p>
+                        // deux CRA vers les mêmes tâches. Le cas courant est un
+                        // renouvellement : la nouvelle tâche se reprend dans la
+                        // mission existante, et l'écran le rappelle.
+                        <>
+                          <p className="mt-2 text-sm text-muted">
+                            {c.missionLabel === null
+                              ? 'Son projet est déjà suivi par la mission d’un autre consultant.'
+                              : `Son projet est déjà suivi par la mission « ${c.missionLabel} ».`}
+                          </p>
+                          <p className="mt-1 text-sm text-muted">
+                            Nouvelle tâche sur ce projet ? Ouvrez cette mission et utilisez
+                            « Reprendre les tâches du projet Dolibarr ». Pour une mission distincte,
+                            retirez d’abord le projet de la commande dans Dolibarr.
+                          </p>
+                        </>
                       )}
                     </fieldset>
                   </li>

@@ -298,6 +298,18 @@ describe('MissionsExplorer — créer depuis une commande', () => {
     expect(screen.getByText(/déjà suivi par la mission « Guichet unique »/)).toBeTruthy()
   })
 
+  it('rappelle le chemin d’une nouvelle tâche sur un projet déjà suivi', () => {
+    // Une commande de renouvellement ajoute une tâche au projet existant : elle
+    // se reprend dans la mission, elle ne fait pas naître une seconde mission.
+    rendre({
+      commandes: [{ ...COMMANDES[1]!, missionId: 'm9', missionLabel: 'Guichet unique' }],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
+
+    expect(screen.getByText(/Reprendre les tâches du projet Dolibarr/)).toBeTruthy()
+    expect(screen.getByText(/retirez d’abord le projet de la commande dans Dolibarr/)).toBeTruthy()
+  })
+
   it('affiche la référence client, et son absence quand il n’y en a pas', () => {
     rendre()
     fireEvent.click(screen.getByRole('button', { name: 'Nouvelle mission' }))
