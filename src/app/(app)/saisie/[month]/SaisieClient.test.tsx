@@ -809,11 +809,11 @@ describe('SaisieClient — calendrier', () => {
       expect(screen.getByText(/CRA généré. Retrouvez-le dans le suivi./)).toBeDefined()
     })
 
-    // Finding final 2, refus MOIS_VALIDE (spec §5) — « Le panneau le dit et
+    // Finding final 2, refus MOIS_FERME (spec §5) — « Le panneau le dit et
     // propose le lien vers le CRA existant. »
     it('porte le lien vers le CRA existant quand le mois est deja valide', async () => {
       compterPrevisionnelDeLaLigne.mockResolvedValue(0)
-      genererCraAction.mockResolvedValue({ ok: false, raison: 'MOIS_VALIDE', craId: 'cra-existant' })
+      genererCraAction.mockResolvedValue({ ok: false, raison: 'MOIS_FERME', craId: 'cra-existant', statut: 'VALIDE' })
       renderClient()
 
       fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
@@ -821,6 +821,18 @@ describe('SaisieClient — calendrier', () => {
       const lien = await screen.findByRole('link', { name: /Ouvrir le CRA/ })
       expect(lien.getAttribute('href')).toBe('/cra/cra-existant')
       expect(screen.getByText(/CRA de ce mois est déjà validé/)).toBeDefined()
+    })
+
+    it("nomme l'annulation de l'envoi quand le mois est envoyé au client", async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(0)
+      genererCraAction.mockResolvedValue({ ok: false, raison: 'MOIS_FERME', craId: 'cra-envoye', statut: 'ENVOYE' })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      const lien = await screen.findByRole('link', { name: /Ouvrir le CRA/ })
+      expect(lien.getAttribute('href')).toBe('/cra/cra-envoye')
+      expect(screen.getByText(/envoyé au client\. Annulez l’envoi/)).toBeDefined()
     })
 
     it('renonce sans générer', async () => {
@@ -879,7 +891,7 @@ describe('SaisieClient — calendrier', () => {
     // M5 — un refus n'est pas un avertissement, ici comme partout ailleurs.
     it('refuse en tonalité danger un mois déjà validé, pas en avertissement', async () => {
       compterPrevisionnelDeLaLigne.mockResolvedValue(0)
-      genererCraAction.mockResolvedValue({ ok: false, raison: 'MOIS_VALIDE', craId: 'c1' })
+      genererCraAction.mockResolvedValue({ ok: false, raison: 'MOIS_FERME', craId: 'c1', statut: 'VALIDE' })
       renderClient()
 
       fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))

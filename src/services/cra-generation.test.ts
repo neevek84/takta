@@ -200,7 +200,7 @@ describe('genererCra', () => {
 
     const r = await genererCra(userId, { lineId, month, previsionnel: 'VALIDER' })
 
-    expect(r).toEqual({ ok: false, raison: 'MOIS_VALIDE', craId: craValide.id })
+    expect(r).toEqual({ ok: false, raison: 'MOIS_FERME', craId: craValide.id, statut: 'VALIDE' })
 
     const previsionnelEntry = await prisma.timeEntry.findUnique({ where: { id: previsionnelId } })
     expect(previsionnelEntry?.kind).toBe('PREVISIONNEL')
@@ -227,7 +227,23 @@ describe('genererCra', () => {
     expect(cra).toBeNull()
   })
 
-  it.each(['BROUILLON', 'ENVOYE', 'REFUSE'])(
+  // ENVOYE est fermé à la saisie depuis le lot 3b (`isLocked`) : convertir ses
+  // jours prévus changerait le document que le client relit.
+  it("refuse quand le CRA du mois est ENVOYE, et laisse le prévisionnel intact", async () => {
+    const { month, premier } = moisCourant()
+    const id = await saisir(premier, 'PREVISIONNEL')
+    const envoye = await prisma.cra.create({
+      data: { missionId, userId, month: monthStart(month), status: 'ENVOYE' },
+    })
+
+    const r = await genererCra(userId, { lineId, month, previsionnel: 'SUPPRIMER' })
+
+    expect(r).toEqual({ ok: false, raison: 'MOIS_FERME', craId: envoye.id, statut: 'ENVOYE' })
+    const entry = await prisma.timeEntry.findUnique({ where: { id } })
+    expect(entry?.kind).toBe('PREVISIONNEL')
+  })
+
+  it.each(['BROUILLON', 'REFUSE'])(
     "quand le CRA du mois existe déjà en %s, procède et rend l'identifiant existant",
     async (status) => {
       const { month, premier } = moisCourant()

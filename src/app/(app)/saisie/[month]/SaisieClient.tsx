@@ -428,13 +428,16 @@ export function SaisieClient(props: {
     const r = await genererCraAction({ lineId: lineIdCible, month: props.month, previsionnel: choix })
 
     if (!r.ok) {
-      // MOIS_VALIDE n'a rien posé : c'est un refus, pas un avertissement.
-      // Il porte `craId` : le CRA existant, déjà validé, reste à un clic —
-      // la spec (§5) demande explicitement ce lien sur ce refus-là.
+      // MOIS_FERME n'a rien posé : c'est un refus, pas un avertissement.
+      // Il porte `craId` : le CRA existant, fermé, reste à un clic — la spec
+      // (§5) demande explicitement ce lien sur ce refus-là. Un mois envoyé se
+      // libère en annulant l'envoi, un mois validé en le rouvrant.
       setMessage(
-        r.raison === 'MOIS_VALIDE'
+        r.raison === 'MOIS_FERME'
           ? refus(
-              `Le CRA de ce mois est déjà validé. Rouvrez-le depuis le suivi pour le regénérer.`,
+              r.statut === 'ENVOYE'
+                ? `Le CRA de ce mois est envoyé au client. Annulez l’envoi depuis le CRA pour le regénérer.`
+                : `Le CRA de ce mois est déjà validé. Rouvrez-le depuis le suivi pour le regénérer.`,
               r.craId,
             )
           : refus(`Vous n'êtes pas affecté à cette prestation.`),

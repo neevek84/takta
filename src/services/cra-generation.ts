@@ -27,12 +27,18 @@ import { annulerPrevisionnelDuMois, validerPrevisionnelDuMois } from './cra-prev
 import { getOrCreateCra } from './cra'
 import { appendAudit, actorOf } from './audit'
 import type { CraStatus } from '@/core/types'
+import { isLocked } from '@/core/cra/state-machine'
 
 export type ChoixPrevisionnel = 'VALIDER' | 'SUPPRIMER'
 
 export type ResultatGeneration =
   | { ok: true; craId: string; previsionnelTraite: number }
-  | { ok: false; raison: 'MOIS_VALIDE'; craId: string }
+  /**
+   * Le mois est fermé à la saisie (`isLocked`) : validé, ou envoyé au client
+   * et en attente de sa réponse. `statut` dit lequel, pour que l'écran nomme
+   * le bon geste de sortie (rouvrir, ou annuler l'envoi).
+   */
+  | { ok: false; raison: 'MOIS_FERME'; craId: string; statut: CraStatus }
   | { ok: false; raison: 'NON_AFFECTE' }
 
 function monthStart(month: string): Date {
@@ -40,9 +46,9 @@ function monthStart(month: string): Date {
 }
 
 /**
- * Un mois déjà validé, découvert **pendant** la transaction — la fenêtre
- * entre la lecture de garde et l'ouverture de la transaction, où un autre
- * appel aurait validé le mois entre-temps. `getOrCreateCra` ignore ce
+ * Un mois fermé (validé ou envoyé), découvert **pendant** la transaction — la
+ * fenêtre entre la lecture de garde et l'ouverture de la transaction, où un
+ * autre appel aurait validé ou envoyé le mois entre-temps. `getOrCreateCra` ignore ce
  * verrou (il ne connaît pas la notion de « mois clos », propre à la
  * génération) : c'est donc ici, et non dans `cra.ts`, que la course se
  * détecte. Levée pour faire annuler la transaction entière : sans elle, le
@@ -50,8 +56,11 @@ function monthStart(month: string): Date {
  * révèle.
  */
 class MoisDejaValideError extends Error {
-  constructor(readonly craId: string) {
-    super('Le CRA de ce mois est déjà validé.')
+  constructor(
+    readonly craId: string,
+    readonly statut: CraStatus,
+  ) {
+    super('Le CRA de ce mois est fermé à la saisie.')
   }
 }
 
@@ -97,10 +106,18 @@ export async function genererCra(
     select: { id: true, status: true },
   })
 
-  // Un mois clos ne se régénère pas : y toucher le prévisionnel contournerait
-  // le verrou que toute la saisie respecte. Refusé **avant** toute écriture.
-  if (existant !== null && (existant.status as CraStatus) === 'VALIDE') {
-    return { ok: false, raison: 'MOIS_VALIDE', craId: existant.id }
+  // Un mois fermé ne se régénère pas : y toucher le prévisionnel contournerait
+  // le verrou que toute la saisie respecte. `isLocked` et non `=== 'VALIDE'` :
+  // depuis le lot 3b, un mois ENVOYE est fermé lui aussi — convertir ses jours
+  // prévus changerait le document que le client est en train de relire.
+  // Refusé **avant** toute écriture.
+  if (existant !== null && isLocked(existant.status as CraStatus)) {
+    return {
+      ok: false,
+      raison: 'MOIS_FERME',
+      craId: existant.id,
+      statut: existant.status as CraStatus,
+    }
   }
 
   let resultat: { previsionnelTraite: number; craId: string; craCree: boolean }
@@ -128,15 +145,15 @@ export async function genererCra(
       // pendant que celui-ci traitait son prévisionnel —, mieux vaut annuler
       // tout ce que la transaction a déjà fait, y compris le prévisionnel
       // déjà traité, que de laisser croire qu'on a écrit sur un mois clos.
-      if (!sortie.cree && cra.status === 'VALIDE') {
-        throw new MoisDejaValideError(cra.id)
+      if (!sortie.cree && isLocked(cra.status as CraStatus)) {
+        throw new MoisDejaValideError(cra.id, cra.status as CraStatus)
       }
 
       return { previsionnelTraite, craId: cra.id, craCree: sortie.cree }
     })
   } catch (err) {
     if (err instanceof MoisDejaValideError) {
-      return { ok: false, raison: 'MOIS_VALIDE', craId: err.craId }
+      return { ok: false, raison: 'MOIS_FERME', craId: err.craId, statut: err.statut }
     }
     throw err
   }
