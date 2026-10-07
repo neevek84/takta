@@ -21,6 +21,7 @@ interface Enveloppe {
   recipients: Array<{ id: number; token: string; signingStatus: string; rejectionReason: string | null }>
   itemId: string
   annulee: boolean
+  sansJeton?: boolean
 }
 
 /**
@@ -106,6 +107,7 @@ function faussApi() {
       if (!e) return refus('enveloppe', 404)
       if (!Array.isArray(corps.recipients) || corps.recipients.length === 0) return refus('recipients', 400)
       e.recipients = e.recipients.map((r) => ({ ...r, token: `${r.token}-r` }))
+      if (e.sansJeton) return json({ success: true, id: e.id, recipients: [] })
       return json({ success: true, id: e.id, recipients: e.recipients })
     }
 
@@ -242,6 +244,13 @@ describe('download, renouveler, annuler', () => {
     const { c } = connecteur()
     const { externalId } = await c.send(ENVOI)
     expect(await c.renouveler(externalId)).toBe('jeton-1-r')
+  })
+
+  it('lève si le renouvellement ne rend aucun jeton', async () => {
+    const { api, c } = connecteur()
+    const { externalId } = await c.send(ENVOI)
+    api.enveloppes.get(externalId)!.sansJeton = true
+    await expect(c.renouveler(externalId)).rejects.toBeInstanceOf(SignatureConnectorError)
   })
 
   it('annule l enveloppe', async () => {

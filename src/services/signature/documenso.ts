@@ -154,7 +154,9 @@ export function createDocumensoConnector(args: {
         recipients: e.recipients.map((x) => x.id),
       })
       const { recipients } = (await r.json()) as { recipients?: Array<{ token: string }> }
-      return recipients?.[0]?.token ?? ''
+      const jeton = recipients?.[0]?.token ?? ''
+      if (jeton === '') throw new SignatureConnectorError('Aucun jeton de signature rendu.', 0)
+      return jeton
     },
 
     async annuler(externalId: string): Promise<void> {

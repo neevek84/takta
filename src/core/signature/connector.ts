@@ -95,9 +95,10 @@ export interface SignatureConnector {
   /** le document signé, avec sa piste d'audit, à archiver tel quel */
   download(externalId: string): Promise<Uint8Array>
   /**
-   * Renouvelle le lien de signature et rend le jeton à jour. Pour un envoi
-   * antérieur au lot 3b, distribué par courriel du prestataire, c'est aussi
-   * ce qui le fait relancer : le prestataire réécrit lui-même au client.
+   * Renouvelle le lien de signature et rend le jeton à jour — jamais vide :
+   * le connecteur lève si le prestataire n'en rend pas. Pour un envoi
+   * antérieur au lot 3b, distribué par courriel du prestataire, renouveler
+   * fait aussi que le prestataire réécrit lui-même au client.
    */
   renouveler(externalId: string): Promise<string>
   /** retire l'enveloppe : plus personne ne peut la signer */
