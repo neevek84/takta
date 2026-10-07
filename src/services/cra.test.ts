@@ -440,6 +440,8 @@ describe('CraView et signature', () => {
     expect(relu.signature).toEqual({
       provider: 'double',
       status: 'EN_ATTENTE',
+      numero: 1,
+      motifRefus: '',
       sentAt: new Date('2026-09-02T09:00:00.000Z'),
       relances: 2,
       lastRelanceAt: new Date('2026-09-16T09:00:00.000Z'),

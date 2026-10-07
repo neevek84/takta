@@ -8,6 +8,8 @@ function uneSignature(extra: Partial<CraSignatureView> = {}): CraSignatureView {
   return {
     provider: 'documenso',
     status: 'EN_ATTENTE',
+    numero: 1,
+    motifRefus: '',
     sentAt: new Date('2026-03-05T09:00:00.000Z'),
     relances: 0,
     lastRelanceAt: null,
@@ -49,5 +51,18 @@ describe('SignatureCard', () => {
     render(<SignatureCard signature={uneSignature({ status: 'SIGNE', archive: false })} />)
 
     expect(screen.queryByText('Document signé archivé')).toBeNull()
+  })
+
+  it('affiche le motif de refus du client', () => {
+    render(
+      <SignatureCard signature={uneSignature({ status: 'REFUSE', motifRefus: 'Il manque le 15.' })} />,
+    )
+    expect(screen.getByText(/« Il manque le 15\. »/)).toBeTruthy()
+  })
+
+  it('affiche un envoi annulé et son numéro', () => {
+    render(<SignatureCard signature={uneSignature({ status: 'ANNULE', numero: 2 })} />)
+    expect(screen.getByText('Envoi annulé')).toBeTruthy()
+    expect(screen.getByText(/Envoi n° 2/)).toBeTruthy()
   })
 })

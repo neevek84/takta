@@ -13,6 +13,7 @@ const ETATS: Record<CraSignatureView['status'], { tone: Tone; icone: Icone; labe
   SIGNE: { tone: 'success', icone: IconeSucces, label: 'Signé par le client' },
   REFUSE: { tone: 'danger', icone: IconeDanger, label: 'Refusé par le client' },
   EXPIRE: { tone: 'warning', icone: IconeAvertissement, label: 'Demande expirée' },
+  ANNULE: { tone: 'neutral', icone: IconeAttente, label: 'Envoi annulé' },
 }
 
 function jour(date: Date): string {
@@ -33,7 +34,12 @@ export function SignatureCard({ signature }: { signature: CraSignatureView }) {
       <Badge tone={etat.tone} icone={etat.icone}>
         {etat.label}
       </Badge>
-      <span className="text-muted">Envoyé le {jour(signature.sentAt)}</span>
+      <span className="text-muted">
+        Envoi n° {signature.numero} · le {jour(signature.sentAt)}
+      </span>
+      {signature.status === 'REFUSE' && signature.motifRefus !== '' && (
+        <span className="w-full">Motif du client : « {signature.motifRefus} »</span>
+      )}
       <span className="text-muted">
         {signature.relances} relance{signature.relances > 1 ? 's' : ''}
         {signature.lastRelanceAt === null ? '' : ` · dernière le ${jour(signature.lastRelanceAt)}`}

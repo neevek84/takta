@@ -40,7 +40,11 @@ const ACTION_PAR_TRANSITION: Record<CraTransition, AuditAction> = {
 
 export interface CraSignatureView {
   provider: string
-  status: SignatureStatus
+  status: SignatureStatus | 'ANNULE'
+  /** 1, 2, 3… — le rang de l'envoi en cours */
+  numero: number
+  /** le motif du dernier refus, tel que le client l'a écrit ; vide sinon */
+  motifRefus: string
   sentAt: Date
   relances: number
   lastRelanceAt: Date | null
@@ -108,10 +112,14 @@ const WITH_MISSION = {
     select: {
       provider: true,
       status: true,
+      numero: true,
+      motifRefus: true,
       sentAt: true,
       relances: true,
       lastRelanceAt: true,
       abandoned: true,
+      // `contenuFige` non plus : comme `signedPdf`, il traverserait chaque
+      // affichage de liste.
       // `signedPdf` n'est JAMAIS sélectionné ici : un blob de plusieurs
       // centaines de kilo-octets par ligne traverserait chaque affichage de
       // la page CRA pour un booléen. Sa présence se lit par un compte —
@@ -133,6 +141,8 @@ type Row = {
   signatureRequest: {
     provider: string
     status: string
+    numero: number
+    motifRefus: string
     sentAt: Date
     relances: number
     lastRelanceAt: Date | null
@@ -187,7 +197,9 @@ function toView(
         ? null
         : {
             provider: row.signatureRequest.provider,
-            status: row.signatureRequest.status as SignatureStatus,
+            status: row.signatureRequest.status as CraSignatureView['status'],
+            numero: row.signatureRequest.numero,
+            motifRefus: row.signatureRequest.motifRefus,
             sentAt: row.signatureRequest.sentAt,
             relances: row.signatureRequest.relances,
             lastRelanceAt: row.signatureRequest.lastRelanceAt,

@@ -10,6 +10,7 @@ import { runSignatureReminders, RELANCES_MAX } from './reminders'
 
 const MAINTENANT = new Date('2026-07-20T09:00:00.000Z')
 const IL_Y_A_DIX_JOURS = new Date('2026-07-10T09:00:00.000Z')
+const APRES_ECHEANCE = MAINTENANT
 const HIER = new Date('2026-07-19T09:00:00.000Z')
 
 let userId = ''
@@ -34,6 +35,7 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
+  await prisma.lienClient.deleteMany({})
   await prisma.externalLink.deleteMany({ where: { entityType: ENTITY_CRA } })
   await prisma.signatureRequest.deleteMany({})
   await prisma.cra.deleteMany({ where: { userId: { in: [userId, autreUserId] } } })
@@ -44,6 +46,7 @@ beforeEach(async () => {
 })
 
 afterAll(async () => {
+  await prisma.lienClient.deleteMany({})
   await prisma.externalLink.deleteMany({ where: { entityType: ENTITY_CRA } })
   await prisma.cra.deleteMany({ where: { userId: { in: [userId, autreUserId] } } })
   await prisma.user.deleteMany({
@@ -73,13 +76,71 @@ async function demande(patch: Record<string, unknown> = {}): Promise<void> {
 }
 
 describe('runSignatureReminders', () => {
+  it('relance par l outil : nouveau lien, anciens liens intacts', async () => {
+    await demande({
+      origine: 'https://cra.test',
+      numero: 1,
+      signataireNom: 'Claire Client',
+      signataireEmail: 'claire@client.test',
+    })
+    await prisma.lienClient.create({
+      data: { craId, numero: 1, jetonEmpreinte: 'empreinte-initiale', jetonSignataire: 'sig-1' },
+    })
+    const connector = createFakeSignatureConnector()
+    const envoyes: string[] = []
+
+    const r = await runSignatureReminders({
+      now: APRES_ECHEANCE,
+      connector,
+      mailer: async (m) => {
+        envoyes.push(m.corps)
+      },
+    })
+
+    expect(r.relancees).toBe(1)
+    expect(envoyes[0]).toMatch(/https:\/\/cra\.test\/v\/[0-9a-f]{64}/)
+    expect(connector.renouvellements).toEqual([])
+    const liens = await prisma.lienClient.findMany({ where: { craId } })
+    expect(liens).toHaveLength(2)
+    expect(liens.every((l) => l.revokedAt === null && l.numero === 1)).toBe(true)
+    expect(liens.every((l) => l.jetonSignataire === 'sig-1')).toBe(true)
+  })
+
+  it('relance un envoi hérité par le prestataire, qui réécrit lui-même', async () => {
+    await demande({ origine: '' })
+    const connector = createFakeSignatureConnector()
+    const r = await runSignatureReminders({
+      now: APRES_ECHEANCE,
+      connector,
+      mailer: async () => {
+        throw new Error('ne doit pas écrire')
+      },
+    })
+    expect(r.relancees).toBe(1)
+    expect(connector.renouvellements).toEqual(['ext-1'])
+    expect(await prisma.lienClient.count({ where: { craId } })).toBe(0)
+  })
+
+  it('un courriel de relance non parti ne consomme pas de relance', async () => {
+    await demande({ origine: 'https://cra.test', signataireEmail: 'claire@client.test' })
+    const r = await runSignatureReminders({
+      now: APRES_ECHEANCE,
+      connector: createFakeSignatureConnector(),
+      mailer: async () => {
+        throw new Error('smtp')
+      },
+    })
+    expect(r.echecs).toBe(1)
+    expect((await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })).relances).toBe(0)
+  })
+
   it('relance une demande dont le délai est écoulé', async () => {
     await demande()
     const connector = createFakeSignatureConnector()
 
     const rapport = await runSignatureReminders({ now: MAINTENANT, connector })
     expect(rapport.relancees).toBe(1)
-    expect(connector.relances).toEqual(['ext-1'])
+    expect(connector.renouvellements).toEqual(['ext-1'])
 
     const relue = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
     expect(relue.relances).toBe(1)
@@ -90,7 +151,7 @@ describe('runSignatureReminders', () => {
     await demande({ sentAt: HIER })
     const connector = createFakeSignatureConnector()
     expect((await runSignatureReminders({ now: MAINTENANT, connector })).relancees).toBe(0)
-    expect(connector.relances).toEqual([])
+    expect(connector.renouvellements).toEqual([])
   })
 
   it('compte le délai depuis la dernière relance, pas depuis l envoi', async () => {
@@ -105,7 +166,7 @@ describe('runSignatureReminders', () => {
 
     const rapport = await runSignatureReminders({ now: MAINTENANT, connector })
     expect(rapport).toMatchObject({ relancees: 0, abandonnees: 1 })
-    expect(connector.relances).toEqual([])
+    expect(connector.renouvellements).toEqual([])
 
     const relue = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
     expect(relue.abandoned).toBe(true)
@@ -129,7 +190,7 @@ describe('runSignatureReminders', () => {
       await runSignatureReminders({ now, connector })
     }
 
-    expect(connector.relances).toEqual(['ext-1', 'ext-1', 'ext-1'])
+    expect(connector.renouvellements).toEqual(['ext-1', 'ext-1', 'ext-1'])
     const relue = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
     expect(relue.relances).toBe(RELANCES_MAX)
     expect(relue.abandoned).toBe(true)
@@ -162,7 +223,7 @@ describe('runSignatureReminders', () => {
       sansConnecteur: 0,
       echecs: 0,
     })
-    expect(connector.relances).toEqual([])
+    expect(connector.renouvellements).toEqual([])
   })
 
   it('SANS CONNECTEUR, compte les demandes échues sans jamais échouer', async () => {
@@ -179,7 +240,7 @@ describe('runSignatureReminders', () => {
     const connector = createFakeSignatureConnector()
     const enPanne = {
       ...connector,
-      remind: async () => {
+      renouveler: async () => {
         throw new Error('injoignable')
       },
     }
@@ -205,7 +266,7 @@ describe('runSignatureReminders', () => {
     const rapport = await runSignatureReminders({ now: MAINTENANT, connector })
 
     expect(rapport).toMatchObject({ relancees: 0, abandonnees: 0 })
-    expect(connector.relances).toEqual([])
+    expect(connector.renouvellements).toEqual([])
   })
 
   it('n abandonne pas non plus un CRA refusé à la main', async () => {
