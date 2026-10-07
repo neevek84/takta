@@ -7,6 +7,8 @@ import { transitionCra, updateInvoiceTracking } from '@/services/cra'
 import { sendCraForSignature } from '@/services/signature/send'
 import { refreshSignatureStatus } from '@/services/signature/refresh'
 import type { CraTransition } from '@/core/cra/state-machine'
+import { headers } from 'next/headers'
+import { originePublique } from '@/core/http/origine'
 
 /**
  * Les server actions de signature ne rendent rien : le motif d'échec repasse
@@ -46,15 +48,21 @@ export async function saveTracking(formData: FormData) {
   revalidatePath('/saisie')
 }
 
+/** L'origine publique de la requête : celle du lien que le client recevra. */
+async function origineDeLaRequete(): Promise<string> {
+  const entetes = await headers()
+  return originePublique(process.env.AUTH_URL, (nom) => entetes.get(nom))
+}
+
 export async function envoyerPourSignature(formData: FormData): Promise<void> {
   const user = await requireUser()
   const craId = String(formData.get('craId'))
-  const r = await sendCraForSignature(user.id, craId)
+  const r = await sendCraForSignature(user.id, craId, { origine: await origineDeLaRequete() })
 
   revalidatePath('/cra')
   revalidatePath(`/cra/${craId}`)
   revalidatePath('/saisie')
-  retour(craId, r.ok ? undefined : r.raison)
+  retour(craId, r.ok ? (r.courrielEnvoye ? undefined : 'COURRIEL_NON_PARTI') : r.raison)
 }
 
 export async function rafraichirSignature(formData: FormData): Promise<void> {

@@ -33,6 +33,10 @@ const ERREURS: Record<string, string> = {
   TRANSITION_IMPOSSIBLE: 'Ce CRA ne peut pas être envoyé dans son état actuel.',
   CONNECTEUR_EN_ECHEC:
     'L’outil de signature n’a pas accepté le document. Le CRA n’a pas changé d’état.',
+  PAS_D_ORIGINE:
+    'L’adresse publique de l’outil est inconnue : renseignez AUTH_URL, sinon le lien envoyé au client serait inutilisable.',
+  COURRIEL_NON_PARTI:
+    'Le CRA est envoyé, mais le courriel au client n’est pas parti. Copiez le lien ci-dessous et transmettez-le vous-même.',
   PAS_DE_DEMANDE: 'Ce CRA n’a jamais été envoyé pour signature.',
 }
 
@@ -184,11 +188,11 @@ export default async function CraDetailPage({
             Télécharger le PDF
           </a>
 
-          {canTransition(cra.status, 'ENVOYER') && (
+          {(canTransition(cra.status, 'ENVOYER') || canTransition(cra.status, 'RENVOYER')) && (
             <form action={envoyerPourSignature}>
               <input type="hidden" name="craId" value={cra.id} />
               <Button variant="primary" disabled={cra.signataireEmail === ''}>
-                Envoyer pour signature
+                {cra.status === 'REFUSE' ? 'Renvoyer pour signature' : 'Envoyer pour signature'}
               </Button>
             </form>
           )}
