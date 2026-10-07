@@ -44,6 +44,14 @@ describe('catalogue des événements', () => {
       'signature.envoyee',
       'signature.recue',
       'signature.refusee',
+      'signature.lien.ouvert',
+      'signature.code.envoye',
+      'signature.code.valide',
+      'signature.code.echoue',
+      'signature.annulee',
+      'signature.renvoyee',
+      'signature.courriel.envoye',
+      'signature.courriel.echoue',
       'engagement.depasse',
       'capacite.depassee',
       'reglage.modifie',
@@ -54,7 +62,7 @@ describe('catalogue des événements', () => {
   })
 
   it('en compte 30', () => {
-    expect(AUDIT_ACTIONS).toHaveLength(30)
+    expect(AUDIT_ACTIONS).toHaveLength(38)
   })
 
   it('ne porte plus la demande de facture, retirée du produit', () => {
