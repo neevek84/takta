@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  estTransitionManuelle,
   canTransition,
   applyTransition,
   isLocked,
@@ -85,5 +86,19 @@ describe('lot 3b — verrou, arrêt et nouvelles transitions', () => {
     expect(canTransition('ENVOYE', 'ROUVRIR')).toBe(false)
     expect(canTransition('REFUSE', 'ANNULER_ENVOI')).toBe(false)
     expect(canTransition('VALIDE', 'ANNULER_ENVOI')).toBe(false)
+  })
+})
+
+describe('estTransitionManuelle', () => {
+  it('accepte les cinq transitions des boutons', () => {
+    for (const t of ['ENVOYER', 'VALIDER', 'REFUSER', 'ROUVRIR', 'RENVOYER']) {
+      expect(estTransitionManuelle(t)).toBe(true)
+    }
+  })
+
+  it('REFUSE ANNULER_ENVOI — seule `annulerEnvoi` la franchit — et toute autre chaîne', () => {
+    for (const t of ['ANNULER_ENVOI', '', 'null', 'valider', 'SUPPRIMER']) {
+      expect(estTransitionManuelle(t)).toBe(false)
+    }
   })
 })

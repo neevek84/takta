@@ -8,7 +8,7 @@ import { sendCraForSignature } from '@/services/signature/send'
 import { refreshSignatureStatus } from '@/services/signature/refresh'
 import { annulerEnvoi } from '@/services/signature/annuler'
 import { nouveauLienManuel } from '@/services/signature/lien-client'
-import type { CraTransition } from '@/core/cra/state-machine'
+import { estTransitionManuelle } from '@/core/cra/state-machine'
 import { headers } from 'next/headers'
 import { originePublique } from '@/core/http/origine'
 
@@ -28,7 +28,11 @@ function retour(craId: string, raison?: string): never {
 export async function moveCra(formData: FormData) {
   const user = await requireUser()
   const craId = String(formData.get('craId'))
-  await transitionCra(user.id, craId, String(formData.get('transition')) as CraTransition)
+  // Liste blanche : le formulaire est forgeable. `ANNULER_ENVOI` en est exclue
+  // — elle doit retirer l'enveloppe chez le prestataire (`annulerEnvoi`).
+  const transition = String(formData.get('transition'))
+  if (!estTransitionManuelle(transition)) return
+  await transitionCra(user.id, craId, transition)
   revalidatePath('/cra')
   revalidatePath(`/cra/${craId}`)
   revalidatePath('/saisie')

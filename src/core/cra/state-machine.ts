@@ -29,6 +29,25 @@ const TRANSITIONS: Record<CraStatus, Partial<Record<CraTransition, CraStatus>>> 
   REFUSE: { ROUVRIR: 'BROUILLON', RENVOYER: 'ENVOYE' },
 }
 
+/**
+ * Les transitions qu'un formulaire peut demander. `ANNULER_ENVOI` n'en est
+ * pas : elle doit retirer l'enveloppe chez le prestataire, et seul
+ * `annulerEnvoi` le fait. La laisser passer par le bouton générique rouvrirait
+ * un mois encore signable ailleurs.
+ */
+export const TRANSITIONS_MANUELLES: readonly CraTransition[] = [
+  'ENVOYER',
+  'VALIDER',
+  'REFUSER',
+  'ROUVRIR',
+  'RENVOYER',
+]
+
+/** Garde de saisie : une chaîne venue d'un formulaire est-elle une transition manuelle ? */
+export function estTransitionManuelle(valeur: string): valeur is CraTransition {
+  return (TRANSITIONS_MANUELLES as readonly string[]).includes(valeur)
+}
+
 export function canTransition(from: CraStatus, t: CraTransition): boolean {
   return TRANSITIONS[from][t] !== undefined
 }
