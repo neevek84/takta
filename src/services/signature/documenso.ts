@@ -108,7 +108,7 @@ export function createDocumensoConnector(args: {
       )
       formulaire.append(
         'files',
-        new Blob([envoi.pdf], { type: 'application/pdf' }),
+        new Blob([new Uint8Array(envoi.pdf)], { type: 'application/pdf' }),
         envoi.fileName,
       )
 
