@@ -47,6 +47,37 @@ describe('CadreSignature', () => {
     await waitFor(() => expect(confirmer).toHaveBeenCalledTimes(1))
   })
 
+  it('un échec de la confirmation ne lève pas : message neutre, et la page se relit', async () => {
+    refresh.mockClear()
+    const rejets: unknown[] = []
+    const surRejet = (e: PromiseRejectionEvent) => rejets.push(e.reason)
+    window.addEventListener('unhandledrejection', surRejet)
+    const confirmer = vi.fn().mockRejectedValue(new Error('500'))
+    const { container, findByText } = render(
+      <CadreSignature url={URL_CADRE} confirmer={confirmer} renouveler={vi.fn()} />,
+    )
+    const iframe = container.querySelector('iframe')!
+    poster(iframe.contentWindow, 'https://sign.exemple.fr', 'document-completed')
+
+    expect(await findByText(/La confirmation prend plus de temps que prévu/)).toBeDefined()
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
+    window.removeEventListener('unhandledrejection', surRejet)
+    expect(rejets).toEqual([])
+  })
+
+  it('un échec du renouvellement ne lève pas non plus', async () => {
+    refresh.mockClear()
+    const renouveler = vi.fn().mockRejectedValue(new Error('500'))
+    const { container, findByText } = render(
+      <CadreSignature url={URL_CADRE} confirmer={vi.fn()} renouveler={renouveler} />,
+    )
+    const iframe = container.querySelector('iframe')!
+    poster(iframe.contentWindow, 'https://sign.exemple.fr', 'document-error')
+
+    expect(await findByText(/La confirmation prend plus de temps que prévu/)).toBeDefined()
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
+  })
+
   it('IGNORE un message d une autre origine ou d une autre fenêtre', async () => {
     const confirmer = vi.fn()
     const { container } = render(<CadreSignature url={URL_CADRE} confirmer={confirmer} renouveler={vi.fn()} />)

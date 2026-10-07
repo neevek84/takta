@@ -26,16 +26,28 @@ export function CadreSignature({
 
   useEffect(() => {
     const origine = new URL(url).origin
+    // Une action serveur qui échoue (réseau, 500) ne doit jamais devenir une
+    // promesse rejetée sans gestionnaire : l'écouteur est appelé par le
+    // navigateur, personne n'attend son résultat. Le client n'a rien à
+    // refaire — le webhook ou le balayage appliqueront l'état — on le dit
+    // sans alarmer, et la page se relit quand même.
+    async function tenter(action: () => Promise<void>): Promise<void> {
+      try {
+        await action()
+      } catch {
+        setMessage('La confirmation prend plus de temps que prévu ; la page se mettra à jour.')
+      }
+    }
     async function ecouter(e: MessageEvent) {
       if (e.origin !== origine || e.source !== cadre.current?.contentWindow) return
       const action = (e.data as { action?: unknown } | null)?.action
       if (action === 'document-completed' || action === 'document-rejected') {
         setMessage(action === 'document-completed' ? 'Merci, votre signature est enregistrée.' : 'Votre refus est transmis.')
-        await confirmer()
+        await tenter(confirmer)
         router.refresh()
       } else if (action === 'document-error') {
         setMessage('Le document n’a pas pu s’afficher. Nous renouvelons le lien de signature…')
-        await renouveler()
+        await tenter(renouveler)
         router.refresh()
       }
     }
