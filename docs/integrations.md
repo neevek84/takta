@@ -604,6 +604,10 @@ le client signe dans un cadre embarqué de la page `/v/…`.
   par l'API** avant d'appliquer quoi que ce soit — le webhook n'est qu'un signal.
   L'ancien en-tête `x-documenso-signature` n'est plus lu ; `x-cra-signature` (HMAC)
   reste accepté pour les intégrations maison.
+- **SMTP est un prérequis du circuit.** Le client n’ouvre son lien qu’avec un code
+  à usage unique reçu par courriel : sans serveur de courriel configuré dans
+  l’administration, l’envoi pour signature est refusé (`PAS_DE_SMTP`) avant tout appel
+  à Documenso. Les transitions manuelles restent disponibles.
 - **Licence** : la signature embarquée n’en exige aucune sur une instance sans
   facturation ; une instance avec Stripe doit porter le droit `embedSigning`.
 - **`AUTH_URL`** sert aussi à bâtir le lien envoyé au client (origine publique de

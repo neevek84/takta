@@ -43,6 +43,8 @@ const ERREURS: Record<string, string> = {
   TRANSITION_IMPOSSIBLE: 'Ce CRA ne peut pas être envoyé dans son état actuel.',
   CONNECTEUR_EN_ECHEC:
     'L’outil de signature n’a pas accepté le document. Le CRA n’a pas changé d’état.',
+  PAS_DE_SMTP:
+    'Le serveur de courriel n’est pas configuré : le client ne pourrait pas recevoir son code. Configurez SMTP dans l’administration, ou utilisez les transitions manuelles.',
   PAS_D_ORIGINE:
     'L’adresse publique de l’outil est inconnue : renseignez AUTH_URL, sinon le lien envoyé au client serait inutilisable.',
   COURRIEL_NON_PARTI:

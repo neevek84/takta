@@ -8,7 +8,7 @@ import type { CraStatus } from '@/core/types'
 import { actorOf, appendAudit } from '@/services/audit'
 import { transitionCra } from '@/services/cra'
 import { buildCraPdf } from '@/services/cra-pdf'
-import type { Mailer } from '@/services/notify'
+import { readSmtpConfig, type Mailer } from '@/services/notify'
 import { ENTITY_CRA } from './constants'
 import { envoyerCourriel } from './courriels'
 import { cloreEnvoiCourant } from './envois'
@@ -21,6 +21,7 @@ export type SendCraRaison =
   | 'PAS_D_ORIGINE'
   | 'TRANSITION_IMPOSSIBLE'
   | 'CONNECTEUR_EN_ECHEC'
+  | 'PAS_DE_SMTP'
 
 export type SendCraResult =
   | { ok: true; externalId: string; status: CraStatus; numero: number; courrielEnvoye: boolean }
@@ -36,6 +37,8 @@ const MESSAGES: Record<SendCraRaison, string> = {
   TRANSITION_IMPOSSIBLE: 'Ce CRA ne peut pas être envoyé dans son état actuel.',
   CONNECTEUR_EN_ECHEC:
     'L’outil de signature n’a pas accepté le document. Le CRA n’a pas changé d’état.',
+  PAS_DE_SMTP:
+    'Le serveur de courriel n’est pas configuré : le client ne pourrait pas recevoir son code. Configurez SMTP dans l’administration, ou utilisez les transitions manuelles.',
 }
 
 /** Sentinelle : un autre appel a pris le CRA entre la lecture et la transaction. */
@@ -86,6 +89,13 @@ export async function sendCraForSignature(
   const connector =
     options.connector !== undefined ? options.connector : await getSignatureConnector()
   if (connector === null) return echec('PAS_DE_CONNECTEUR')
+
+  // **SMTP est un prérequis du circuit, pas une option.** Le client n'ouvre
+  // son lien qu'avec un code reçu par courriel : sans serveur de courriel,
+  // chaque envoi produirait un lien que personne ne peut ouvrir. Refusé avant
+  // le prestataire, donc sans rien laisser derrière. Un `mailer` injecté
+  // (tests, intégrations) tient lieu de SMTP.
+  if (options.mailer == null && (await readSmtpConfig()) === null) return echec('PAS_DE_SMTP')
 
   const { fileName, bytes, champs, document } = await buildCraPdf(userId, craId)
   const { json, empreinte } = figerContenu(document)

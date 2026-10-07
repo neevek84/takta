@@ -340,12 +340,31 @@ describe('lot 3b — envoi par l outil', () => {
     expect(JSON.stringify(enBase)).not.toContain(lien![1]!)
   })
 
-  it('SANS SMTP, envoie quand même et le dit', async () => {
-    await prisma.settings.deleteMany({})
-    const r = await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector(), origine: ORIGINE })
+  it('COURRIEL EN ÉCHEC au moment de l envoi : envoie quand même et le dit', async () => {
+    const enPanne: Mailer = async () => {
+      throw new Error('serveur de courriel injoignable')
+    }
+    const r = await sendCraForSignature(userId, craId, {
+      connector: createFakeSignatureConnector(),
+      origine: ORIGINE,
+      mailer: enPanne,
+    })
     expect(r).toMatchObject({ ok: true, status: 'ENVOYE', courrielEnvoye: false })
     const journal = await prisma.auditEvent.findMany({ where: { entityId: craId }, orderBy: { seq: 'asc' } })
     expect(journal.map((e) => e.action)).toContain('signature.courriel.echoue')
+  })
+
+  // Revue finale lot 3b : sans SMTP, le client ne recevrait jamais son code —
+  // le lien serait inutilisable. Refusé avant le prestataire.
+  it('SANS SMTP NI MAILER, refuse avant le prestataire et ne touche à rien', async () => {
+    await prisma.settings.deleteMany({})
+    const connector = createFakeSignatureConnector()
+    const r = await sendCraForSignature(userId, craId, { connector, origine: ORIGINE })
+    expect(r).toMatchObject({ ok: false, raison: 'PAS_DE_SMTP' })
+    if (!r.ok) expect(r.message).toMatch(/client ne pourrait pas recevoir son code/)
+    expect(connector.envois).toHaveLength(0)
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('BROUILLON')
+    expect(await prisma.signatureRequest.count({ where: { craId } })).toBe(0)
   })
 
   it('refuse sans origine publique, sans rien toucher', async () => {
