@@ -3,11 +3,18 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 /**
  * Authentification d'un webhook de signature.
  *
- * **Par signature de charge utile, jamais par un jeton dans l'URL.** Ce
- * webhook fait franchir une transition qui verrouille un mois et peut
- * déclencher une facturation en aval : un jeton d'URL fuit dans les journaux
- * d'accès, les en-têtes `Referer` et l'historique des proxys, et ne prouve
- * rien sur le contenu reçu, quand un HMAC prouve l'origine **et** l'intégrité.
+ * **Deux preuves d'origine, jamais un jeton dans l'URL.** Un jeton d'URL fuit
+ * dans les journaux d'accès, les en-têtes `Referer` et l'historique des
+ * proxys. Sont acceptés :
+ *
+ * - le secret partagé que Documenso recopie dans `X-Documenso-Secret`
+ *   (`verifierSecretDocumenso`) — c'est ce que Documenso envoie réellement ;
+ * - un HMAC SHA-256 de la charge dans `x-cra-signature`
+ *   (`verifyWebhookSignature`), pour les intégrations maison et les tests.
+ *
+ * Ni l'un ni l'autre n'est cru sur le contenu : le service relit l'état de
+ * l'enveloppe chez le prestataire avant d'appliquer quoi que ce soit
+ * (`services/signature/webhook.ts`).
  *
  * Module pur : `node:crypto` uniquement, ni Prisma, ni Next, ni React.
  */

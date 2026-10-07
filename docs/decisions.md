@@ -47,9 +47,11 @@ Prises explicitement, elles coûteraient cher à défaire.
 Le client signe désormais dans l'outil : Documenso embarqué dans une page `/v/…`
 (API v2), derrière un code à usage unique envoyé par courriel. La page lit un
 contenu **figé** au moment de l'envoi, jamais le CRA vivant. `ENVOYE` ferme la
-saisie du mois, et c'est ce statut qui la rouvre en cas de refus. Le webhook
-n'est qu'un **signal** : l'application relit l'état de l'enveloppe par l'API
-avant de rien appliquer. Il n'y a toujours ni compte, ni mot de passe, ni montant
+saisie du mois ; c'est un refus du client (`REFUSE`) qui la rouvre, ou
+l'annulation de l'envoi, qui retire aussi l'enveloppe chez le prestataire. Le
+webhook n'est qu'un **signal** : l'application relit l'état de l'enveloppe par
+l'API avant de rien appliquer. Le code n'arrivant que par courriel, **SMTP est un
+prérequis du circuit** : sans lui, l'envoi pour signature est refusé. Il n'y a toujours ni compte, ni mot de passe, ni montant
 côté client.
 
 ### La facture, décision affinée en cours de route
