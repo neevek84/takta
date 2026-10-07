@@ -327,9 +327,12 @@ Chaque étape est écrite au journal de preuve existant (`appendAudit`, chaîné
 ajout seul). Le catalogue est un contrat public ; ces ajouts sont la décision de
 ce lot. Nouveaux noms au catalogue `core/audit/events.ts` :
 
-`signature.lien_ouvert` · `signature.code_envoye` · `signature.code_valide` ·
-`signature.code_echoue` · `signature.annulee` · `signature.renvoyee` ·
-`signature.courriel_envoye` · `signature.courriel_echoue`
+`signature.lien.ouvert` · `signature.code.envoye` · `signature.code.valide` ·
+`signature.code.echoue` · `signature.annulee` · `signature.renvoyee` ·
+`signature.courriel.envoye` · `signature.courriel.echoue`
+
+(minuscules pointées, sans tiret bas : c'est la règle que `events.test.ts`
+impose au catalogue.)
 
 `signature.envoyee`, `signature.recue` et `signature.refusee` existent déjà.
 Les actions du client sont émises sous l'acteur système. **Ni le nom, ni
