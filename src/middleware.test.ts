@@ -144,3 +144,31 @@ describe('middleware — le déclenchement externe n est pas gaté par la sessio
     expect(reponse?.headers.get('location')).toContain('/login')
   })
 })
+
+describe('middleware — la page client du lot 3b', () => {
+  it('laisse passer /v/<jeton> sans session', async () => {
+    const r = await sansSession(`/v/${'a'.repeat(64)}`)
+    expect(redirige(r)).toBe(false)
+  })
+
+  it('pose les en-têtes de la page client', async () => {
+    const avant = process.env.DOCUMENSO_URL
+    process.env.DOCUMENSO_URL = 'https://sign.exemple.fr/'
+    try {
+      const r = await sansSession(`/v/${'a'.repeat(64)}`)
+      expect(r!.headers.get('referrer-policy')).toBe('no-referrer')
+      expect(r!.headers.get('x-robots-tag')).toBe('noindex, nofollow')
+      const csp = r!.headers.get('content-security-policy') ?? ''
+      expect(csp).toContain('frame-src https://sign.exemple.fr')
+      expect(csp).toContain("frame-ancestors 'none'")
+    } finally {
+      if (avant === undefined) delete process.env.DOCUMENSO_URL
+      else process.env.DOCUMENSO_URL = avant
+    }
+  })
+
+  it('ne rouvre rien d autre : /cra reste fermé', async () => {
+    expect(redirige(await sansSession('/cra'))).toBe(true)
+    expect(redirige(await sansSession('/vue'))).toBe(true)
+  })
+})
