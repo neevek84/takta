@@ -877,6 +877,11 @@ function Case({
     description(etat, slots),
     previsionnel ? 'Prévisionnel' : undefined,
     occupe ? OCCUPATION_TITRE : undefined,
+    // Les autres prestations sont dans la case : son nom accessible les dit
+    // aussi, sans quoi un lecteur d'écran ne les entendrait jamais.
+    ...autres.map(
+      (a) => `${a.line.label} ${a.valeur}${a.previsionnel ? ' prévisionnel' : ''}`,
+    ),
   ]
     .filter((t) => t !== undefined)
     .join(' — ')
@@ -898,12 +903,9 @@ function Case({
   const couleurDeLaCase = previsionnel ? PREVU_COLOR : couleur
 
   return (
-    // Sans gouttière : les libellés des autres prestations se posent sous la
-    // case, et une gouttière ici les mettait à égale distance de leur propre
-    // case et de la case de la semaine suivante — une barre entre deux
-    // semaines, attachée à rien. Elle se retire ici et **jamais** en
-    // élargissant celle de la grille : celle-là est ce qui laisse aux sept
-    // colonnes leurs 44 points sur un écran de 375.
+    // La colonne s'étire sur la hauteur de la rangée, et la case avec elle :
+    // une case qui détaille trois prestations grandit, et ses voisines de
+    // semaine grandissent d'autant plutôt que de flotter en haut de la rangée.
     <div className="flex flex-col">
       <button
         type="button"
@@ -982,7 +984,7 @@ function Case({
         // au-dessus. Les poser deux fois laisserait l'ordre d'insertion CSS
         // trancher — précisément ce que `cn()` existe pour empêcher.
         className={cn(
-          'touch-target relative flex aspect-[2/1] flex-col items-center justify-center text-sm tabular-nums',
+          'touch-target relative flex aspect-[2/1] flex-1 flex-col items-stretch text-sm tabular-nums',
           FOND_JOUR[jourDit],
           aujourdhui ? 'border-2 border-ink' : 'border border-rule',
           // Le tireté dit le prévisionnel sans la teinte : deux aplats opaques
@@ -1013,65 +1015,83 @@ function Case({
           PLAGE_CLASSES[position],
         )}
       >
-        <Aplat
-          cle={jour.date}
-          forme={forme}
-          couleur={couleurDeLaCase}
-          className={PLAGE_APLAT[position]}
-        />
+        {/* La zone de la prestation saisie : son aplat s'y tient, et ne
+            s'étend pas sous les autres prestations quand la case grandit pour
+            les accueillir. `relative` en fait le repère de l'aplat, posé en
+            absolu. */}
+        <span className="relative flex min-h-0 flex-1 flex-col items-center justify-center">
+          <Aplat
+            cle={jour.date}
+            forme={forme}
+            couleur={couleurDeLaCase}
+            className={PLAGE_APLAT[position]}
+          />
 
-        {/* Après l'aplat, jamais avant : sans z-index, c'est l'ordre du
-            document qui décide, et le coin doit se poser par-dessus la teinte
-            qu'il traverse. */}
-        {etat.kind === 'LIBRE' && etat.eclatee && <CoinEclate cle={jour.date} />}
+          {/* Après l'aplat, jamais avant : sans z-index, c'est l'ordre du
+              document qui décide, et le coin doit se poser par-dessus la teinte
+              qu'il traverse. */}
+          {etat.kind === 'LIBRE' && etat.eclatee && <CoinEclate cle={jour.date} />}
 
-        {/* `relative` : le contenu passe au-dessus de l'aplat, qui est le seul
-            nœud positionné en absolu de la case. */}
-        <span className="relative flex items-center gap-0.5 text-xs leading-none">
-          {Number(jour.date.slice(8))}
-          {occupe && (
-            <IconeOccupation testId={`occupation-${jour.date}`} className="shrink-0" />
-          )}
-          {/* Le prévisionnel garde le remplissage du réalisé : c'est cette
-              horloge, et elle seule, qui les sépare. */}
-          {previsionnel && <Horloge date={jour.date} />}
-        </span>
-        {/* Le numéro du jour et la valeur sont deux nœuds distincts : les mêler
-            rendrait « la case est vide » indistinguable de « la case affiche 10 ». */}
-        <span data-testid={`valeur-${jour.date}`} className="relative leading-tight">
-          {valeur}
-        </span>
-      </button>
-      {autres.map(({ line: a, valeur: quantite, previsionnel: prevu }) => {
-        const couleur = colorForLine(a.id)
-        return (
-          <span
-            key={a.id}
-            data-testid={`autre-${a.id}-${jour.date}`}
-            data-previsionnel={prevu ? 'true' : undefined}
-            title={`${a.label} — ${quantite}${prevu ? ' — Prévisionnel' : ''} — lecture seule`}
-            // Coins hauts vifs : le libellé continue la case au lieu de
-            // flotter sous elle. Le premier reprend le coin arrondi du bas.
-            //
-            // Le libellé se tronque, jamais la quantité : dans une case de la
-            // vue 3 mois, « GU_2002… 0,5 » dit encore le détail de la
-            // journée, « GU_20026098-… » ne le dirait plus. Le prévisionnel se
-            // dit comme sur la case : tireté et italique, sans la teinte seule.
-            className={cn(
-              'flex items-baseline gap-1 rounded-b-sm border px-1 text-[10px] leading-tight',
-              couleur.bg,
-              couleur.text,
-              couleur.border,
-              prevu && 'border-dashed italic',
+          {/* `relative` : le contenu passe au-dessus de l'aplat, qui est le seul
+              nœud positionné en absolu de la case. */}
+          <span className="relative flex items-center gap-0.5 text-xs leading-none">
+            {Number(jour.date.slice(8))}
+            {occupe && (
+              <IconeOccupation testId={`occupation-${jour.date}`} className="shrink-0" />
             )}
-          >
-            <span className="min-w-0 flex-1 truncate">{a.label}</span>
-            <span data-testid={`autre-valeur-${a.id}-${jour.date}`} className="shrink-0 tabular-nums">
-              {quantite}
-            </span>
+            {/* Le prévisionnel garde le remplissage du réalisé : c'est cette
+                horloge, et elle seule, qui les sépare. */}
+            {previsionnel && <Horloge date={jour.date} />}
           </span>
-        )
-      })}
+          {/* Le numéro du jour et la valeur sont deux nœuds distincts : les mêler
+              rendrait « la case est vide » indistinguable de « la case affiche 10 ». */}
+          <span data-testid={`valeur-${jour.date}`} className="relative leading-tight">
+            {valeur}
+          </span>
+        </span>
+
+        {/* Les autres prestations, dans la case et non plus dessous : une
+            pastille par prestation, à sa couleur, avec sa quantité du jour.
+            Le libellé se tronque, jamais la quantité — « GU_2002… 0,5 » dit
+            encore le détail de la journée, « GU_20026098-… » ne le dirait
+            plus. Le prévisionnel se dit comme sur la case : tireté et
+            italique, sans la teinte seule.
+
+            Lecture seule : un clic sur la pastille d'une autre prestation ne
+            fait pas avancer la prestation saisie d'un cran — ce serait
+            écrire sur une ligne en croyant désigner l'autre. */}
+        {autres.length > 0 && (
+          <span className="relative flex w-full flex-col gap-px p-px">
+            {autres.map(({ line: a, valeur: quantite, previsionnel: prevu }) => {
+              const couleurAutre = colorForLine(a.id)
+              return (
+                <span
+                  key={a.id}
+                  data-testid={`autre-${a.id}-${jour.date}`}
+                  data-previsionnel={prevu ? 'true' : undefined}
+                  title={`${a.label} — ${quantite}${prevu ? ' — Prévisionnel' : ''} — lecture seule`}
+                  onClick={(ev) => ev.stopPropagation()}
+                  className={cn(
+                    'flex items-baseline gap-1 rounded-sm border px-1 text-left text-[10px] leading-tight not-italic',
+                    couleurAutre.bg,
+                    couleurAutre.text,
+                    couleurAutre.border,
+                    prevu && 'border-dashed italic',
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{a.label}</span>
+                  <span
+                    data-testid={`autre-valeur-${a.id}-${jour.date}`}
+                    className="shrink-0 tabular-nums"
+                  >
+                    {quantite}
+                  </span>
+                </span>
+              )
+            })}
+          </span>
+        )}
+      </button>
     </div>
   )
 }
