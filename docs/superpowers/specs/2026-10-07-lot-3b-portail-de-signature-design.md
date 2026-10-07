@@ -37,7 +37,8 @@ Documenso reste le tiers qui scelle la preuve ; il ne se montre plus.
    (§ 5), crée l'enveloppe chez Documenso **sans courriel**, crée un **lien
    client**, et passe le CRA à `ENVOYE`.
 2. **L'outil** écrit au signataire de la mission : le CRA est prêt, voici le
-   lien `{AUTH_URL}/v/{jeton}`.
+   lien `{origine}/v/{jeton}` — l'origine publique déduite comme pour la
+   réinitialisation de mot de passe.
 3. Le client ouvre le lien. Un **code à 6 chiffres** lui est envoyé à cette même
    adresse. Il le saisit.
 4. Il voit le CRA **en lecture seule**, rendu avec Encre : calendrier du mois,
@@ -72,10 +73,17 @@ Trois changements, et seulement trois :
 | **Nouvelle transition `REFUSE → ENVOYE`** (`RENVOYER`) | Un refus doit se corriger et repartir en un geste, sans « Rouvrir » puis « Envoyer ». |
 | **Nouvelle transition `ENVOYE → BROUILLON`** (`ANNULER_ENVOI`) | Corriger avant la réponse du client, sans laisser une enveloppe signable chez Documenso (voir « Annuler l'envoi » ci-dessous). |
 
-`isLocked(status)` devient vrai pour `ENVOYE` et `VALIDE`. Tous les appelants
-existants (`cells`, `time-entries`, `rates`, `missions`, `dolibarr/*`,
-`sync/conflicts`) en héritent sans modification ; un test par appelant prouve
-qu'une écriture est refusée sur un mois `ENVOYE`.
+`isLocked` porte aujourd'hui **deux sens** qu'il faut séparer :
+
+- **la saisie est fermée** — `isLocked(status)`, vrai pour `ENVOYE` et `VALIDE`.
+  Appelants : `cells`, `time-entries`, `rates`, `missions`, `sync/conflicts`. Ils
+  en héritent sans modification ; un test par appelant prouve qu'une écriture
+  est refusée sur un mois `ENVOYE`.
+- **le mois est arrêté, ses temps peuvent partir** — nouveau `isArrete(status)`,
+  vrai pour `VALIDE` seulement. Appelants : `dolibarr/push` et
+  `dolibarr/rattrapage`, qui basculent sur lui. Sans cette séparation, le
+  rattrapage pousserait vers Dolibarr les temps d'un CRA `ENVOYE` **avant** la
+  signature du client ; un test le prouve.
 
 **Conséquence assumée** : la synchronisation Google d'un mois `ENVOYE` se
 comporte comme celle d'un mois `VALIDE` (les conflits ne déplacent plus de
@@ -139,14 +147,27 @@ interface SignatureConnector {
 `remind` disparaît du connecteur : **c'est l'outil qui relance** (§ 7). Le cœur
 ne sait toujours pas quel prestataire est branché.
 
-### 4.3 Webhook
+### 4.3 Webhook — un défaut du lot 3 refermé
 
-La charge utile v2 porte `payload.id` (numérique), `payload.envelopeId` et
-`payload.externalId`. La correspondance se fait par `envelopeId` dans
-`ExternalLink` ; le numérique reste reconnu pour les envois antérieurs (§ 4.4).
-Le motif de refus est lu sur `payload.recipients[].rejectionReason`.
-L'authentification par signature de charge utile et l'idempotence ne changent
-pas.
+**Documenso ne signe pas ses webhooks.** Il envoie le secret configuré, tel
+quel, dans l'en-tête `X-Documenso-Secret` (`execute-webhook-call.ts`, et sa
+documentation « Verification »). La route du lot 3 attend un HMAC dans
+`x-documenso-signature` : **chaque webhook réel reçoit 401**, et un CRA signé
+ne passe `VALIDE` que par « Rafraîchir » ou par le balayage planifié.
+
+Ce lot :
+
+- accepte `X-Documenso-Secret`, comparé au secret **à temps constant** ; l'HMAC
+  `x-cra-signature` reste accepté (tests, intégrations maison) ;
+- fait du webhook **un signal, plus une source de vérité** : il désigne une
+  enveloppe, et l'application **redemande son état** au connecteur (`status()`)
+  avant d'appliquer quoi que ce soit, par `applySignatureStatus`. Un secret
+  ne prouve pas l'intégrité d'une charge ; une relecture chez le prestataire,
+  si. Un webhook forgé ne peut donc rien valider ni refuser.
+
+La correspondance se fait par `payload.envelopeId` sur l'envoi courant ; le
+numérique (`payload.id`) reste reconnu pour les envois antérieurs (§ 4.4).
+L'idempotence (`SignatureWebhookEvent`) ne change pas.
 
 ### 4.4 Les envois déjà partis
 
@@ -160,24 +181,30 @@ n'a pas de lien client. Aucune migration de données n'est nécessaire.
 
 ## 5. Données
 
-### 5.1 Un envoi par ligne
+### 5.1 L'envoi en cours, et les envois clos
 
-`SignatureRequest` est aujourd'hui **unique par CRA** (`craId @unique`), ce qui
-interdit l'historique des tentatives. Elle devient **une ligne par envoi** :
+Le lot 3 a choisi **une seule demande par CRA**, pour qu'aucune lecture n'ait à
+décider laquelle fait foi ; une dizaine de lectures en dépendent. Ce lot garde
+ce principe : `SignatureRequest` reste **l'envoi en cours**, unique par CRA. Elle
+gagne :
 
 | Champ | Rôle |
 |---|---|
-| `craId` | plus unique ; index `(craId, numero)` unique |
-| `numero` | 1, 2, 3… par CRA |
-| `status` | `EN_ATTENTE` · `SIGNE` · `REFUSE` · `EXPIRE` · **`ANNULE`** |
+| `numero` | 1, 2, 3… — incrémenté à chaque renvoi |
+| `externalId` | l'enveloppe de **cet** envoi (l'`ExternalLink` reste la correspondance du CRA, tenue à jour) |
 | `motifRefus` | texte du client, tel quel |
 | `contenuFige` | JSON du CRA envoyé (§ 5.2), écrit et lu en bloc |
 | `empreinte` | SHA-256 hexadécimal de `contenuFige` |
-| existants | `provider`, `signataireNom`, `signataireEmail`, `sentAt`, `relances`, `lastRelanceAt`, `completedAt`, `abandoned`, `signedPdf` |
+| `origine` | l'adresse publique de l'outil au moment de l'envoi, pour les liens des relances |
 
-Les lectures existantes qui supposaient une seule demande par CRA lisent
-désormais **la dernière** (`numero` maximal). La migration numérote 1 les lignes
-existantes.
+`status` admet une valeur de plus : **`ANNULE`**.
+
+Quand un envoi est **remplacé** — renvoi après refus, ou annulation — il est
+d'abord recopié, tel quel, dans une nouvelle table **`SignatureEnvoiClos`**
+(`craId`, `numero`, `status`, `motifRefus`, `signataireNom`, `signataireEmail`,
+`sentAt`, `completedAt`, `empreinte`). Une ligne close ne change plus jamais :
+il n'y a donc rien qui puisse diverger. L'historique de l'écran du CRA (§ 8)
+lit l'envoi en cours plus les envois clos.
 
 ### 5.2 Le contenu figé
 
@@ -198,14 +225,19 @@ Nouvelle table `LienClient` :
 | Champ | Rôle |
 |---|---|
 | `id` | cuid |
-| `signatureRequestId` | l'envoi qu'il sert, unique |
+| `craId`, `numero` | l'envoi qu'il sert ; unique ensemble |
 | `jetonEmpreinte` | SHA-256 du jeton — **le jeton en clair n'est jamais stocké** |
 | `jetonSignataire` | jeton Documenso du destinataire, pour le cadre embarqué |
 | `revokedAt` | révocation explicite, annulation ou remplacement |
 | `codeEmpreinte`, `codeExpireAt`, `codeEssais` | le code à 6 chiffres en cours |
 | `derniereConsultationAt` | pour le suivi |
 
-Le jeton du lien : 32 octets aléatoires, en base64url.
+Le jeton du lien : 32 octets aléatoires, en hexadécimal, haché en SHA-256 —
+exactement le procédé de la réinitialisation de mot de passe
+(`core/auth/reinitialisation.ts`), réutilisé tel quel.
+
+Un lien dont le `numero` est inférieur à celui de l'envoi en cours est
+**remplacé**. Un renvoi ou une annulation révoque les liens du CRA.
 
 Tous les types restent portables SQLite/Postgres : chaînes, entiers, dates,
 `Bytes`. Aucun enum, aucun tableau.
@@ -292,16 +324,20 @@ dit ; le PDF reste disponible dans l'outil dès son archivage.
 ## 8. Suivi
 
 Chaque étape est écrite au journal de preuve existant (`appendAudit`, chaîné, en
-ajout seul). Nouveaux noms au catalogue `core/audit/events.ts` :
+ajout seul). Le catalogue est un contrat public ; ces ajouts sont la décision de
+ce lot. Nouveaux noms au catalogue `core/audit/events.ts` :
 
 `signature.lien_ouvert` · `signature.code_envoye` · `signature.code_valide` ·
 `signature.code_echoue` · `signature.annulee` · `signature.renvoyee` ·
 `signature.courriel_envoye` · `signature.courriel_echoue`
 
-`signature.envoyee`, `signature.recue` et `signature.refusee` existent déjà ;
-`signature.refusee` porte désormais le motif. Les actions du client sont émises
-sous l'acteur système, avec l'adresse du signataire en charge utile — comme au
-lot 3.
+`signature.envoyee`, `signature.recue` et `signature.refusee` existent déjà.
+Les actions du client sont émises sous l'acteur système. **Ni le nom, ni
+l'adresse du signataire, ni le motif de refus n'entrent au journal** — il est
+conservé indéfiniment et poussé vers des URL tierces, règle posée au lot 3. Les
+charges utiles portent le numéro d'envoi et l'identifiant du CRA ; le motif et
+le destinataire restent lisibles sur l'envoi (`SignatureRequest`), qui ne sort
+pas.
 
 L'écran du CRA (`/cra/[craId]`) gagne un **historique par envoi** :
 
@@ -347,7 +383,7 @@ et signe ce document-là, rien d'autre. »
 | Documenso refuse d'être embarqué (en-têtes de cadre) | Repli : le bouton ouvre la page de signature Documenso dans un nouvel onglet ; le reste du circuit est identique. Le composant détecte l'échec de chargement. |
 | Le cadre change de protocole `postMessage` | Les messages ne servent qu'à l'affichage ; la vérité vient de `status()`. |
 | Lien transféré | Le code part toujours à l'adresse du signataire figée à l'envoi. |
-| `AUTH_URL` absent en production | L'envoi refuse de partir (« l'adresse publique de l'outil n'est pas configurée ») plutôt que d'écrire un lien `localhost`. |
+| Adresse publique mal déduite derrière un proxy | Le lien est bâti par `originePublique(AUTH_URL, en-têtes)`, la fonction de la réinitialisation de mot de passe ; elle est mémorisée sur l'envoi pour que les relances, qui n'ont pas de requête, réutilisent la même. |
 
 ---
 
@@ -355,7 +391,9 @@ et signe ce document-là, rien d'autre. »
 
 - **Connecteur v2** : chaque appel sur des réponses enregistrées ; identifiant
   numérique hérité ; erreurs sans fuite de clé (le test existant est conservé).
-- **Webhook v2** : `envelopeId`, `externalId`, motif de refus, rejeu.
+- **Webhook** : `X-Documenso-Secret` juste, faux, absent ; un webhook dont la
+  charge dit « signé » alors que `status()` dit « en attente » ne valide rien ;
+  `envelopeId`, identifiant numérique hérité, rejeu.
 - **Verrouillage** : chaque appelant de `isLocked` refuse d'écrire sur un mois
   `ENVOYE`.
 - **Machine à états** : `RENVOYER` depuis `REFUSE` ; `ANNULER_ENVOI` depuis
