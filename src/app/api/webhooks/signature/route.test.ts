@@ -3,13 +3,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const { etat } = vi.hoisted(() => ({
   etat: {
     resultat: { ok: true, effet: 'VALIDE', craId: 'cra-1' } as unknown,
-    appels: [] as Array<{ rawBody: string; signatureHeader: string }>,
+    appels: [] as Array<{ rawBody: string; secretHeader: string; signatureHeader: string }>,
   },
 }))
 
 vi.mock('@/services/signature/webhook', () => ({
-  handleSignatureWebhook: async (args: { rawBody: string; signatureHeader: string }) => {
-    etat.appels.push({ rawBody: args.rawBody, signatureHeader: args.signatureHeader })
+  handleSignatureWebhook: async (args: {
+    rawBody: string
+    secretHeader: string
+    signatureHeader: string
+  }) => {
+    etat.appels.push({
+      rawBody: args.rawBody,
+      secretHeader: args.secretHeader,
+      signatureHeader: args.signatureHeader,
+    })
     return etat.resultat
   },
 }))
@@ -28,10 +36,19 @@ describe('POST /api/webhooks/signature', () => {
     etat.resultat = { ok: true, effet: 'VALIDE', craId: 'cra-1' }
   })
 
-  it('transmet le corps BRUT et l en-tête de signature', async () => {
+  it('transmet le corps BRUT et l en-tête X-Documenso-Secret', async () => {
     const corps = '{"event":"DOCUMENT_COMPLETED","payload":{"id":42}}'
-    await requete(corps, { 'x-documenso-signature': 'sha256=abc' })
-    expect(etat.appels).toEqual([{ rawBody: corps, signatureHeader: 'sha256=abc' }])
+    await requete(corps, { 'x-documenso-secret': 'le-secret' })
+    expect(etat.appels).toEqual([{ rawBody: corps, secretHeader: 'le-secret', signatureHeader: '' }])
+  })
+
+  it('l ancien en-tête x-documenso-signature seul est refusé : il n est plus lu', async () => {
+    // Le vrai handler refuse un secret vide ; ici on vérifie que la route ne
+    // fait plus passer cet en-tête pour une preuve d'origine.
+    await requete('{}', { 'x-documenso-signature': 'sha256=abc' })
+    expect(etat.appels[0]).toEqual({ rawBody: '{}', secretHeader: '', signatureHeader: '' })
+    etat.resultat = { ok: false, raison: 'SIGNATURE_INVALIDE' }
+    expect((await requete('{}', { 'x-documenso-signature': 'sha256=abc' })).status).toBe(401)
   })
 
   it('ne réordonne jamais la charge : un HMAC porte sur les octets reçus', async () => {
@@ -39,18 +56,24 @@ describe('POST /api/webhooks/signature', () => {
     // une chaîne différente — clés réordonnées, espaces perdus — et la
     // signature ne vaudrait plus rien.
     const corps = '{\n  "payload": {"id": 42},\n  "event": "DOCUMENT_COMPLETED"\n}'
-    await requete(corps, { 'x-documenso-signature': 'sha256=abc' })
+    await requete(corps, { 'x-documenso-secret': 'le-secret' })
     expect(etat.appels[0]!.rawBody).toBe(corps)
   })
 
-  it('accepte aussi l en-tête générique', async () => {
+  it('accepte aussi l en-tête HMAC générique', async () => {
     await requete('{}', { 'x-cra-signature': 'sha256=def' })
     expect(etat.appels[0]!.signatureHeader).toBe('sha256=def')
   })
 
-  it('passe une signature vide plutôt que de deviner, quand aucun en-tête n est fourni', async () => {
+  it('passe des en-têtes vides plutôt que de deviner, quand aucun n est fourni', async () => {
     await requete('{}')
     expect(etat.appels[0]!.signatureHeader).toBe('')
+    expect(etat.appels[0]!.secretHeader).toBe('')
+  })
+
+  it('rend 503 quand le prestataire est injoignable : il réessaiera', async () => {
+    etat.resultat = { ok: false, raison: 'PRESTATAIRE_INJOIGNABLE' }
+    expect((await requete('{}')).status).toBe(503)
   })
 
   it('rend 200 et l effet obtenu', async () => {

@@ -1,5 +1,6 @@
 import { prisma } from '@/db/client'
-import type { SignatureConnector, SignatureStatus } from '@/core/signature/connector'
+import type { SignatureConnector, SignatureEtat, SignatureStatus } from '@/core/signature/connector'
+import type { Mailer } from '@/services/notify'
 import { applySignatureStatus, type SignatureEffet } from './apply'
 import { ENTITY_CRA } from './constants'
 import { getSignatureConnector } from './registry'
@@ -37,7 +38,7 @@ function echec(raison: RefreshRaison): RefreshResult {
 export async function refreshSignatureStatus(
   userId: string,
   craId: string,
-  options: { connector?: SignatureConnector | null } = {},
+  options: { connector?: SignatureConnector | null; mailer?: Mailer | null } = {},
 ): Promise<RefreshResult> {
   // Scope par `userId` en premier : on n'interroge jamais le prestataire au
   // sujet du CRA d'un autre, et on ne lui apprend donc pas qu'il existe.
@@ -66,9 +67,9 @@ export async function refreshSignatureStatus(
     options.connector !== undefined ? options.connector : await getSignatureConnector()
   if (connector === null) return echec('PAS_DE_CONNECTEUR')
 
-  let statut: SignatureStatus
+  let etat: SignatureEtat
   try {
-    statut = await connector.status(lien.externalId)
+    etat = await connector.status(lien.externalId)
   } catch {
     // Injoignable n'est pas « rien à signaler » : rendre EN_ATTENTE ici
     // ferait passer une panne pour une réponse, et l'utilisateur attendrait
@@ -76,11 +77,14 @@ export async function refreshSignatureStatus(
     return echec('CONNECTEUR_EN_ECHEC')
   }
 
+  const statut = etat.statut
   const effet = await applySignatureStatus({
     craId,
     externalId: lien.externalId,
     statut,
+    motifRefus: etat.motifRefus,
     connector,
+    mailer: options.mailer ?? null,
   })
 
   // Rattrapage de l'archive : la signature a pu être appliquée par un webhook
@@ -150,7 +154,7 @@ export interface RefreshSweepReport {
  * demandes suivantes n'ont pas à payer la panne de la première.
  */
 export async function refreshPendingSignatures(
-  args: { userId?: string; connector?: SignatureConnector | null } = {},
+  args: { userId?: string; connector?: SignatureConnector | null; mailer?: Mailer | null } = {},
 ): Promise<RefreshSweepReport> {
   const rapport: RefreshSweepReport = {
     examinees: 0,
@@ -185,7 +189,10 @@ export async function refreshPendingSignatures(
     // Le propriétaire vient de la ligne du CRA, jamais de l'appelant : le
     // scope de `refreshSignatureStatus` reste entier même sous un réveil qui
     // n'a pas de session.
-    const r = await refreshSignatureStatus(demande.cra.userId, demande.craId, { connector })
+    const r = await refreshSignatureStatus(demande.cra.userId, demande.craId, {
+      connector,
+      mailer: args.mailer ?? null,
+    })
 
     if (!r.ok) {
       rapport.echecs += 1

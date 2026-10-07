@@ -5,6 +5,16 @@ import type { CraStatus } from '@/core/types'
 import type { AuditAction } from '@/core/audit/events'
 import { ACTEUR_SYSTEME, appendAudit } from '@/services/audit'
 import { transitionCra } from '@/services/cra'
+import { libelleMois } from '@/core/cra/document'
+import {
+  gabaritRefusClient,
+  gabaritRefusConsultant,
+  gabaritValideClient,
+  gabaritValideConsultant,
+} from '@/core/notify/signature'
+import type { Mailer, PieceJointe } from '@/services/notify'
+import { nomFichierCra } from '@/services/cra-pdf'
+import { envoyerCourriel } from './courriels'
 
 export type SignatureEffet = 'VALIDE' | 'REFUSE' | 'EXPIRE' | 'AUCUN'
 
@@ -54,13 +64,29 @@ export async function applySignatureStatus(args: {
   craId: string
   externalId: string
   statut: SignatureStatus
+  motifRefus?: string | null
   connector?: SignatureConnector | null
+  mailer?: Mailer | null
 }): Promise<SignatureEffet> {
   const cra = await prisma.cra.findUnique({
     where: { id: args.craId },
     select: { id: true, status: true, userId: true },
   })
   if (cra === null) return 'AUCUN'
+
+  // **Seul l'envoi en cours fait foi.** Un webhook tardif d'une enveloppe
+  // remplacée — refusée puis renvoyée, ou annulée — ne doit ni valider ni
+  // refuser le nouvel envoi. Un envoi antérieur au lot 3b n'a pas
+  // d'`externalId` sur sa demande : `ExternalLink` a déjà fait la
+  // correspondance en amont.
+  const demande = await prisma.signatureRequest.findUnique({
+    where: { craId: args.craId },
+    select: { externalId: true, status: true },
+  })
+  if (demande !== null && demande.externalId !== '' && demande.externalId !== args.externalId) {
+    return 'AUCUN'
+  }
+  if (demande?.status === 'ANNULE') return 'AUCUN'
 
   const maintenant = new Date()
 
@@ -81,7 +107,11 @@ export async function applySignatureStatus(args: {
     await archiverSiPossible(args.craId, args.externalId, args.connector ?? null)
   }
 
-  await marquerDemande(args.craId, { status: args.statut, completedAt: maintenant })
+  await marquerDemande(args.craId, {
+    status: args.statut,
+    completedAt: maintenant,
+    ...(args.statut === 'REFUSE' ? { motifRefus: (args.motifRefus ?? '').trim() } : {}),
+  })
 
   await transitionCra(cra.userId, args.craId, transition)
 
@@ -97,12 +127,16 @@ export async function applySignatureStatus(args: {
     payload: { statut: args.statut, statutAvant: statut },
   })
 
+  // Après tout le reste, et sous la garde d'idempotence : un rejeu rend
+  // `AUCUN` bien avant d'arriver ici, donc pas de second courriel.
+  await notifierIssue(args.craId, args.statut === 'SIGNE' ? 'VALIDE' : 'REFUSE', args.mailer ?? null)
+
   return args.statut === 'SIGNE' ? 'VALIDE' : 'REFUSE'
 }
 
 async function marquerDemande(
   craId: string,
-  data: { status: string; completedAt?: Date },
+  data: { status: string; completedAt?: Date; motifRefus?: string },
 ): Promise<void> {
   // `updateMany` plutôt que `update` : une transition manuelle a pu faire
   // arriver le CRA ici sans qu'aucune demande n'ait jamais été ouverte.
@@ -139,4 +173,68 @@ async function archiverSiPossible(
     // Volontairement silencieux : l'archivage est un plus, la validation est
     // le fait. Le rafraîchissement à la demande retentera.
   }
+}
+
+/**
+ * Écrit au consultant et au client que le CRA est validé ou refusé.
+ *
+ * Le PDF signé est joint s'il est archivé ; sinon le courriel le dit, et le
+ * document reste disponible dans l'outil dès son archivage. Rien ici ne lève :
+ * `envoyerCourriel` absorbe et journalise toute panne.
+ */
+async function notifierIssue(
+  craId: string,
+  issue: 'VALIDE' | 'REFUSE',
+  mailer: Mailer | null,
+): Promise<void> {
+  const cra = await prisma.cra.findUnique({
+    where: { id: craId },
+    select: {
+      id: true,
+      month: true,
+      user: { select: { email: true } },
+      mission: { select: { label: true, client: { select: { name: true } } } },
+      signatureRequest: {
+        select: {
+          signataireNom: true,
+          signataireEmail: true,
+          motifRefus: true,
+          signedPdf: true,
+          origine: true,
+        },
+      },
+    },
+  })
+  if (cra === null || cra.signatureRequest === null) return
+
+  const d = cra.signatureRequest
+  const mois = cra.month.toISOString().slice(0, 7)
+  const contexte = {
+    clientNom: cra.mission.client.name,
+    missionLabel: cra.mission.label,
+    moisLibelle: libelleMois(mois),
+    signataireNom: d.signataireNom,
+  }
+
+  if (issue === 'VALIDE') {
+    const pieces: PieceJointe[] =
+      d.signedPdf == null
+        ? []
+        : [
+            {
+              nom: `${nomFichierCra(cra.mission.client.name, cra.mission.label, mois).replace(/\.pdf$/, '')}-signe.pdf`,
+              type: 'application/pdf',
+              octets: new Uint8Array(d.signedPdf),
+            },
+          ]
+    const pdfJoint = pieces.length > 0
+    await envoyerCourriel({ craId, raison: 'VALIDE_CONSULTANT', to: cra.user.email, gabarit: gabaritValideConsultant({ ...contexte, pdfJoint }), pieces, mailer })
+    await envoyerCourriel({ craId, raison: 'VALIDE_CLIENT', to: d.signataireEmail, gabarit: gabaritValideClient({ ...contexte, pdfJoint }), pieces, mailer })
+    return
+  }
+
+  const motif = d.motifRefus !== '' ? d.motifRefus : '(aucun motif indiqué)'
+  const lienCra = d.origine !== '' ? `${d.origine}/cra/${craId}` : `/cra/${craId}`
+  await envoyerCourriel({ craId, raison: 'REFUSE_CONSULTANT', to: cra.user.email, gabarit: gabaritRefusConsultant({ ...contexte, motif, lienCra }), mailer })
+  await envoyerCourriel({ craId, raison: 'REFUSE_CLIENT', to: d.signataireEmail, gabarit: gabaritRefusClient({ ...contexte, motif }), mailer })
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import type { Mailer } from '@/services/notify'
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/db/client'
 import { ENTITY_CRA } from '@/core/sync/policy'
@@ -11,6 +12,9 @@ import { saveInstanceCredential, revokeInstanceCredential } from '@/services/cre
 import { DOLIBARR } from '@/services/dolibarr/api'
 import { createFakeSignatureConnector } from './fake-connector'
 import { applySignatureStatus } from './apply'
+
+const EMAIL_CONSULTANT = 'apply@test.local'
+const EMAIL_SIGNATAIRE = 'signataire-apply@client.test'
 
 let userId = ''
 let missionId = ''
@@ -41,7 +45,7 @@ beforeAll(async () => {
   process.env.CREDENTIALS_KEY = randomBytes(32).toString('base64')
 
   const u = await prisma.user.create({
-    data: { email: 'apply@test.local', name: 'T', passwordHash: 'x' },
+    data: { email: EMAIL_CONSULTANT, name: 'T', passwordHash: 'x' },
   })
   userId = u.id
   const c = await createClient('APPLY client')
@@ -61,7 +65,14 @@ beforeEach(async () => {
   craId = (await getOrCreateCra(userId, missionId, '2026-06')).id
   await prisma.cra.update({ where: { id: craId }, data: { status: 'ENVOYE' } })
   await prisma.signatureRequest.create({
-    data: { craId, provider: 'double', status: 'EN_ATTENTE' },
+    data: {
+      craId,
+      provider: 'double',
+      status: 'EN_ATTENTE',
+      externalId: 'ext-1',
+      signataireNom: 'Sam Signataire',
+      signataireEmail: EMAIL_SIGNATAIRE,
+    },
   })
 })
 
@@ -310,5 +321,80 @@ describe('applySignatureStatus', () => {
     await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'EXPIRE', connector: null })
     await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'REFUSE', connector: null })
     expect(await prisma.syncOutbox.count()).toBe(0)
+  })
+})
+
+describe('lot 3b — issue du circuit', () => {
+  let courriels: Array<{ to: string; sujet: string; pieces: number }> = []
+  const mailer: Mailer = async (m) => {
+    courriels.push({ to: m.to, sujet: m.sujet, pieces: m.pieces?.length ?? 0 })
+  }
+  beforeEach(() => {
+    courriels = []
+  })
+
+  it('un refus enregistre le motif et écrit au consultant ET au client, sans pièce jointe', async () => {
+    const effet = await applySignatureStatus({
+      craId,
+      externalId: 'ext-1',
+      statut: 'REFUSE',
+      motifRefus: 'Il manque le 15.',
+      mailer,
+    })
+    expect(effet).toBe('REFUSE')
+    const d = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
+    expect(d.motifRefus).toBe('Il manque le 15.')
+    expect(courriels.map((c) => c.to).sort()).toEqual([EMAIL_CONSULTANT, EMAIL_SIGNATAIRE].sort())
+    expect(courriels.every((c) => c.pieces === 0)).toBe(true)
+  })
+
+  it('une signature écrit aux deux, PDF signé joint', async () => {
+    const connector = createFakeSignatureConnector()
+    connector.poserPdfSigne('ext-1', new Uint8Array([0x25, 0x50, 0x44, 0x46]))
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', connector, mailer })
+    expect(courriels).toHaveLength(2)
+    expect(courriels.every((c) => c.pieces === 1)).toBe(true)
+  })
+
+  it('sans archive (téléchargement en échec), écrit quand même — sans pièce jointe', async () => {
+    const connector = createFakeSignatureConnector()
+    connector.faireEchouerTelechargement('panne')
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', connector, mailer })
+    expect(courriels).toHaveLength(2)
+    expect(courriels.every((c) => c.pieces === 0)).toBe(true)
+  })
+
+  it("UN REJEU N'ÉCRIT PAS DEUX FOIS", async () => {
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer })
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer })
+    expect(courriels).toHaveLength(2)
+  })
+
+  it("ignore l'état d'une ancienne enveloppe : seul l'envoi en cours fait foi", async () => {
+    const effet = await applySignatureStatus({
+      craId,
+      externalId: 'ext-ancienne',
+      statut: 'SIGNE',
+      mailer,
+    })
+    expect(effet).toBe('AUCUN')
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('ENVOYE')
+    expect(courriels).toHaveLength(0)
+  })
+
+  it('ignore une demande annulée', async () => {
+    await prisma.signatureRequest.update({ where: { craId }, data: { status: 'ANNULE' } })
+    expect(
+      await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer }),
+    ).toBe('AUCUN')
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('ENVOYE')
+  })
+
+  it('une signature met les temps en file pour Dolibarr, comme une validation manuelle', async () => {
+    await armerDolibarr()
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer })
+    expect(
+      await prisma.syncOutbox.count({ where: { entityId: craId, provider: DOLIBARR } }),
+    ).toBe(1)
   })
 })

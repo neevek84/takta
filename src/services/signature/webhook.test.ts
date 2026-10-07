@@ -6,7 +6,9 @@ import { createMission, createLine } from '@/services/missions'
 import { saveEntry } from '@/services/time-entries'
 import { getOrCreateCra, transitionCra } from '@/services/cra'
 import { updateSettings } from '@/services/settings'
+import type { Mailer } from '@/services/notify'
 import { createFakeSignatureConnector } from './fake-connector'
+import { refreshSignatureStatus } from './refresh'
 import { ENTITY_CRA, PROVIDER_DOCUMENSO } from './constants'
 import { handleSignatureWebhook } from './webhook'
 
@@ -17,8 +19,16 @@ let missionId = ''
 let lineId = ''
 let craId = ''
 
-function charge(event: string, id: string): string {
-  return JSON.stringify({ event, payload: { id } })
+/** Charge v2 : l'enveloppe porte l'identifiant que `send` a rendu. */
+function charge(event: string, envelopeId: string): string {
+  return JSON.stringify({ event, payload: { id: 1, envelopeId } })
+}
+
+/** Le double rapporte, par défaut, l'état que la charge annonce. */
+const ETAT_PAR_EVENEMENT: Record<string, 'SIGNE' | 'REFUSE' | 'EXPIRE'> = {
+  DOCUMENT_COMPLETED: 'SIGNE',
+  DOCUMENT_REJECTED: 'REFUSE',
+  DOCUMENT_CANCELLED: 'EXPIRE',
 }
 
 async function recevoir(
@@ -27,13 +37,32 @@ async function recevoir(
     secret?: string
     signature?: string
     connector?: ReturnType<typeof createFakeSignatureConnector> | null
+    mailer?: Mailer | null
   } = {},
 ) {
+  // Le webhook relit l'état : sauf mention contraire, le prestataire (double)
+  // confirme ce que la charge annonce, pour chaque enveloppe connue.
+  const connector = options.connector ?? createFakeSignatureConnector()
+  try {
+    const { event, payload } = JSON.parse(rawBody) as {
+      event: string
+      payload: { envelopeId?: string }
+    }
+    const statut = ETAT_PAR_EVENEMENT[event]
+    if (statut !== undefined && payload.envelopeId !== undefined) {
+      connector.regler(payload.envelopeId, statut)
+    }
+  } catch {
+    // charge illisible : le test attend un refus avant toute relecture
+  }
   return handleSignatureWebhook({
     rawBody,
-    signatureHeader: options.signature ?? signWebhookPayload(rawBody, options.secret ?? SECRET),
+    // Une signature explicite (mauvaise) se teste seule : sans en-tête secret.
+    secretHeader: options.signature !== undefined ? '' : (options.secret ?? SECRET),
+    signatureHeader: options.signature ?? '',
     secret: SECRET,
-    connector: options.connector ?? null,
+    connector,
+    mailer: options.mailer ?? (async () => {}),
   })
 }
 
@@ -59,7 +88,14 @@ beforeEach(async () => {
   craId = (await getOrCreateCra(userId, missionId, '2026-06')).id
   await prisma.cra.update({ where: { id: craId }, data: { status: 'ENVOYE' } })
   await prisma.signatureRequest.create({
-    data: { craId, provider: PROVIDER_DOCUMENSO, status: 'EN_ATTENTE' },
+    data: {
+      craId,
+      provider: PROVIDER_DOCUMENSO,
+      status: 'EN_ATTENTE',
+      externalId: 'ext-1',
+      signataireNom: 'Sam',
+      signataireEmail: 'sam@client.test',
+    },
   })
   await prisma.externalLink.create({
     data: {
@@ -69,7 +105,7 @@ beforeEach(async () => {
       entityType: ENTITY_CRA,
       entityId: craId,
       provider: PROVIDER_DOCUMENSO,
-      externalId: '42',
+      externalId: 'ext-1',
       syncState: 'EN_ATTENTE',
     },
   })
@@ -89,7 +125,7 @@ afterAll(async () => {
 
 describe('authentification', () => {
   it('REJETTE une charge mal signée', async () => {
-    const r = await recevoir(charge('DOCUMENT_COMPLETED', '42'), { signature: 'sha256=' + '0'.repeat(64) })
+    const r = await recevoir(charge('DOCUMENT_COMPLETED', 'ext-1'), { signature: 'sha256=' + '0'.repeat(64) })
     expect(r).toEqual({ ok: false, raison: 'SIGNATURE_INVALIDE' })
 
     const cra = await prisma.cra.findUniqueOrThrow({ where: { id: craId } })
@@ -97,12 +133,13 @@ describe('authentification', () => {
   })
 
   it('REJETTE une charge modifiée après signature', async () => {
-    const authentique = charge('DOCUMENT_COMPLETED', '42')
+    const authentique = charge('DOCUMENT_COMPLETED', 'ext-1')
     const signature = signWebhookPayload(authentique, SECRET)
-    const falsifiee = charge('DOCUMENT_COMPLETED', '99')
+    const falsifiee = charge('DOCUMENT_COMPLETED', 'ext-2')
 
     const r = await handleSignatureWebhook({
       rawBody: falsifiee,
+      secretHeader: '',
       signatureHeader: signature,
       secret: SECRET,
       connector: null,
@@ -111,9 +148,10 @@ describe('authentification', () => {
   })
 
   it('rejette quand aucun secret n est configuré', async () => {
-    const corps = charge('DOCUMENT_COMPLETED', '42')
+    const corps = charge('DOCUMENT_COMPLETED', 'ext-1')
     const r = await handleSignatureWebhook({
       rawBody: corps,
+      secretHeader: '',
       signatureHeader: signWebhookPayload(corps, ''),
       secret: '',
       connector: null,
@@ -132,14 +170,14 @@ describe('authentification', () => {
   })
 
   it('rejette un événement sans correspondance connue', async () => {
-    expect(await recevoir(charge('DOCUMENT_OPENED', '42'))).toEqual({
+    expect(await recevoir(charge('DOCUMENT_OPENED', 'ext-1'))).toEqual({
       ok: false,
       raison: 'CHARGE_ILLISIBLE',
     })
   })
 
   it('rend LIEN_INCONNU pour une référence externe qu on ne connaît pas', async () => {
-    expect(await recevoir(charge('DOCUMENT_COMPLETED', '9999'))).toEqual({
+    expect(await recevoir(charge('DOCUMENT_COMPLETED', 'ext-9999'))).toEqual({
       ok: false,
       raison: 'LIEN_INCONNU',
     })
@@ -153,7 +191,7 @@ describe('authentification', () => {
     // définitivement perdue : toute relivraison rendait `REJOUE`, et la route
     // répond 202 pour que le prestataire cesse de réessayer. Deux barrières
     // conçues pour se compléter s'annulaient.
-    const corps = charge('DOCUMENT_COMPLETED', '7777')
+    const corps = charge('DOCUMENT_COMPLETED', 'ext-7777')
 
     expect(await recevoir(corps)).toEqual({ ok: false, raison: 'LIEN_INCONNU' })
     expect(
@@ -164,8 +202,9 @@ describe('authentification', () => {
     // Le lien arrive — l'envoi a fini de s'écrire — et le prestataire relivre.
     await prisma.externalLink.updateMany({
       where: { entityType: ENTITY_CRA, entityId: craId, provider: PROVIDER_DOCUMENSO },
-      data: { externalId: '7777' },
+      data: { externalId: 'ext-7777' },
     })
+    await prisma.signatureRequest.update({ where: { craId }, data: { externalId: 'ext-7777' } })
 
     const relivraison = await recevoir(corps)
     expect(relivraison).toEqual({ ok: true, effet: 'VALIDE', craId })
@@ -181,7 +220,7 @@ describe('authentification', () => {
 
 describe('effet', () => {
   it('UNE CHARGE VALIDE FAIT FRANCHIR LA TRANSITION ET VERROUILLE LE MOIS', async () => {
-    const r = await recevoir(charge('DOCUMENT_COMPLETED', '42'), {
+    const r = await recevoir(charge('DOCUMENT_COMPLETED', 'ext-1'), {
       connector: createFakeSignatureConnector(),
     })
     expect(r).toEqual({ ok: true, effet: 'VALIDE', craId })
@@ -200,7 +239,7 @@ describe('effet', () => {
   })
 
   it('UN WEBHOOK REJOUÉ DEUX FOIS N A AUCUN EFFET LA SECONDE', async () => {
-    const corps = charge('DOCUMENT_COMPLETED', '42')
+    const corps = charge('DOCUMENT_COMPLETED', 'ext-1')
     expect((await recevoir(corps)).ok).toBe(true)
 
     // Le CRA est rouvert **puis renvoyé** entre-temps : c'est le seul montage
@@ -223,14 +262,14 @@ describe('effet', () => {
   })
 
   it('un rejeu ne consigne pas un second événement', async () => {
-    const corps = charge('DOCUMENT_COMPLETED', '42')
+    const corps = charge('DOCUMENT_COMPLETED', 'ext-1')
     await recevoir(corps)
     await recevoir(corps)
     expect(await prisma.signatureWebhookEvent.count()).toBe(1)
   })
 
   it('un refus fait passer à REFUSE et rouvre le CRA à l écriture', async () => {
-    const r = await recevoir(charge('DOCUMENT_REJECTED', '42'))
+    const r = await recevoir(charge('DOCUMENT_REJECTED', 'ext-1'))
     expect(r).toEqual({ ok: true, effet: 'REFUSE', craId })
 
     const cra = await prisma.cra.findUniqueOrThrow({ where: { id: craId } })
@@ -240,15 +279,15 @@ describe('effet', () => {
 
   it('archive le PDF signé', async () => {
     const connector = createFakeSignatureConnector()
-    connector.poserPdfSigne('42', new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x53]))
-    await recevoir(charge('DOCUMENT_COMPLETED', '42'), { connector })
+    connector.poserPdfSigne('ext-1', new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x53]))
+    await recevoir(charge('DOCUMENT_COMPLETED', 'ext-1'), { connector })
 
     const demande = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
     expect(Array.from(demande.signedPdf!)).toEqual([0x25, 0x50, 0x44, 0x46, 0x53])
   })
 
   it('une annulation marque l expiration sans toucher au CRA', async () => {
-    const r = await recevoir(charge('DOCUMENT_CANCELLED', '42'))
+    const r = await recevoir(charge('DOCUMENT_CANCELLED', 'ext-1'))
     expect(r).toEqual({ ok: true, effet: 'EXPIRE', craId })
 
     const cra = await prisma.cra.findUniqueOrThrow({ where: { id: craId } })
@@ -256,7 +295,7 @@ describe('effet', () => {
   })
 
   it('inscrit l état rapporté sur le lien externe', async () => {
-    await recevoir(charge('DOCUMENT_COMPLETED', '42'))
+    await recevoir(charge('DOCUMENT_COMPLETED', 'ext-1'))
     const lien = await prisma.externalLink.findFirstOrThrow({
       where: { entityType: ENTITY_CRA, entityId: craId },
     })
@@ -265,21 +304,101 @@ describe('effet', () => {
   })
 
   it('consigne l événement traité, une seule fois', async () => {
-    await recevoir(charge('DOCUMENT_COMPLETED', '42'))
-    await recevoir(charge('DOCUMENT_COMPLETED', '42'))
+    await recevoir(charge('DOCUMENT_COMPLETED', 'ext-1'))
+    await recevoir(charge('DOCUMENT_COMPLETED', 'ext-1'))
 
     const evenements = await prisma.signatureWebhookEvent.findMany({})
     expect(evenements).toHaveLength(1)
-    expect(evenements[0]!.eventId).toBe('DOCUMENT_COMPLETED:42')
+    expect(evenements[0]!.eventId).toBe('DOCUMENT_COMPLETED:ext-1')
   })
 
   it('ne consigne rien quand la signature est mauvaise', async () => {
-    await recevoir(charge('DOCUMENT_COMPLETED', '42'), { signature: 'sha256=' + '0'.repeat(64) })
+    await recevoir(charge('DOCUMENT_COMPLETED', 'ext-1'), { signature: 'sha256=' + '0'.repeat(64) })
     expect(await prisma.signatureWebhookEvent.count()).toBe(0)
   })
 
   it('ne consigne rien quand la charge est illisible', async () => {
     await recevoir('pas du json')
     expect(await prisma.signatureWebhookEvent.count()).toBe(0)
+  })
+})
+
+describe('lot 3b — le webhook est un signal, pas une source de vérité', () => {
+  const connector = createFakeSignatureConnector()
+
+  const recevoirSecret = (rawBody: string, secretHeader: string, mailer?: Mailer) =>
+    handleSignatureWebhook({
+      rawBody,
+      secretHeader,
+      signatureHeader: '',
+      secret: SECRET,
+      connector,
+      mailer: mailer ?? (async () => {}),
+    })
+
+  it('accepte X-Documenso-Secret, tel que Documenso l envoie', async () => {
+    connector.regler('ext-1', 'SIGNE')
+    const r = await recevoirSecret(charge('DOCUMENT_COMPLETED', 'ext-1'), SECRET)
+    expect(r).toMatchObject({ ok: true, effet: 'VALIDE' })
+  })
+
+  it('refuse un secret faux ou absent', async () => {
+    for (const secretHeader of ['', 'faux']) {
+      const r = await recevoirSecret(charge('DOCUMENT_COMPLETED', 'ext-1'), secretHeader)
+      expect(r).toEqual({ ok: false, raison: 'SIGNATURE_INVALIDE' })
+    }
+  })
+
+  it('UNE CHARGE QUI DIT « SIGNÉ » NE VALIDE RIEN si le prestataire dit « en attente »', async () => {
+    connector.regler('ext-1', 'EN_ATTENTE')
+    const r = await recevoirSecret(charge('DOCUMENT_COMPLETED', 'ext-1'), SECRET)
+    expect(r).toMatchObject({ ok: true, effet: 'AUCUN' })
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('ENVOYE')
+  })
+
+  it("prestataire injoignable : rien n'est consommé, la relivraison pourra agir", async () => {
+    const panne = createFakeSignatureConnector()
+    panne.faireEchouerStatut('panne')
+    const r1 = await handleSignatureWebhook({
+      rawBody: charge('DOCUMENT_COMPLETED', 'ext-1'),
+      secretHeader: SECRET,
+      signatureHeader: '',
+      secret: SECRET,
+      connector: panne,
+    })
+    expect(r1).toEqual({ ok: false, raison: 'PRESTATAIRE_INJOIGNABLE' })
+    expect(await prisma.signatureWebhookEvent.count()).toBe(0)
+  })
+
+  it('reconnaît un envoi hérité par son identifiant numérique', async () => {
+    await prisma.externalLink.updateMany({
+      where: { entityId: craId },
+      data: { externalId: '42' },
+    })
+    await prisma.signatureRequest.update({ where: { craId }, data: { externalId: '' } })
+    connector.regler('42', 'SIGNE')
+    const r = await recevoirSecret(
+      JSON.stringify({
+        event: 'DOCUMENT_COMPLETED',
+        payload: { id: 42, envelopeId: 'envelope_inconnue' },
+      }),
+      SECRET,
+    )
+    expect(r).toMatchObject({ ok: true, effet: 'VALIDE' })
+  })
+
+  it('webhook puis confirmation de page : un seul effet, un seul couple de courriels', async () => {
+    connector.regler('ext-1', 'SIGNE')
+    const envoyes: string[] = []
+    const mailer: Mailer = async (m) => {
+      envoyes.push(m.to)
+    }
+    await recevoirSecret(charge('DOCUMENT_COMPLETED', 'ext-1'), SECRET, mailer)
+    await refreshSignatureStatus(userId, craId, { connector, mailer })
+    expect(envoyes).toHaveLength(2)
+    const recues = await prisma.auditEvent.count({
+      where: { entityId: craId, action: 'signature.recue' },
+    })
+    expect(recues).toBe(1)
   })
 })

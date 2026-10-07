@@ -1,6 +1,7 @@
 import { prisma } from '@/db/client'
-import { verifyWebhookSignature } from '@/core/signature/webhook'
-import type { SignatureConnector } from '@/core/signature/connector'
+import { verifierSecretDocumenso, verifyWebhookSignature } from '@/core/signature/webhook'
+import type { SignatureConnector, SignatureEtat } from '@/core/signature/connector'
+import type { Mailer } from '@/services/notify'
 import { applySignatureStatus, type SignatureEffet } from './apply'
 import { ENTITY_CRA, PROVIDER_DOCUMENSO } from './constants'
 import { parseDocumensoWebhook } from './documenso'
@@ -8,64 +9,66 @@ import { getSignatureConnector } from './registry'
 
 export type WebhookOutcome =
   | { ok: true; effet: SignatureEffet | 'REJOUE'; craId: string | null }
-  | { ok: false; raison: 'SIGNATURE_INVALIDE' | 'CHARGE_ILLISIBLE' | 'LIEN_INCONNU' }
+  | {
+      ok: false
+      raison: 'SIGNATURE_INVALIDE' | 'CHARGE_ILLISIBLE' | 'LIEN_INCONNU' | 'PRESTATAIRE_INJOIGNABLE'
+    }
 
 /**
- * Réception d'un webhook de signature.
+ * Réception d'un webhook de signature — **un signal, plus une source de
+ * vérité**.
  *
- * Trois barrières, dans cet ordre :
+ * 1. **L'origine** : `X-Documenso-Secret` (ce que Documenso envoie
+ *    réellement), ou un HMAC `x-cra-signature` (intégrations maison, tests).
+ * 2. **La lecture** : quelle enveloppe, quel événement.
+ * 3. **La résolution** du lien externe, sans effet. Elle précède la
+ *    consignation : une livraison arrivée avant que `sendCraForSignature`
+ *    n'ait écrit son `ExternalLink` ne doit rien brûler, sans quoi la
+ *    relivraison serait rejetée comme un rejeu.
+ * 4. **La relecture chez le prestataire.** Un secret prouve l'origine, pas
+ *    l'intégrité : c'est l'état que rend `status()` qui s'applique, jamais
+ *    celui que la charge raconte. Un prestataire injoignable ne consomme
+ *    rien — la relivraison, ou le balayage, agiront.
+ * 5. **L'unicité de l'événement**, consignée avant d'agir. La contrepartie
+ *    assumée : un événement dont le traitement échoue ensuite n'est pas rejoué
+ *    automatiquement — le rafraîchissement à la demande est là pour ça.
  *
- * 1. **La signature de la charge utile.** Sans secret configuré ou sans
- *    signature valide, rien ne se passe : ce webhook fait franchir une
- *    transition qui verrouille un mois et peut déclencher une facturation en
- *    aval. Jamais un jeton dans l'URL — il fuit dans les journaux d'accès et
- *    ne prouve rien sur le contenu reçu.
- * 2. **La lecture de la charge**, propre au prestataire.
- * 3. **La résolution du lien externe.** Une lecture, aucun effet — et c'est
- *    pourquoi elle précède la barrière suivante. Consigner l'identifiant
- *    d'abord brûlait définitivement une livraison arrivée pendant que
- *    `sendCraForSignature` n'avait pas encore écrit son `ExternalLink` : toute
- *    relivraison rendait `REJOUE`, et la route traduit `LIEN_INCONNU` en 202
- *    pour que le prestataire cesse de réessayer. Les deux barrières
- *    s'annulaient au lieu de se compléter, et le CRA restait `ENVOYE` sans
- *    rattrapage.
- * 4. **L'unicité de l'événement.** Consignée *avant* d'agir : c'est ce qui
- *    garantit qu'un rejeu n'a aucun effet, même si l'application redémarre
- *    entre deux livraisons. La contrepartie assumée est qu'un événement dont
- *    le traitement échoue ne sera pas rejoué automatiquement — le
- *    rafraîchissement à la demande est là pour ça.
- *
- * Rien n'est journalisé ici : ni la charge, ni la signature, ni le secret.
- * Le résultat rendu à la route ne porte aucun identifiant interne dans les
- * cas de refus.
+ * Appelé sans session. Rien n'est journalisé ici : ni la charge, ni le secret.
  */
 export async function handleSignatureWebhook(args: {
   rawBody: string
+  secretHeader: string
   signatureHeader: string
   secret?: string
   connector?: SignatureConnector | null
+  mailer?: Mailer | null
 }): Promise<WebhookOutcome> {
   const secret = args.secret ?? process.env.SIGNATURE_WEBHOOK_SECRET ?? ''
 
-  if (!verifyWebhookSignature(args.rawBody, args.signatureHeader, secret)) {
-    return { ok: false, raison: 'SIGNATURE_INVALIDE' }
-  }
+  const authentique =
+    verifierSecretDocumenso(args.secretHeader, secret) ||
+    verifyWebhookSignature(args.rawBody, args.signatureHeader, secret)
+  if (!authentique) return { ok: false, raison: 'SIGNATURE_INVALIDE' }
 
   const lu = parseDocumensoWebhook(args.rawBody)
   if (lu === null) return { ok: false, raison: 'CHARGE_ILLISIBLE' }
 
-  // **Avant la consignation de l'identifiant** : une résolution qui échoue ne
-  // doit rien consommer, sans quoi la relivraison du même événement — une fois
-  // le lien enfin écrit — serait rejetée comme un rejeu.
   const lien = await prisma.externalLink.findFirst({
-    where: {
-      entityType: ENTITY_CRA,
-      provider: PROVIDER_DOCUMENSO,
-      externalId: lu.externalId,
-    },
-    select: { entityId: true },
+    where: { entityType: ENTITY_CRA, provider: PROVIDER_DOCUMENSO, externalId: { in: lu.candidats } },
+    select: { entityId: true, externalId: true },
   })
   if (lien === null) return { ok: false, raison: 'LIEN_INCONNU' }
+
+  const connector =
+    args.connector !== undefined ? args.connector : await getSignatureConnector()
+  if (connector === null) return { ok: false, raison: 'PRESTATAIRE_INJOIGNABLE' }
+
+  let etat: SignatureEtat
+  try {
+    etat = await connector.status(lien.externalId)
+  } catch {
+    return { ok: false, raison: 'PRESTATAIRE_INJOIGNABLE' }
+  }
 
   try {
     await prisma.signatureWebhookEvent.create({
@@ -76,19 +79,18 @@ export async function handleSignatureWebhook(args: {
     return { ok: true, effet: 'REJOUE', craId: null }
   }
 
-  const connector =
-    args.connector !== undefined ? args.connector : await getSignatureConnector()
-
   const effet = await applySignatureStatus({
     craId: lien.entityId,
-    externalId: lu.externalId,
-    statut: lu.statut,
+    externalId: lien.externalId,
+    statut: etat.statut,
+    motifRefus: etat.motifRefus,
     connector,
+    mailer: args.mailer ?? null,
   })
 
   await prisma.externalLink.updateMany({
     where: { entityType: ENTITY_CRA, entityId: lien.entityId, provider: PROVIDER_DOCUMENSO },
-    data: { syncState: lu.statut, syncedAt: new Date() },
+    data: { syncState: etat.statut, syncedAt: new Date() },
   })
 
   return { ok: true, effet, craId: lien.entityId }

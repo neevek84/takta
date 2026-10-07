@@ -7,12 +7,16 @@ const CODES: Record<string, number> = {
   // réception pour qu'il cesse de réessayer, sans rien révéler de ce qui
   // existe ou non de notre côté.
   LIEN_INCONNU: 202,
+  // Le prestataire réessaiera : c'est exactement ce qu'on veut, l'état n'a
+  // pas pu être relu.
+  PRESTATAIRE_INJOIGNABLE: 503,
 }
 
 /**
- * Endpoint public, **authentifié par la signature de la charge utile** et non
- * par un jeton d'URL. Il n'a pas de session : il est sorti du matcher du
- * middleware.
+ * Endpoint public, **authentifié par le secret `X-Documenso-Secret`** (ou un
+ * HMAC `x-cra-signature`) et non par un jeton d'URL. La charge n'est qu'un
+ * signal : l'état est relu chez le prestataire. Il n'a pas de session : il est
+ * sorti du matcher du middleware.
  *
  * Le corps est lu en texte brut avant tout : un HMAC porte sur les octets
  * reçus, pas sur le résultat d'un aller-retour JSON qui réordonnerait les
@@ -23,10 +27,11 @@ const CODES: Record<string, number> = {
  */
 export async function POST(request: Request): Promise<Response> {
   const rawBody = await request.text()
-  const signatureHeader =
-    request.headers.get('x-documenso-signature') ?? request.headers.get('x-cra-signature') ?? ''
-
-  const resultat = await handleSignatureWebhook({ rawBody, signatureHeader })
+  const resultat = await handleSignatureWebhook({
+    rawBody,
+    secretHeader: request.headers.get('x-documenso-secret') ?? '',
+    signatureHeader: request.headers.get('x-cra-signature') ?? '',
+  })
 
   if (!resultat.ok) {
     return Response.json({ resultat: resultat.raison }, { status: CODES[resultat.raison] ?? 400 })
