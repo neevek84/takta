@@ -557,38 +557,21 @@ describe('MonthCalendar', () => {
     })
 
     /**
-     * Le libellé d'une autre prestation se pose **sous** sa case, dans sa
-     * colonne. Tant que la colonne déclarait la même gouttière que la grille,
-     * il se trouvait à égale distance de sa propre case et de la case de la
-     * semaine suivante : il n'attachait à rien, et se lisait comme une barre
-     * posée entre deux semaines — ce que le porteur a photographié.
-     *
-     * La correction se prend du côté de la colonne, jamais de la grille : la
-     * gouttière de la grille est ce qui laisse aux sept colonnes leurs 44
-     * points sur un écran de 375, et l'élargir les ferait tomber à 43,29.
+     * Les autres prestations se posent **dans** la case, à leur couleur, et
+     * non plus dessous : posées sous la case, elles se lisaient comme une
+     * barre entre deux semaines, et la case ne disait pas sa journée entière.
      */
-    it('attache le libellé à sa case plutôt qu à la semaine suivante', () => {
-      const { container } = renderCalendar({
-        entries: surLigneB,
-        autresLignes: [ligneB],
-        toutLeMois: true,
-      })
-
-      /** Pas d'espacement déclarés par une classe `gap-N` ; 0 si aucune. */
-      function gouttiere(el: Element): number {
-        const trouve = /(?:^|\s)gap-([\d.]+)(?:\s|$)/.exec(el.className)
-        return trouve === null ? 0 : Number(trouve[1]!)
-      }
+    it('pose les autres prestations dans la case, à leur couleur', () => {
+      renderCalendar({ entries: surLigneB, autresLignes: [ligneB], toutLeMois: true })
 
       const badge = screen.getByTestId('autre-lB-2026-03-10')
-      const colonne = badge.parentElement!
-      const grille = container.querySelector('[data-testid="grille-calendrier"]')!
+      expect(caseDu('2026-03-10').contains(badge)).toBe(true)
+      expect(classes(badge)).toContain(colorForLine('lB').bg)
+    })
 
-      // La colonne contient bien la case et son libellé.
-      expect(colonne.contains(caseDu('2026-03-10'))).toBe(true)
-      // Et la grille garde la sienne : c'est le budget des 44 points.
-      expect(gouttiere(grille)).toBeGreaterThan(0)
-      expect(gouttiere(colonne)).toBeLessThan(gouttiere(grille))
+    it('dit les autres prestations dans le nom accessible de la case', () => {
+      renderCalendar({ entries: surLigneB, autresLignes: [ligneB], toutLeMois: true })
+      expect(caseDu('2026-03-10').getAttribute('aria-label')).toContain('Consultant ITSM Nuit 1')
     })
 
     // La case détaille la journée : chaque autre prestation dit sa quantité,
@@ -2096,7 +2079,10 @@ describe('MonthCalendar — le marqueur d une journée éclatée', () => {
     renderCalendar({ entries: eclateeLe('2026-03-10', 'a') })
     const marqueur = marqueurDu('2026-03-10')!
     expect(classes(marqueur)).toContain('absolute')
-    expect(marqueur.parentElement).toBe(caseDu('2026-03-10'))
+    // Dans la zone de la prestation saisie, à l'intérieur de la case : c'est
+    // le repère de l'aplat, et celui du coin qui le traverse.
+    expect(caseDu('2026-03-10').contains(marqueur)).toBe(true)
+    expect(classes(marqueur.parentElement!)).toContain('relative')
   })
 
   it('garde exactement le même tracé quand la teinte de la case change', () => {
