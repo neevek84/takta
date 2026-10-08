@@ -58,25 +58,20 @@ export default function middleware(request: NextRequest, event: NextFetchEvent) 
 /**
  * Les en-têtes de la page client.
  *
- *   - `frame-src` limité à l'instance Documenso : le seul cadre que la page
- *     charge. Posé ici et non dans `next.config.ts`, dont les en-têtes sont
- *     figés à la construction — `DOCUMENSO_URL` est un réglage d'exécution.
  *   - `frame-ancestors 'none'` : personne n'encadre la page du client.
  *   - `no-referrer` : le jeton est dans l'URL, il ne doit fuir vers personne.
  *   - `noindex` : un lien privé n'a rien à faire dans un moteur.
+ *
+ * **Pas de `frame-src` ici.** L'instance Documenso se règle à l'écran et vit
+ * en base ; l'Edge n'a pas Prisma et ne peut pas la lire. C'est la page
+ * elle-même (`src/app/v/[jeton]/page.tsx`) qui pose `frame-src` par une
+ * balise meta, depuis l'instance en vigueur. En poser un second ici le
+ * restreindrait — deux politiques s'intersectent — et un `DOCUMENSO_URL`
+ * resté dans l'environnement bloquerait le cadre de l'instance de l'écran.
  */
 function reponseClient(): NextResponse {
   const reponse = NextResponse.next()
-  let origineSignature = ''
-  try {
-    origineSignature = process.env.DOCUMENSO_URL ? new URL(process.env.DOCUMENSO_URL).origin : ''
-  } catch {
-    origineSignature = ''
-  }
-  reponse.headers.set(
-    'Content-Security-Policy',
-    `frame-src ${origineSignature !== '' ? origineSignature : "'none'"}; frame-ancestors 'none'`,
-  )
+  reponse.headers.set('Content-Security-Policy', "frame-ancestors 'none'")
   reponse.headers.set('Referrer-Policy', 'no-referrer')
   reponse.headers.set('X-Robots-Tag', 'noindex, nofollow')
   return reponse
@@ -98,8 +93,9 @@ function reponseClient(): NextResponse {
  * refuse elle-même toute requête non authentifiée (voir
  * `src/services/api-token.ts`, `src/app/api/sync/flush/route.ts` et
  * `src/app/api/webhooks/signature/route.ts`), et elles ne s'ouvrent pas pour
- * autant — sans `CRA_API_TOKEN`, `SYNC_FLUSH_TOKEN` ni
- * `SIGNATURE_WEBHOOK_SECRET`, elles restent fermées. Une nouvelle route d'API
+ * autant — sans `CRA_API_TOKEN`, `SYNC_FLUSH_TOKEN` ni secret de webhook
+ * (Administration · Signature, ou `SIGNATURE_WEBHOOK_SECRET`), elles restent
+ * fermées. Une nouvelle route d'API
  * hérite donc de l'exclusion, jamais de l'ouverture : elle doit porter sa
  * garde, comme ses voisines.
  *

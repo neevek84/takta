@@ -122,9 +122,10 @@ function refus(texte: string, craId?: string): Message {
 }
 
 /**
- * Trois vues : le calendrier — la seule surface de saisie mobile —, le
- * tableau multi-CRA, et la vue 3 mois : le mois choisi et les deux suivants,
- * en grilles compactes côte à côte (voir le rendu plus bas).
+ * Quatre vues : le calendrier — la seule surface de saisie mobile —, le
+ * tableau multi-CRA, la vue 3 mois : le mois choisi et les deux suivants, en
+ * grilles compactes côte à côte (voir le rendu plus bas), et le tableau 3
+ * mois : le tableau multi-CRA sur ces trois mêmes mois.
  *
  * Le type vit dans `core/saisie/vue.ts` — et non ici — parce que la
  * préférence de profil (`services/saisie/vue-par-defaut.ts`) doit reconnaître
@@ -135,8 +136,8 @@ export type { Vue }
 /**
  * La largeur de la dernière vérification d'agenda réussie, `null` avant tout
  * clic. `'1MOIS'` sert au calendrier et au tableau, qui n'affichent jamais que
- * le mois courant ; `'3MOIS'` sert à la vue 3 mois, vérifiée sur ses trois
- * mois à la fois — jamais sur le seul premier.
+ * le mois courant ; `'3MOIS'` sert à la vue 3 mois et au tableau 3 mois,
+ * vérifiés sur leurs trois mois à la fois — jamais sur le seul premier.
  */
 export type PlageVerifiee = '1MOIS' | '3MOIS' | null
 
@@ -151,7 +152,15 @@ export type PlageVerifiee = '1MOIS' | '3MOIS' | null
  * avant même que la vue 3 mois n'ait de bouton pour l'atteindre.
  */
 export function doitEffacerOccupations(prochaine: Vue, plageVerifiee: PlageVerifiee): boolean {
-  return prochaine === 'TROIS_MOIS' && plageVerifiee !== '3MOIS'
+  return surTroisMois(prochaine) && plageVerifiee !== '3MOIS'
+}
+
+/**
+ * Les deux vues qui montrent les trois mois : elles partagent la plage que
+ * l'agenda vérifie, et donc tout ce qui en dépend.
+ */
+function surTroisMois(vue: Vue): boolean {
+  return vue === 'TROIS_MOIS' || vue === 'TABLEAU_TROIS_MOIS'
 }
 
 export function SaisieClient(props: {
@@ -217,6 +226,14 @@ export function SaisieClient(props: {
    * c'est ce qui arrivait.
    */
   vueInitiale?: Vue
+  /**
+   * prestations fermées à la saisie sur les mois affichés, une clé
+   * `cleVerrou(ligne, mois)` chacune — lues par la page, par le service.
+   *
+   * Les deux tableaux les rendent en lecture seule, mois par mois. Vide par
+   * défaut : le service refuse de toute façon une écriture sur un mois fermé.
+   */
+  verrous?: readonly string[]
 }) {
   const [message, setMessage] = useState<Message | null>(null)
   const [vue, setVue] = useState<Vue>(props.vueInitiale ?? 'CALENDRIER')
@@ -269,6 +286,7 @@ export function SaisieClient(props: {
     const parametres = new URLSearchParams(window.location.search)
     if (prochaine === 'TABLEAU') parametres.set('vue', 'tableau')
     else if (prochaine === 'TROIS_MOIS') parametres.set('vue', '3mois')
+    else if (prochaine === 'TABLEAU_TROIS_MOIS') parametres.set('vue', 'tableau3mois')
     else parametres.delete('vue')
     const requete = parametres.toString()
     window.history.replaceState(
@@ -318,8 +336,14 @@ export function SaisieClient(props: {
   // La plage que `BoutonAgenda` vérifie : le mois affiché en calendrier et en
   // tableau, les trois mois en vue 3 mois — jamais recalculée, `props.days` et
   // `props.joursParMois` la portent déjà.
-  const { du, au } =
-    vue === 'TROIS_MOIS' ? bornesTroisMois(props.joursParMois) : bornesAffichees(props.days)
+  const { du, au } = surTroisMois(vue)
+    ? bornesTroisMois(props.joursParMois)
+    : bornesAffichees(props.days)
+
+  // Les jours des trois mois bout à bout, pour le tableau 3 mois. Mémorisés :
+  // un tableau neuf à chaque rendu ferait recalculer à la grille toutes ses
+  // valeurs serveur, et réinitialiser ses champs à chaque frappe.
+  const joursTroisMois = useMemo(() => props.joursParMois.flat(), [props.joursParMois])
 
   /**
    * Le signalement d'occupation, quand il n'y a rien de plus important à dire.
@@ -466,6 +490,10 @@ export function SaisieClient(props: {
               on est affecté : son nom le dit, plutôt que de laisser croire à
               une autre présentation de la seule prestation saisie. */}
           {ecranLarge && <option value="TABLEAU">Tableau multi-CRA</option>}
+          {/* Le même tableau sur le mois choisi et les deux suivants : quatre
+              vingt-dix colonnes, qu'aucun téléphone ne tient — au poste
+              seulement, comme les deux précédentes. */}
+          {ecranLarge && <option value="TABLEAU_TROIS_MOIS">Tableau 3 mois</option>}
         </Select>
 
         {/* La bascule de portée vaut pour le calendrier et la vue 3 mois —
@@ -521,7 +549,7 @@ export function SaisieClient(props: {
             au={au}
             onResultat={(jours) => {
               setOccupations(jours)
-              setPlageVerifiee(vue === 'TROIS_MOIS' ? '3MOIS' : '1MOIS')
+              setPlageVerifiee(surTroisMois(vue) ? '3MOIS' : '1MOIS')
             }}
           />
         )}
@@ -768,6 +796,34 @@ export function SaisieClient(props: {
             // Les créneaux réglés en administration : le tableau les propose
             // cellule par cellule, comme le formulaire du calendrier le fait déjà.
             slots={props.slots}
+            verrous={props.verrous}
+            onSave={handleSave}
+          />
+        </>
+      )}
+
+      {/* Le tableau multi-CRA sur trois mois : **la même grille**, à qui l'on
+          passe les jours des trois mois bout à bout — elle nomme chaque mois,
+          en trace la frontière et le totalise. Une seule table et non trois :
+          c'est le planning de tous les clients d'un seul tenant, à faire
+          défiler de gauche à droite, le libellé de la prestation restant
+          collé à gauche. */}
+      {vue === 'TABLEAU_TROIS_MOIS' && (
+        <>
+          <p data-testid="nature-tableau" className="mb-2 text-xs text-muted">
+            Le tableau montre toutes les missions et prestations auxquelles vous êtes affecté, sur{' '}
+            {props.mois.map(monthLabel).join(', ')}.
+          </p>
+          <MonthGrid
+            days={joursTroisMois}
+            lines={props.lines}
+            entries={props.entries}
+            engagementTotals={props.engagementTotals}
+            capacityCentiemes={props.capacityCentiemes}
+            capacityMode={props.capacityMode}
+            busyDates={occupations}
+            slots={props.slots}
+            verrous={props.verrous}
             onSave={handleSave}
           />
         </>

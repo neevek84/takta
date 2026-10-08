@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildMonthDays, saisiesParJour, shiftMonth } from './build'
+import { buildMonthDays, grouperParMois, saisiesParJour, shiftMonth } from './build'
 import { centiemesParFacteur } from '../time/units'
 
 describe('buildMonthDays', () => {
@@ -105,5 +105,23 @@ describe('shiftMonth', () => {
 
   it('reste correct sur un grand décalage négatif qui ne descend pas sous l an zéro', () => {
     expect(shiftMonth('2026-01', -25)).toBe('2023-12')
+  })
+})
+
+describe('grouperParMois', () => {
+  it('rend les mois dans l ordre des jours, chacun avec ses jours', () => {
+    const jours = ['2026-12', '2027-01'].flatMap((m) => buildMonthDays(m, [1, 2, 3, 4, 5], []))
+    const blocs = grouperParMois(jours)
+    expect(blocs.map((b) => b.mois)).toEqual(['2026-12', '2027-01'])
+    expect(blocs.map((b) => b.days.length)).toEqual([31, 31])
+    expect(blocs[1]!.days[0]!.date).toBe('2027-01-01')
+  })
+
+  it('rend un seul bloc pour un seul mois', () => {
+    expect(grouperParMois(buildMonthDays('2026-03', [1, 2, 3, 4, 5], []))).toHaveLength(1)
+  })
+
+  it('ne rend rien sans jour', () => {
+    expect(grouperParMois([])).toEqual([])
   })
 })

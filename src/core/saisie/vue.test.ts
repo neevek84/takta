@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { estVue } from './vue'
 
 describe('estVue', () => {
-  it.each(['CALENDRIER', 'TROIS_MOIS', 'TABLEAU'])('reconnaît %s', (valeur) => {
+  it.each(['CALENDRIER', 'TROIS_MOIS', 'TABLEAU', 'TABLEAU_TROIS_MOIS'])('reconnaît %s', (valeur) => {
     expect(estVue(valeur)).toBe(true)
   })
 

@@ -142,12 +142,17 @@ describe('enregistrerVueParDefaut', () => {
     expect(definirVueParDefaut).toHaveBeenCalledWith('u1', 'TABLEAU')
   })
 
-  it('accepte chacune des trois vues', async () => {
-    for (const vue of ['CALENDRIER', 'TROIS_MOIS', 'TABLEAU']) {
+  it('accepte chacune des quatre vues', async () => {
+    for (const vue of ['CALENDRIER', 'TROIS_MOIS', 'TABLEAU', 'TABLEAU_TROIS_MOIS']) {
       const r = await enregistrerVueParDefaut(null, formulaireVue(vue))
       expect(definirVueParDefaut).toHaveBeenLastCalledWith('u1', vue)
       expect(r?.ok).toBe(true)
     }
+  })
+
+  it('nomme le tableau 3 mois dans la confirmation', async () => {
+    const r = await enregistrerVueParDefaut(null, formulaireVue('TABLEAU_TROIS_MOIS'))
+    expect(r?.message).toContain('« Tableau 3 mois »')
   })
 
   // Un champ de formulaire est toujours falsifiable : sans cette garde, une

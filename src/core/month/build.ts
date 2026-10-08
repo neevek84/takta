@@ -76,3 +76,21 @@ export function shiftMonth(month: string, delta: number): string {
   const outMonth = (((offset % 12) + 12) % 12) + 1
   return `${padYear(outYear)}-${String(outMonth).padStart(2, '0')}`
 }
+
+/**
+ * Les jours, regroupés par mois dans l'ordre où ils viennent.
+ *
+ * Le tableau 3 mois reçoit ses jours bout à bout : c'est ici, et non dans le
+ * composant, qu'on retrouve où chaque mois commence et finit — en-têtes de
+ * mois, frontières et totaux mensuels se lisent tous sur ces mêmes blocs.
+ */
+export function grouperParMois(days: readonly MonthDay[]): { mois: string; days: MonthDay[] }[] {
+  const blocs: { mois: string; days: MonthDay[] }[] = []
+  for (const d of days) {
+    const mois = d.date.slice(0, 7)
+    const dernier = blocs[blocs.length - 1]
+    if (dernier !== undefined && dernier.mois === mois) dernier.days.push(d)
+    else blocs.push({ mois, days: [d] })
+  }
+  return blocs
+}

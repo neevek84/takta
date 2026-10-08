@@ -12,7 +12,8 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
  * importe encore quoi que ce soit de ce module, un appel s'y voit, quelle que
  * soit la fonction appelée.
  */
-const { agendaEspion, aUnConnecteurAgenda, appliquerCase, vueParDefautDe } = vi.hoisted(() => ({
+const { agendaEspion, aUnConnecteurAgenda, appliquerCase, vueParDefautDe, listerVerrousParLigne } = vi.hoisted(() => ({
+  listerVerrousParLigne: vi.fn(),
   agendaEspion: vi.fn(),
   aUnConnecteurAgenda: vi.fn(),
   appliquerCase: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@/services/availability', () => ({ getBusyRange: agendaEspion }))
 // voir `src/services/credentials.ts`.
 vi.mock('@/services/credentials', () => ({ aUnConnecteurAgenda }))
 vi.mock('@/services/saisie/vue-par-defaut', () => ({ vueParDefautDe }))
+vi.mock('@/services/cells', () => ({ listerVerrousParLigne }))
 vi.mock('@/services/settings', () => ({
   getSettings: async () => ({
     minutesParJour: 480,
@@ -105,6 +107,7 @@ function ecranDe(largeur: number): void {
 
 beforeEach(() => {
   vueParDefautDe.mockReset().mockResolvedValue(null)
+  listerVerrousParLigne.mockReset().mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -265,6 +268,56 @@ describe('page de saisie — la vue 3 mois', () => {
     await rendreEnTroisMois('2026-03')
 
     expect(screen.queryByRole('option', { name: '3 mois' })).toBeNull()
+  })
+})
+
+/**
+ * Le tableau 3 mois : la même plage que la vue 3 mois, lue par la même
+ * requête, avec en plus le verrou de chaque (prestation, mois).
+ */
+describe('page de saisie — le tableau 3 mois', () => {
+  beforeEach(() => {
+    aUnConnecteurAgenda.mockReset().mockResolvedValue(false)
+    window.localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  async function rendreEnTableauTroisMois(month: string): Promise<void> {
+    render(
+      await SaisiePage({
+        params: Promise.resolve({ month }),
+        searchParams: Promise.resolve({ vue: 'tableau3mois' }),
+      }),
+    )
+  }
+
+  it("le résout depuis l'adresse", async () => {
+    await rendreEnTableauTroisMois('2026-03')
+    expect((screen.getByLabelText('Vue') as HTMLSelectElement).value).toBe('TABLEAU_TROIS_MOIS')
+  })
+
+  it('montre le mois choisi et les deux suivants, passage d année compris', async () => {
+    await rendreEnTableauTroisMois('2026-11')
+    expect(screen.getAllByTestId(/^entete-mois-/).map((e) => e.textContent)).toEqual([
+      'novembre 2026',
+      'décembre 2026',
+      'janvier 2027',
+    ])
+  })
+
+  it('lit les verrous des trois mois affichés, pour ce compte', async () => {
+    listerVerrousParLigne.mockResolvedValue(['l1|2026-12'])
+    await rendreEnTableauTroisMois('2026-11')
+
+    expect(listerVerrousParLigne).toHaveBeenCalledWith('u1', ['2026-11', '2026-12', '2027-01'])
+    expect((screen.getByLabelText('Consultant ITSM 2026-12-14') as HTMLInputElement).readOnly).toBe(true)
+    expect((screen.getByLabelText('Consultant ITSM 2026-11-16') as HTMLInputElement).readOnly).toBe(false)
+  })
+
+  it('peut être la vue par défaut du profil', async () => {
+    vueParDefautDe.mockResolvedValue('TABLEAU_TROIS_MOIS')
+    await rendre()
+    expect((screen.getByLabelText('Vue') as HTMLSelectElement).value).toBe('TABLEAU_TROIS_MOIS')
   })
 })
 

@@ -148,7 +148,7 @@ export function ProfilClient({
       <Card title="Vue par défaut" className="mt-6">
         <p className="mb-3 text-sm text-muted">
           La vue qui s’ouvre en arrivant sur la page Saisie. Le paramètre d’un lien reçu
-          (calendrier, 3 mois, tableau) garde toujours la priorité sur ce réglage.
+          (calendrier, 3 mois, tableau, tableau 3 mois) garde toujours la priorité sur ce réglage.
         </p>
 
         {etatVue !== null && (
@@ -162,6 +162,7 @@ export function ProfilClient({
             <option value="CALENDRIER">Calendrier</option>
             <option value="TROIS_MOIS">3 mois</option>
             <option value="TABLEAU">Tableau multi-CRA</option>
+            <option value="TABLEAU_TROIS_MOIS">Tableau 3 mois</option>
           </Select>
           <Button type="submit" variant="primary" loading={vueEnCours}>
             Enregistrer

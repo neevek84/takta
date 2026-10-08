@@ -595,11 +595,20 @@ version, à telle date ».
 Documenso n'a pas de catalogue ici : il est appelé par `src/services/signature`, et
 le client signe dans un cadre embarqué de la page `/v/…`.
 
+- **Réglage : Administration · Signature.** C’est la voie normale : l’URL de
+  l’instance et la clé d’API s’y saisissent (clé chiffrée au repos, jamais
+  réaffichée), le secret du webhook y est **généré** et affiché une seule fois, et le
+  bouton « Tester » vérifie l’instance sans rien y créer (une lecture authentifiée
+  `GET /api/v2/document?page=1&perPage=1`, plus l’état de SMTP). Les variables
+  `DOCUMENSO_URL`, `DOCUMENSO_API_KEY` et `SIGNATURE_WEBHOOK_SECRET` restent un
+  **repli** : un réglage enregistré à l’écran l’emporte, et l’écran dit lequel est en
+  vigueur.
 - **Version requise : Documenso ≥ 2.0.0.** L’API utilisée est la v2
   (`/api/v2/envelope/*`).
-- **Webhook** à déclarer dans Documenso : URL `https://<outil>/api/webhooks/signature`,
-  événements `DOCUMENT_COMPLETED`, `DOCUMENT_REJECTED`, `DOCUMENT_CANCELLED`, et un
-  **secret** égal à `SIGNATURE_WEBHOOK_SECRET`. Documenso le renvoie tel quel dans
+- **Webhook** à déclarer dans Documenso : URL `https://<outil>/api/webhooks/signature`
+  (l’écran l’affiche, prête à copier), événements `DOCUMENT_COMPLETED`,
+  `DOCUMENT_REJECTED`, `DOCUMENT_CANCELLED`, et le **secret** généré par l’écran (ou
+  `SIGNATURE_WEBHOOK_SECRET`). Documenso le renvoie tel quel dans
   `X-Documenso-Secret` ; l'application le compare, puis **relit l'état de l'enveloppe
   par l'API** avant d'appliquer quoi que ce soit — le webhook n'est qu'un signal.
   L'ancien en-tête `x-documenso-signature` n'est plus lu ; `x-cra-signature` (HMAC)
@@ -613,8 +622,9 @@ le client signe dans un cadre embarqué de la page `/v/…`.
 - **`AUTH_URL`** sert aussi à bâtir le lien envoyé au client (origine publique de
   la requête, comme pour la réinitialisation du mot de passe) ; il est mémorisé sur
   l'envoi pour les relances.
-- **CSP** : le `frame-src` de la page est posé à l'exécution par le middleware, depuis
-  `DOCUMENSO_URL`.
+- **CSP** : le `frame-src` de la page client est posé par la page elle-même (balise
+  meta), depuis l’instance en vigueur — écran, sinon `DOCUMENSO_URL`. Le middleware,
+  en Edge et sans accès à la base, ne pose que `frame-ancestors 'none'`.
 - **Derrière un proxy inverse** : la limite de codes par adresse IP lit l’entrée la
   plus à droite de `X-Forwarded-For` (celle que le proxy de confiance ajoute), sinon
   `X-Real-IP` ; sans l’un ni l’autre elle est ignorée (les limites par lien — 5 essais

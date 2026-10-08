@@ -3,6 +3,7 @@ import { checkCapacity } from '@/core/capacity/check'
 import { isLocked } from '@/core/cra/state-machine'
 import { cellStateToWrite } from '@/core/saisie/cell-state'
 import { isSlotAllowed } from '@/core/saisie/cycle'
+import { cleVerrou } from '@/core/saisie/verrou'
 import type { CellState } from '@/core/saisie/cycle'
 import { pauseDepuisColonnes } from '@/core/time/slots'
 import { LIEUX } from '@/core/types'
@@ -49,6 +50,43 @@ export async function isMonthLocked(
   })
 
   return cra !== null && isLocked(cra.status as CraStatus)
+}
+
+/**
+ * Les verrous de plusieurs mois d'un coup, dépliés sur les lignes : une clé
+ * `cleVerrou(ligne, mois)` par prestation affectée dont le CRA du mois est
+ * fermé à la saisie.
+ *
+ * Le même verdict que `isMonthLocked` — `isLocked` sur le CRA du couple
+ * (mission, mois) de **ce** compte —, en deux requêtes plutôt qu'une par
+ * cellule : le tableau 3 mois en interrogerait sinon des centaines. Il ne sert
+ * qu'à l'affichage ; `saveEntry` revérifie le verrou à chaque écriture.
+ */
+export async function listerVerrousParLigne(userId: string, mois: string[]): Promise<string[]> {
+  if (mois.length === 0) return []
+
+  const lignes = await prisma.missionLine.findMany({
+    where: { assignments: { some: { userId } } },
+    select: { id: true, missionId: true },
+  })
+  if (lignes.length === 0) return []
+
+  const cras = await prisma.cra.findMany({
+    where: {
+      userId,
+      month: { in: mois.map(monthStartOf) },
+      missionId: { in: [...new Set(lignes.map((l) => l.missionId))] },
+    },
+    select: { missionId: true, month: true, status: true },
+  })
+
+  const verrous: string[] = []
+  for (const cra of cras) {
+    if (!isLocked(cra.status as CraStatus)) continue
+    const m = cra.month.toISOString().slice(0, 7)
+    for (const l of lignes) if (l.missionId === cra.missionId) verrous.push(cleVerrou(l.id, m))
+  }
+  return verrous
 }
 
 /** Une durée libre venue du client n'est jamais crue sur parole. */

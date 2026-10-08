@@ -125,7 +125,7 @@ describe('la vue par défaut', () => {
     expect((screen.getByLabelText('Vue par défaut') as HTMLSelectElement).value).toBe('TABLEAU')
   })
 
-  it('propose les trois vues', () => {
+  it('propose les quatre vues', () => {
     render(
       <ProfilClient identifiant={null} suggestion={null} connection={ABSENT} vueParDefaut={null} />,
     )
@@ -133,5 +133,21 @@ describe('la vue par défaut', () => {
     expect(screen.getByRole('option', { name: 'Calendrier' })).toBeDefined()
     expect(screen.getByRole('option', { name: '3 mois' })).toBeDefined()
     expect(screen.getByRole('option', { name: 'Tableau multi-CRA' })).toBeDefined()
+    expect(screen.getByRole('option', { name: 'Tableau 3 mois' })).toBeDefined()
+  })
+
+  it('montre le tableau 3 mois quand il est réglé', () => {
+    render(
+      <ProfilClient
+        identifiant={null}
+        suggestion={null}
+        connection={ABSENT}
+        vueParDefaut="TABLEAU_TROIS_MOIS"
+      />,
+    )
+
+    expect((screen.getByLabelText('Vue par défaut') as HTMLSelectElement).value).toBe(
+      'TABLEAU_TROIS_MOIS',
+    )
   })
 })

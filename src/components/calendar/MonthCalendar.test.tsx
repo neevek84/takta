@@ -2349,3 +2349,141 @@ describe('MonthCalendar — la grille compacte tient-elle a la largeur de la vue
     expect(colonneMd).toBeCloseTo(30.67, 2)
   })
 })
+
+/**
+ * Chaque prestation du jour dessine son aplat, pas seulement la saisie.
+ *
+ * Le consultant montre son calendrier en capture d'écran : une pastille
+ * « Libellé 0,5 » ne s'y lit pas, et le client qui a plusieurs commandes ne
+ * voyait pas d'un coup d'œil si le consultant était là. La règle de place vit
+ * dans `disposerAplats` ; ces tests vérifient qu'elle est bien dessinée.
+ */
+describe('MonthCalendar — l aplat de chaque prestation du jour', () => {
+  afterEach(cleanup)
+
+  const ligneB: LineForGrid = { ...ligneJour, id: 'lB', label: 'Consultant ITSM Nuit' }
+  const ligneC: LineForGrid = { ...ligneJour, id: 'lC', label: 'Pilotage' }
+
+  function sur(lineId: string, over: Partial<MonthEntry> = {}): MonthEntry {
+    return entree({ id: `${lineId}-${over.date ?? '2026-03-10'}`, lineId, ...over })
+  }
+  const matin = { minutes: 240, slotId: 'matin', startMinute: 540, endMinute: 780 }
+  const apresMidi = { minutes: 240, slotId: 'apres-midi', startMinute: 840, endMinute: 1080 }
+
+  function bande(lineId: string | null, date: string): HTMLElement {
+    return screen.getByTestId(lineId === null ? `bande-${date}` : `bande-${lineId}-${date}`)
+  }
+
+  it('dessine la journée entière d une autre prestation à sa couleur', () => {
+    renderCalendar({ entries: [sur('lB')], autresLignes: [ligneB], toutLeMois: true })
+    const aplat = screen.getByTestId('remplissage-lB-2026-03-10')
+    expect(aplat.getAttribute('data-forme')).toBe('PLEINE')
+    expect(classes(aplat)).toContain(colorForLine('lB').bg)
+    expect(caseDu('2026-03-10').contains(aplat)).toBe(true)
+    expect(bande('lB', '2026-03-10').getAttribute('data-bandes')).toBe('1')
+  })
+
+  it('ne dessine pas les autres prestations en « Cette prestation »', () => {
+    renderCalendar({ entries: [sur('lB')], autresLignes: [ligneB], toutLeMois: false })
+    expect(screen.queryByTestId('remplissage-lB-2026-03-10')).toBeNull()
+  })
+
+  it('superpose le matin de l une et l après-midi de l autre, sans bandes', () => {
+    renderCalendar({
+      entries: [entree(matin), sur('lB', apresMidi)],
+      autresLignes: [ligneB],
+      toutLeMois: true,
+    })
+    expect(screen.getByTestId('remplissage-2026-03-10').getAttribute('data-forme')).toBe('MOITIE-AM')
+    expect(screen.getByTestId('remplissage-lB-2026-03-10').getAttribute('data-forme')).toBe(
+      'MOITIE-PM',
+    )
+    expect(bande(null, '2026-03-10').getAttribute('data-bandes')).toBe('1')
+    expect(bande('lB', '2026-03-10').getAttribute('data-bandes')).toBe('1')
+  })
+
+  it('partage la case en bandes verticales quand deux journées se recouvriraient', () => {
+    renderCalendar({ entries: [entree(), sur('lB')], autresLignes: [ligneB], toutLeMois: true })
+    const saisie = bande(null, '2026-03-10')
+    const autre = bande('lB', '2026-03-10')
+    const place = (b: HTMLElement) => [b.getAttribute('data-bande'), b.getAttribute('data-bandes')]
+    expect(place(saisie)).toEqual(['0', '2'])
+    expect(place(autre)).toEqual(['1', '2'])
+    expect(saisie.style.left).toBe('0%')
+    expect(saisie.style.width).toBe('50%')
+    expect(autre.style.left).toBe('50%')
+    // Chaque bande garde la forme et la teinte de sa prestation.
+    expect(classes(screen.getByTestId('remplissage-2026-03-10'))).toContain(colorForLine('l1').bg)
+    expect(classes(screen.getByTestId('remplissage-lB-2026-03-10'))).toContain(colorForLine('lB').bg)
+  })
+
+  it('donne une bande à chacune de trois prestations', () => {
+    renderCalendar({
+      entries: [entree(matin), sur('lB', apresMidi), sur('lC')],
+      autresLignes: [ligneB, ligneC],
+      toutLeMois: true,
+    })
+    expect(
+      [bande(null, '2026-03-10'), bande('lB', '2026-03-10'), bande('lC', '2026-03-10')].map((b) => [
+        b.getAttribute('data-bande'),
+        b.getAttribute('data-bandes'),
+      ]),
+    ).toEqual([
+      ['0', '3'],
+      ['1', '3'],
+      ['2', '3'],
+    ])
+    expect(screen.getByTestId('remplissage-lB-2026-03-10').getAttribute('data-forme')).toBe(
+      'MOITIE-PM',
+    )
+  })
+
+  it('dit toujours chaque prestation et sa quantité dans le nom accessible', () => {
+    renderCalendar({
+      entries: [entree(), sur('lB', apresMidi), sur('lC')],
+      autresLignes: [ligneB, ligneC],
+      toutLeMois: true,
+    })
+    const nom = caseDu('2026-03-10').getAttribute('aria-label') ?? ''
+    expect(nom).toContain('Journée entière')
+    expect(nom).toContain('Consultant ITSM Nuit 0,5')
+    expect(nom).toContain('Pilotage 1')
+  })
+
+  // Le prévisionnel d'une autre prestation garde sa teinte — c'est elle qui
+  // dit laquelle — et se dit par le tireté, jamais par la couleur seule.
+  it('tirete l aplat d une autre prestation prévisionnelle', () => {
+    renderCalendar({
+      entries: [sur('lB', { kind: 'PREVISIONNEL' })],
+      autresLignes: [ligneB],
+      toutLeMois: true,
+    })
+    const aplat = screen.getByTestId('remplissage-lB-2026-03-10')
+    expect(classes(aplat)).toContain('border-dashed')
+    expect(classes(aplat)).toContain(colorForLine('lB').bg)
+  })
+
+  it('rend l aplat d une autre prestation inerte au clic', () => {
+    const onApply = vi.fn(async () => true)
+    renderCalendar({ entries: [sur('lB')], autresLignes: [ligneB], toutLeMois: true, onApply })
+    expect(classes(screen.getByTestId('remplissage-lB-2026-03-10'))).toContain('pointer-events-none')
+  })
+
+  // La plage soude les journées de la prestation saisie quand elle est seule
+  // sur ses jours ; un jour partagé en bandes ne se soude plus à son voisin.
+  it('soude la plage de la saisie tant qu aucune autre prestation ne partage ses jours', () => {
+    renderCalendar({
+      entries: [
+        entree(),
+        entree({ id: 'e2', date: '2026-03-11' }),
+        entree({ id: 'e3', date: '2026-03-12' }),
+        sur('lB', { date: '2026-03-12' }),
+      ],
+      autresLignes: [ligneB],
+      toutLeMois: true,
+    })
+    expect(caseDu('2026-03-10').getAttribute('data-plage')).toBe('DEBUT')
+    expect(caseDu('2026-03-11').getAttribute('data-plage')).toBe('FIN')
+    expect(caseDu('2026-03-12').getAttribute('data-plage')).toBe('SEULE')
+  })
+})

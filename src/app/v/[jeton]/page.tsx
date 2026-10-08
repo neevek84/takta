@@ -4,6 +4,7 @@ import { CadreSignature } from '@/components/client/CadreSignature'
 import { FormulaireCode } from '@/components/client/FormulaireCode'
 import { Banner } from '@/components/ui/Banner'
 import { lireVueClient, resoudreLien } from '@/services/signature/lien-client'
+import { origineDocumensoEnVigueur } from '@/services/signature/reglages'
 import { confirmerSignature, renouvelerSignature } from './actions'
 import { lienDeLaSession } from './session'
 
@@ -24,6 +25,24 @@ function Neutre({ titre, texte }: { titre: string; texte: string }) {
   )
 }
 
+/**
+ * La politique des cadres de la page : l'instance Documenso **en vigueur**
+ * (écran, sinon environnement), et rien d'autre ; `'none'` sans instance.
+ *
+ * Une balise meta et non un en-tête : l'instance se règle à l'écran et vit en
+ * base, que le middleware — en Edge, sans Prisma — ne peut pas lire. React
+ * place la balise dans le `<head>`, avant le cadre ; `frame-src` y est
+ * valide, contrairement à `frame-ancestors`, qui reste posé par le middleware.
+ */
+function PolitiqueCadres({ origine }: { origine: string }) {
+  return (
+    <meta
+      httpEquiv="Content-Security-Policy"
+      content={`frame-src ${origine !== '' ? origine : "'none'"}`}
+    />
+  )
+}
+
 function jour(d: Date): string {
   return d.toISOString().slice(0, 10).split('-').reverse().join('/')
 }
@@ -32,7 +51,20 @@ function jour(d: Date): string {
  * La page du client — **la seule de l'outil sans session**. Elle ne montre que
  * le contenu figé de l'envoi, après un code à usage unique.
  */
-export default async function PageClient({
+export default async function PageClient(props: {
+  params: Promise<{ jeton: string }>
+  searchParams: Promise<{ etape?: string; erreur?: string }>
+}) {
+  const [origine, contenu] = await Promise.all([origineDocumensoEnVigueur(), Contenu(props)])
+  return (
+    <>
+      <PolitiqueCadres origine={origine} />
+      {contenu}
+    </>
+  )
+}
+
+async function Contenu({
   params,
   searchParams,
 }: {

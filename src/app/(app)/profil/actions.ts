@@ -8,7 +8,7 @@ import {
   oublierIdentifiantDolibarr,
 } from '@/services/dolibarr/utilisateur'
 import { definirVueParDefaut } from '@/services/saisie/vue-par-defaut'
-import { estVue } from '@/core/saisie/vue'
+import { estVue, type Vue } from '@/core/saisie/vue'
 
 export type ProfilState = { ok: boolean; message: string } | null
 
@@ -64,16 +64,19 @@ export async function deconnecterGoogle(): Promise<void> {
   revalidatePath('/profil')
 }
 
-const LIBELLE_VUE: Record<string, string> = {
+// `Record<Vue, …>` et non `Record<string, …>` : une vue ajoutée à `estVue`
+// sans libellé ici ne compile plus, au lieu d'écrire « undefined » à l'écran.
+const LIBELLE_VUE: Record<Vue, string> = {
   CALENDRIER: 'Calendrier',
   TROIS_MOIS: '3 mois',
   TABLEAU: 'Tableau multi-CRA',
+  TABLEAU_TROIS_MOIS: 'Tableau 3 mois',
 }
 
 /**
  * Comme `enregistrerIdentifiantDolibarr` : la vue vise le compte de la
  * session, jamais un champ du formulaire — et une valeur qui n'est pas une
- * des trois vues reconnues (formulaire falsifié, ancien libellé) est refusée
+ * des vues reconnues (formulaire falsifié, ancien libellé) est refusée
  * plutôt qu'écrite telle quelle.
  */
 export async function enregistrerVueParDefaut(

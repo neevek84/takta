@@ -4,7 +4,7 @@ import { updateSettings, DEFAULT_SLOTS } from './settings'
 import { createClient } from './clients'
 import { createMission, createLine } from './missions'
 import { getMonthEntries } from './time-entries'
-import { applyCellState, isMonthLocked } from './cells'
+import { applyCellState, isMonthLocked, listerVerrousParLigne } from './cells'
 
 // Un interrupteur pour rendre la file indisponible à la demande. C'est le seul
 // moyen d'observer le sens « pas d'écriture sans mise en file » : les tests de
@@ -832,5 +832,56 @@ describe('isMonthLocked', () => {
       data: { missionId, userId, month: new Date('2026-03-01T00:00:00.000Z'), status: 'VALIDE' },
     })
     expect(await isMonthLocked(userId, ligneJour, '2026-04')).toBe(false)
+  })
+})
+
+describe('listerVerrousParLigne', () => {
+  const MOIS = ['2026-03', '2026-04', '2026-05']
+
+  it('ne rend rien sans CRA', async () => {
+    expect(await listerVerrousParLigne(userId, MOIS)).toEqual([])
+  })
+
+  it('verrouille chaque ligne de la mission sur le mois validé, et seulement lui', async () => {
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-04-01T00:00:00.000Z'), status: 'VALIDE' },
+    })
+
+    const verrous = await listerVerrousParLigne(userId, MOIS)
+
+    expect(verrous).toContain(`${ligneJour}|2026-04`)
+    expect(verrous).toContain(`${ligneNuit}|2026-04`)
+    // La ligne d'un autre consultant sur la même mission n'est pas la sienne.
+    expect(verrous).not.toContain(`${ligneAutre}|2026-04`)
+    expect(verrous.every((v) => v.endsWith('|2026-04'))).toBe(true)
+  })
+
+  it('verrouille aussi un mois envoyé au client', async () => {
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-05-01T00:00:00.000Z'), status: 'ENVOYE' },
+    })
+
+    expect(await listerVerrousParLigne(userId, MOIS)).toContain(`${ligneJour}|2026-05`)
+  })
+
+  it('laisse ouvert un brouillon et un mois hors de la plage', async () => {
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-03-01T00:00:00.000Z'), status: 'BROUILLON' },
+    })
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-06-01T00:00:00.000Z'), status: 'VALIDE' },
+    })
+
+    expect(await listerVerrousParLigne(userId, MOIS)).toEqual([])
+  })
+
+  // Le verrou porte sur le couple (mission, utilisateur, mois) : le CRA validé
+  // d'un autre consultant ne ferme rien pour celui-ci.
+  it('ignore le CRA d un autre utilisateur', async () => {
+    await prisma.cra.create({
+      data: { missionId, userId: autreId, month: new Date('2026-04-01T00:00:00.000Z'), status: 'VALIDE' },
+    })
+
+    expect(await listerVerrousParLigne(userId, MOIS)).toEqual([])
   })
 })
