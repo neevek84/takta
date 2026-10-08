@@ -49,6 +49,7 @@ const REGLAGES = [
   { href: '/admin/saisie', label: 'Règles de saisie' },
   { href: '/admin/theme', label: 'Apparence' },
   { href: '/admin/dolibarr', label: 'Dolibarr' },
+  { href: '/admin/signature', label: 'Signature' },
   { href: '/admin/google', label: 'Google' },
   { href: '/admin/sync', label: 'Synchro' },
   { href: '/admin/webhooks', label: 'Abonnements' },
