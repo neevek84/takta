@@ -27,12 +27,10 @@ import { CoinAgrege } from '@/components/ui/CoinAgrege'
 // `SEGMENT_PREVU_BORDURE` et non un tireté réécrit ici : la légende, les
 // bandeaux d'engagement et cette cellule doivent porter **les mêmes classes**,
 // sinon l'un des trois dérive sans que rien ne le dise.
-import { SegmentLegend, SEGMENT_PREVU_BORDURE } from '@/components/ui/SegmentLegend'
-import { EngagementBar } from './EngagementBar'
+import { SEGMENT_PREVU_BORDURE } from '@/components/ui/SegmentLegend'
+import { BlocEngagement, FOND_JOUR, TITRE_JOUR } from './BlocEngagement'
 import { TotalsRow } from './TotalsRow'
 import { useDragSelect } from './useDragSelect'
-
-const AUCUN_TOTAL: LineEngagementTotals = []
 
 /**
  * Constante de module et non littéral dans la déstructuration : un `[]` écrit
@@ -92,27 +90,6 @@ type EtatJour = 'ouvre' | 'weekend' | 'ferie'
 function etatJour(d: MonthDay): EtatJour {
   if (d.isHoliday) return 'ferie'
   return d.isWorking ? 'ouvre' : 'weekend'
-}
-
-// Fond ET motif — mais le motif ne sert plus qu'au férié. Le dithering du
-// week-end était le signal d'ancienneté le plus fort du dessin, et il couvrait
-// huit jours par mois. Le contrat non chromatique tient sans lui : l'écart de
-// clarté entre `surface`, `off` et `off-strong` (100 / 91,2 / 85,4 en L*)
-// porte l'information, et `MIN_LIGHTNESS_GAP` le vérifie déjà — le nom
-// accessible du jour la porte pour qui ne voit ni l'un ni l'autre.
-//
-// Le férié garde le sien : dix jours par an, une information plus forte, et un
-// marqueur si rare ne fatigue personne.
-const FOND_JOUR: Record<EtatJour, string> = {
-  ouvre: 'bg-surface',
-  weekend: 'bg-off',
-  ferie: 'bg-off-strong pattern-dots',
-}
-
-const TITRE_JOUR: Record<EtatJour, string | undefined> = {
-  ouvre: undefined,
-  weekend: 'Jour non ouvré',
-  ferie: 'Jour férié',
 }
 
 /**
@@ -451,41 +428,11 @@ export function MonthGrid({
 
   return (
     <div className="overflow-x-auto">
-      <div className="mb-3 flex flex-col gap-1">
-        {/* Les bandeaux dessinent deux segments, et les colonnes trois états
-            de jour ; sans légende, rien ne dit lequel est lequel ailleurs
-            qu'au survol de la souris — donc jamais au clavier ni au tactile. */}
-        <SegmentLegend className="mb-1" />
-        <p
-          data-testid="legende-jours"
-          className="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted"
-        >
-          {(['weekend', 'ferie'] as const).map((etat) => (
-            <span key={etat} className="inline-flex items-center gap-1">
-              <span
-                aria-hidden="true"
-                className={`inline-block h-3 w-4 rounded-sm border border-rule ${FOND_JOUR[etat]}`}
-              />
-              {TITRE_JOUR[etat]}
-            </span>
-          ))}
-          {/* Seulement quand il y a quelque chose à nommer : une légende qui
-              annonce un marquage absent de la grille égare plus qu'elle
-              n'aide, et l'agenda injoignable est un cas ordinaire. */}
-          {occupes.size > 0 && (
-            <span className="inline-flex items-center gap-1">
-              <span
-                aria-hidden="true"
-                className="inline-block h-3 w-4 rounded-sm border border-rule border-b-2 border-b-accent-dark bg-surface"
-              />
-              {OCCUPATION_TITRE}
-            </span>
-          )}
-        </p>
-        {lines.map((l) => (
-          <EngagementBar key={l.id} line={l} totals={engagementTotals[l.id] ?? AUCUN_TOTAL} />
-        ))}
-      </div>
+      <BlocEngagement
+        lines={lines}
+        engagementTotals={engagementTotals}
+        avecOccupation={occupes.size > 0}
+      />
 
       <table className="border-collapse text-sm">
         <thead>

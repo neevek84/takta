@@ -91,8 +91,9 @@ describe('MonthGrid', () => {
 
   it('affiche une ligne par ligne de prestation', () => {
     renderGrid()
-    expect(screen.getByText('Consultant ITSM')).toBeDefined()
-    expect(screen.getByText('Consultant ITSM Nuit')).toBeDefined()
+    const lignesDuTableau = screen.getAllByRole('rowheader').map((th) => th.textContent)
+    expect(lignesDuTableau.some((t) => t?.startsWith('Consultant ITSM Nuit'))).toBe(true)
+    expect(lignesDuTableau.some((t) => t?.startsWith('Consultant ITSM'))).toBe(true)
   })
 
   // Les cases de jour sont `relative` (leur aplat s'y pose en absolu) : venues
@@ -294,6 +295,13 @@ describe('MonthGrid', () => {
       expect(weekend.className).not.toMatch(/pattern-/)
       expect(cell('Consultant ITSM', '2026-03-02').className).not.toMatch(/(^|:)bg-off/)
     })
+  })
+
+  it('nomme chaque prestation à côté de sa barre d engagement', () => {
+    renderGrid()
+    const noms = screen.getAllByTestId(/^libelle-engagement-/).map((n) => n.textContent)
+    expect(noms.length).toBeGreaterThan(0)
+    expect(noms).toContain('Consultant ITSM')
   })
 
   it('affiche le bandeau d engagement par ligne', () => {

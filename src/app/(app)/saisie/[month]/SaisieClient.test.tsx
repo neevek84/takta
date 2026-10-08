@@ -1065,7 +1065,7 @@ describe('SaisieClient — vue 3 mois', () => {
   })
 
   // L'engagement se lit sur toute la durée de la ligne, pas sur un mois
-  // affiché : une seule réglette sous les trois grilles, jamais une par mois.
+  // affiché : une seule barre au-dessus des trois grilles, jamais une par mois.
   it('pose une seule réglette d engagement, pas une par mois', () => {
     renderClient({
       engagementTotals: {
@@ -1076,7 +1076,8 @@ describe('SaisieClient — vue 3 mois', () => {
     ouvrirTroisMois()
 
     expect(screen.getAllByTestId('engagement-l1')).toHaveLength(1)
-    expect(screen.getByTestId('piste-engagement-l1').className).toContain('w-full')
+    // Comme dans les tableaux : barre compacte, nommée, au-dessus des grilles.
+    expect(screen.getByTestId('libelle-engagement-l1').textContent).toBe('Consultant ITSM')
   })
 
   // Comme au calendrier : la bascule de portée détaille chaque journée des
@@ -1335,6 +1336,26 @@ describe('la vue choisie vit dans l adresse', () => {
 
     choisirVueDansLeSelect('TROIS_MOIS')
     expect(window.location.search).toBe('?vue=3mois')
+  })
+
+  // La vue 3 mois montre le même bloc d'information que les tableaux.
+  it('affiche les légendes et une seule barre nommée en vue 3 mois', () => {
+    renderClient({ vueInitiale: 'TROIS_MOIS' })
+
+    const segments = screen.getByTestId('legende-segments').textContent
+    expect(segments).toContain('Réalisé')
+    expect(segments).toContain('Prévisionnel')
+    expect(screen.getByTestId('legende-jours').textContent).toContain('Jour férié')
+    expect(screen.getAllByTestId(/^engagement-/)).toHaveLength(1)
+    expect(screen.getByTestId('libelle-engagement-l1').textContent).toBe('Consultant ITSM')
+  })
+
+  it('affiche une barre nommée par prestation en vue 3 mois, toutes prestations', () => {
+    renderClient({ vueInitiale: 'TROIS_MOIS' })
+    fireEvent.click(screen.getByRole('button', { name: 'Toutes les prestations' }))
+
+    const noms = screen.getAllByTestId(/^libelle-engagement-/).map((n) => n.textContent)
+    expect(noms).toEqual(['Consultant ITSM', 'Consultant ITSM Nuit'])
   })
 
   it('retire le paramètre en revenant au calendrier depuis la vue 3 mois', () => {
