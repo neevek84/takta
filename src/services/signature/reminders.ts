@@ -1,7 +1,13 @@
 import { prisma } from '@/db/client'
 import type { SignatureConnector } from '@/core/signature/connector'
+import { empreinteJeton } from '@/core/auth/reinitialisation'
+import { libelleMois } from '@/core/cra/document'
+import { gabaritRelanceClient } from '@/core/notify/signature'
+import type { Mailer } from '@/services/notify'
 import { getSettings } from '@/services/settings'
-import { ENTITY_CRA } from './constants'
+import { envoyerCourriel } from './courriels'
+import { enveloppeDeLEnvoi } from './envois'
+import { creerLienClient } from './lien-client'
 import { getSignatureConnector } from './registry'
 
 /** Au-delà, on cesse de relancer et le CRA remonte en souffrance. */
@@ -33,14 +39,22 @@ const JOUR_EN_MS = 24 * 60 * 60 * 1000
  * jamais : une instance sans outil de signature doit pouvoir appeler
  * l'ordonnanceur sans que rien ne casse.
  *
- * **Rien n'est consigné au journal de preuve.** Le catalogue
- * (`core/audit/events.ts`) ne porte ni relance ni abandon, et il est un
- * contrat public : y ajouter un nom au passage engagerait des abonnés qu'on ne
- * voit pas depuis ce dépôt. Une relance n'est d'ailleurs pas un acte humain —
- * ce que le journal atteste, c'est ce qu'une personne a décidé.
+ * Relancer n'est pas un acte humain : rien n'est consigné **au nom du
+ * consultant** ; le courriel, lui, est journalisé par `envoyerCourriel`
+ * (`signature.courriel.*`), sans contenu.
+ *
+ * Deux voies. Un envoi du lot 3b (`origine` renseignée) est relancé **par
+ * l'outil** : un lien neuf part par courriel, les liens déjà reçus restent
+ * valables. Un envoi hérité est relancé **par le prestataire**, qui réécrit
+ * lui-même quand on renouvelle son lien.
  */
 export async function runSignatureReminders(
-  args: { userId?: string; now?: Date; connector?: SignatureConnector | null } = {},
+  args: {
+    userId?: string
+    now?: Date
+    connector?: SignatureConnector | null
+    mailer?: Mailer | null
+  } = {},
 ): Promise<ReminderReport> {
   const rapport: ReminderReport = { relancees: 0, abandonnees: 0, sansConnecteur: 0, echecs: 0 }
 
@@ -71,6 +85,17 @@ export async function runSignatureReminders(
     select: {
       craId: true,
       provider: true,
+      numero: true,
+      origine: true,
+      externalId: true,
+      signataireNom: true,
+      signataireEmail: true,
+      cra: {
+        select: {
+          month: true,
+          mission: { select: { label: true, client: { select: { name: true } } } },
+        },
+      },
       relances: true,
       sentAt: true,
       lastRelanceAt: true,
@@ -80,7 +105,8 @@ export async function runSignatureReminders(
   const echues = demandes.filter((d) => (d.lastRelanceAt ?? d.sentAt) <= echeance)
   if (echues.length === 0) return rapport
 
-  const connector = args.connector !== undefined ? args.connector : await getSignatureConnector()
+  // Résolu paresseusement, une seule fois : seuls les envois hérités en ont besoin.
+  let connector: SignatureConnector | null | undefined = args.connector
 
   for (const demande of echues) {
     if (demande.relances >= RELANCES_MAX) {
@@ -94,38 +120,80 @@ export async function runSignatureReminders(
       continue
     }
 
-    if (connector === null) {
-      rapport.sansConnecteur += 1
-      continue
+    let relancee: boolean
+    if (demande.origine !== '') {
+      // Lot 3b : c'est l'outil qui écrit. Un lien neuf part — le jeton n'est
+      // jamais conservé en clair, on ne peut donc pas renvoyer l'ancien — et
+      // les liens déjà reçus restent valables.
+      const ligne = await prisma.lienClient.findFirst({
+        where: { craId: demande.craId, numero: demande.numero, revokedAt: null },
+        select: { jetonSignataire: true },
+        orderBy: { createdAt: 'desc' },
+      })
+      if (ligne === null) {
+        // Aucun lien ouvert pour cet envoi : un lien neuf n'aurait pas de jeton
+        // prestataire. On ne devine rien, on le compte.
+        rapport.echecs += 1
+        continue
+      }
+      const jeton = await prisma.$transaction((tx) =>
+        creerLienClient(tx, {
+          craId: demande.craId,
+          numero: demande.numero,
+          jetonSignataire: ligne.jetonSignataire,
+        }),
+      )
+      const mois = demande.cra.month.toISOString().slice(0, 7)
+      const r = await envoyerCourriel({
+        craId: demande.craId,
+        raison: 'RELANCE',
+        to: demande.signataireEmail,
+        gabarit: gabaritRelanceClient({
+          clientNom: demande.cra.mission.client.name,
+          missionLabel: demande.cra.mission.label,
+          moisLibelle: libelleMois(mois),
+          signataireNom: demande.signataireNom,
+          lien: `${demande.origine}/v/${jeton}`,
+        }),
+        mailer: args.mailer ?? null,
+      })
+      relancee = r.envoye
+      if (!relancee) {
+        // Le courriel n'est pas parti : le lien neuf n'a servi à personne. Le
+        // laisser ouvert en accumulerait un de plus à chaque passage en panne.
+        await prisma.lienClient.deleteMany({ where: { jetonEmpreinte: empreinteJeton(jeton) } })
+      }
+    } else {
+      // Envoi hérité : distribué par courriel du prestataire, c'est lui qui
+      // relance quand on renouvelle son lien.
+      if (connector === undefined) connector = await getSignatureConnector()
+      if (connector === null) {
+        rapport.sansConnecteur += 1
+        continue
+      }
+      const externalId = await enveloppeDeLEnvoi(demande)
+      if (externalId === null) {
+        rapport.echecs += 1
+        continue
+      }
+      try {
+        await connector.renouveler(externalId)
+        relancee = true
+      } catch {
+        relancee = false
+      }
     }
 
-    const lien = await prisma.externalLink.findUnique({
-      where: {
-        entityType_entityId_provider: {
-          entityType: ENTITY_CRA,
-          entityId: demande.craId,
-          provider: demande.provider,
-        },
-      },
-      select: { externalId: true },
-    })
-    if (lien === null) {
-      rapport.echecs += 1
-      continue
-    }
-
-    try {
-      await connector.remind(lien.externalId)
-    } catch {
+    if (!relancee) {
       // Un échec ne consomme pas de relance et n'arrête pas le travail : le
-      // prochain passage retentera, et les demandes suivantes sont traitées.
+      // prochain passage retentera. Trois pannes de suite abandonneraient
+      // sinon un CRA que personne n'a jamais relancé.
       rapport.echecs += 1
       continue
     }
 
-    // Après le `remind`, jamais avant : incrémenter d'abord ferait payer une
-    // relance à une panne du prestataire, et trois pannes de suite
-    // abandonneraient un CRA que personne n'a jamais relancé.
+    // Après l'envoi, jamais avant : incrémenter d'abord ferait payer une
+    // relance à une panne.
     await prisma.signatureRequest.update({
       where: { craId: demande.craId },
       data: { relances: { increment: 1 }, lastRelanceAt: now },

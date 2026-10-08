@@ -71,6 +71,17 @@ export const AUDIT_ACTIONS = [
   'signature.envoyee',
   'signature.recue',
   'signature.refusee',
+  // Signature — émis par le lot 3b. Le parcours du client dans l'outil, et
+  // les courriels qui le portent. Aucun ne contient le nom, l'adresse ni le
+  // motif du signataire : le journal est poussé vers des URL tierces.
+  'signature.lien.ouvert',
+  'signature.code.envoye',
+  'signature.code.valide',
+  'signature.code.echoue',
+  'signature.annulee',
+  'signature.renvoyee',
+  'signature.courriel.envoye',
+  'signature.courriel.echoue',
   // Alertes
   'engagement.depasse',
   'capacite.depassee',

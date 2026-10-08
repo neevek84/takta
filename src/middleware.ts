@@ -46,7 +46,40 @@ const FICHIERS_PUBLICS = new Set([
 export default function middleware(request: NextRequest, event: NextFetchEvent) {
   if (FICHIERS_PUBLICS.has(request.nextUrl.pathname)) return NextResponse.next()
 
+  // **La seule page de l'outil sans session** (lot 3b) : le client n'a pas de
+  // compte. Sa garde est le jeton du lien, puis un code à usage unique — voir
+  // `src/services/signature/lien-client.ts`. `/v/` et pas `/v` : `/vue` ou
+  // `/v` seuls restent derrière l'authentification.
+  if (request.nextUrl.pathname.startsWith('/v/')) return reponseClient()
+
   return protege(request, event)
+}
+
+/**
+ * Les en-têtes de la page client.
+ *
+ *   - `frame-src` limité à l'instance Documenso : le seul cadre que la page
+ *     charge. Posé ici et non dans `next.config.ts`, dont les en-têtes sont
+ *     figés à la construction — `DOCUMENSO_URL` est un réglage d'exécution.
+ *   - `frame-ancestors 'none'` : personne n'encadre la page du client.
+ *   - `no-referrer` : le jeton est dans l'URL, il ne doit fuir vers personne.
+ *   - `noindex` : un lien privé n'a rien à faire dans un moteur.
+ */
+function reponseClient(): NextResponse {
+  const reponse = NextResponse.next()
+  let origineSignature = ''
+  try {
+    origineSignature = process.env.DOCUMENSO_URL ? new URL(process.env.DOCUMENSO_URL).origin : ''
+  } catch {
+    origineSignature = ''
+  }
+  reponse.headers.set(
+    'Content-Security-Policy',
+    `frame-src ${origineSignature !== '' ? origineSignature : "'none'"}; frame-ancestors 'none'`,
+  )
+  reponse.headers.set('Referrer-Policy', 'no-referrer')
+  reponse.headers.set('X-Robots-Tag', 'noindex, nofollow')
+  return reponse
 }
 
 /**

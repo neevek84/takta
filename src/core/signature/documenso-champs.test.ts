@@ -21,28 +21,36 @@ describe('versDocumensoField', () => {
     const f = versDocumensoField(CHAMP)
     // Le champ va de 100 à 134 points au-dessus du bas de page. Son haut est
     // donc à 595 − 134 = 461 points sous le haut de page.
-    expect(f.pageY).toBeCloseTo((461 / 595) * 100, 2)
+    expect(f.positionY).toBeCloseTo((461 / 595) * 100, 2)
   })
 
   it('convertit en pourcentages de la page, pas en points', () => {
     const f = versDocumensoField(CHAMP)
-    expect(f.pageX).toBeCloseTo((200 / 842) * 100, 2)
-    expect(f.pageWidth).toBeCloseTo((148 / 842) * 100, 2)
-    expect(f.pageHeight).toBeCloseTo((34 / 595) * 100, 2)
+    expect(f.positionX).toBeCloseTo((200 / 842) * 100, 2)
+    expect(f.width).toBeCloseTo((148 / 842) * 100, 2)
+    expect(f.height).toBeCloseTo((34 / 595) * 100, 2)
   })
 
   it('garde la page et la nature du champ', () => {
-    expect(versDocumensoField(CHAMP).pageNumber).toBe(2)
-    expect(versDocumensoField({ ...CHAMP, nature: 'DATE' }).formType).toBe('DATE')
+    expect(versDocumensoField(CHAMP).page).toBe(2)
+    expect(versDocumensoField({ ...CHAMP, nature: 'DATE' }).type).toBe('DATE')
   })
 
   it('rend un champ entièrement dans la page', () => {
     const f = versDocumensoField(CHAMP)
-    expect(f.pageX + f.pageWidth).toBeLessThanOrEqual(100)
-    expect(f.pageY + f.pageHeight).toBeLessThanOrEqual(100)
+    expect(f.positionX + f.width).toBeLessThanOrEqual(100)
+    expect(f.positionY + f.height).toBeLessThanOrEqual(100)
   })
 
   it('refuse une page sans dimension plutôt que de diviser par zéro', () => {
     expect(() => versDocumensoField({ ...CHAMP, pageHauteur: 0 })).toThrow(/dimension/i)
+  })
+
+  it('désigne le seul fichier téléversé, par son index', () => {
+    const champ = versDocumensoField({
+      nature: 'SIGNATURE', ancre: '[[cra:signature]]', page: 1,
+      x: 0, y: 0, largeur: 10, hauteur: 10, pageLargeur: 842, pageHauteur: 595,
+    })
+    expect(champ.identifier).toBe(0)
   })
 })

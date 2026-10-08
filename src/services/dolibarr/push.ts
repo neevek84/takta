@@ -1,5 +1,5 @@
 import { prisma } from '@/db/client'
-import { isLocked } from '@/core/cra/state-machine'
+import { isArrete } from '@/core/cra/state-machine'
 import { buildTimeSpentPayloads, type PushableEntry } from '@/core/dolibarr/timespent'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import type { CraStatus, TimeEntryKind } from '@/core/types'
@@ -163,12 +163,13 @@ export async function pushCraTimes(args: {
   // n'est pas une panne. La ligne de file est consommée sans bruit.
   if (cra === null) return resultat
 
-  // Rouvert entre la mise en file et le drainage. Le déclencheur est la
-  // validation, et elle seule : pousser un brouillon enverrait à Dolibarr du
+  // Rouvert entre la mise en file et le drainage. Le mois doit être **arrêté**
+  // (`isArrete`), pas seulement fermé : un CRA `ENVOYE` attend encore la
+  // signature du client. Le déclencheur est la validation, et elle seule : pousser un brouillon enverrait à Dolibarr du
   // temps qui n'est pas arrêté, et — bien pire — la réconciliation retirerait
   // de Dolibarr les journées que l'utilisateur est justement en train de
   // corriger.
-  if (!isLocked(cra.status as CraStatus)) return resultat
+  if (!isArrete(cra.status as CraStatus)) return resultat
 
   // La correspondance mission → projet est de portée instance : elle est posée
   // par l'écran d'administration, pour tout le monde. On la lit donc par sa

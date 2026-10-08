@@ -9,6 +9,14 @@ import { buildCraPdf } from '@/services/cra-pdf'
 import { createFakeSignatureConnector } from './fake-connector'
 import { ENTITY_CRA } from './constants'
 import { sendCraForSignature } from './send'
+import type { Mailer } from '@/services/notify'
+import { empreinteJeton } from '@/core/auth/reinitialisation'
+
+const ORIGINE = 'https://cra.test'
+let courriels: Array<{ to: string; sujet: string; corps: string }> = []
+const mailer: Mailer = async (m) => {
+  courriels.push({ to: m.to, sujet: m.sujet, corps: m.corps })
+}
 
 let userId = ''
 let autreUserId = ''
@@ -38,6 +46,9 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
+  courriels = []
+  await prisma.lienClient.deleteMany({})
+  await prisma.signatureEnvoiClos.deleteMany({})
   await prisma.externalLink.deleteMany({ where: { entityType: ENTITY_CRA } })
   await prisma.signatureRequest.deleteMany({})
   await prisma.cra.deleteMany({ where: { userId } })
@@ -52,6 +63,8 @@ beforeEach(async () => {
 })
 
 afterAll(async () => {
+  await prisma.lienClient.deleteMany({})
+  await prisma.signatureEnvoiClos.deleteMany({})
   await prisma.externalLink.deleteMany({ where: { entityType: ENTITY_CRA } })
   await prisma.signatureRequest.deleteMany({})
   await prisma.timeEntry.deleteMany({ where: { userId } })
@@ -67,9 +80,9 @@ afterAll(async () => {
 describe('sendCraForSignature', () => {
   it('confie le PDF au connecteur et fait passer le CRA à ENVOYE', async () => {
     const connector = createFakeSignatureConnector()
-    const r = await sendCraForSignature(userId, craId, { connector })
+    const r = await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
 
-    expect(r).toEqual({ ok: true, externalId: 'ext-1', status: 'ENVOYE' })
+    expect(r).toEqual({ ok: true, externalId: 'ext-1', status: 'ENVOYE', numero: 1, courrielEnvoye: true })
     expect(connector.envois).toHaveLength(1)
     expect(connector.envois[0]!.destinataire).toEqual({
       nom: 'Claire Martin',
@@ -88,7 +101,7 @@ describe('sendCraForSignature', () => {
     // ne part chez le client : contourner `buildCraPdf` rouvrirait la porte
     // aux montants sans qu aucun test du PDF ne bouge.
     const connector = createFakeSignatureConnector()
-    await sendCraForSignature(userId, craId, { connector })
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
 
     const attendu = await buildCraPdf(userId, craId)
     expect(connector.envois[0]!.fileName).toBe(attendu.fileName)
@@ -97,7 +110,7 @@ describe('sendCraForSignature', () => {
 
   it('enregistre la référence externe dans ExternalLink', async () => {
     const connector = createFakeSignatureConnector()
-    await sendCraForSignature(userId, craId, { connector })
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
 
     const lien = await prisma.externalLink.findUniqueOrThrow({
       where: {
@@ -117,7 +130,7 @@ describe('sendCraForSignature', () => {
 
   it('ouvre une demande de signature en attente, sans relance', async () => {
     const connector = createFakeSignatureConnector()
-    await sendCraForSignature(userId, craId, { connector })
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
 
     const demande = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
     expect(demande.status).toBe('EN_ATTENTE')
@@ -130,7 +143,7 @@ describe('sendCraForSignature', () => {
   })
 
   it('SANS CONNECTEUR, ne touche à rien et le dit', async () => {
-    const r = await sendCraForSignature(userId, craId, { connector: null })
+    const r = await sendCraForSignature(userId, craId, { connector: null, origine: ORIGINE, mailer })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.raison).toBe('PAS_DE_CONNECTEUR')
 
@@ -140,7 +153,7 @@ describe('sendCraForSignature', () => {
   })
 
   it('la transition manuelle reste possible sans connecteur', async () => {
-    await sendCraForSignature(userId, craId, { connector: null })
+    await sendCraForSignature(userId, craId, { connector: null, origine: ORIGINE, mailer })
     const apres = await transitionCra(userId, craId, 'ENVOYER')
     expect(apres.status).toBe('ENVOYE')
   })
@@ -150,7 +163,7 @@ describe('sendCraForSignature', () => {
       where: { id: missionId },
       data: { signataireNom: '', signataireEmail: '' },
     })
-    const r = await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector() })
+    const r = await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector(), origine: ORIGINE, mailer })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.raison).toBe('PAS_DE_SIGNATAIRE')
 
@@ -163,7 +176,7 @@ describe('sendCraForSignature', () => {
       where: { id: missionId },
       data: { signataireNom: '', signataireEmail: 'claire@send.test' },
     })
-    const r = await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector() })
+    const r = await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector(), origine: ORIGINE, mailer })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.raison).toBe('PAS_DE_SIGNATAIRE')
   })
@@ -173,7 +186,7 @@ describe('sendCraForSignature', () => {
     const connector = createFakeSignatureConnector()
     connector.faireEchouerEnvoi('Le prestataire est injoignable.')
 
-    const r = await sendCraForSignature(userId, craId, { connector })
+    const r = await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.raison).toBe('CONNECTEUR_EN_ECHEC')
 
@@ -187,28 +200,28 @@ describe('sendCraForSignature', () => {
 
   it('refuse d envoyer un CRA déjà validé', async () => {
     await prisma.cra.update({ where: { id: craId }, data: { status: 'VALIDE' } })
-    const r = await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector() })
+    const r = await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector(), origine: ORIGINE, mailer })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.raison).toBe('TRANSITION_IMPOSSIBLE')
   })
 
   it('refuse d envoyer un CRA déjà envoyé', async () => {
     await prisma.cra.update({ where: { id: craId }, data: { status: 'ENVOYE' } })
-    const r = await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector() })
+    const r = await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector(), origine: ORIGINE, mailer })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.raison).toBe('TRANSITION_IMPOSSIBLE')
   })
 
   it('remplace la demande précédente après un refus, et remet les relances à zéro', async () => {
     const connector = createFakeSignatureConnector()
-    await sendCraForSignature(userId, craId, { connector })
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
     await prisma.signatureRequest.update({
       where: { craId },
       data: { status: 'REFUSE', relances: 3, abandoned: true, completedAt: new Date() },
     })
-    await prisma.cra.update({ where: { id: craId }, data: { status: 'BROUILLON' } })
+    await prisma.cra.update({ where: { id: craId }, data: { status: 'REFUSE' } })
 
-    const r = await sendCraForSignature(userId, craId, { connector })
+    const r = await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
     expect(r.ok).toBe(true)
 
     const demandes = await prisma.signatureRequest.findMany({ where: { craId } })
@@ -226,14 +239,14 @@ describe('sendCraForSignature', () => {
 
   it('efface le PDF archivé quand on renvoie — l archive suit le document en cours', async () => {
     const connector = createFakeSignatureConnector()
-    await sendCraForSignature(userId, craId, { connector })
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
     await prisma.signatureRequest.update({
       where: { craId },
       data: { signedPdf: Buffer.from('ancien'), status: 'REFUSE' },
     })
-    await prisma.cra.update({ where: { id: craId }, data: { status: 'BROUILLON' } })
+    await prisma.cra.update({ where: { id: craId }, data: { status: 'REFUSE' } })
 
-    await sendCraForSignature(userId, craId, { connector })
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
     const demande = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
     expect(demande.signedPdf).toBeNull()
   })
@@ -247,7 +260,7 @@ describe('sendCraForSignature', () => {
     await prisma.auditEvent.deleteMany({})
     const connector = createFakeSignatureConnector()
 
-    await sendCraForSignature(userId, craId, { connector })
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
 
     const entrees = await prisma.auditEvent.findMany({ orderBy: { seq: 'asc' } })
     const envoye = entrees.find((e) => e.action === 'cra.envoye')
@@ -260,7 +273,7 @@ describe('sendCraForSignature', () => {
     await prisma.auditEvent.deleteMany({})
     const connector = createFakeSignatureConnector()
 
-    await sendCraForSignature(userId, craId, { connector })
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
 
     const entrees = await prisma.auditEvent.findMany({ orderBy: { seq: 'asc' } })
     const signature = entrees.find((e) => e.action === 'signature.envoyee')
@@ -277,7 +290,7 @@ describe('sendCraForSignature', () => {
     const connector = createFakeSignatureConnector()
     connector.faireEchouerEnvoi('Le prestataire est injoignable.')
 
-    await sendCraForSignature(userId, craId, { connector })
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
 
     const actions = (await prisma.auditEvent.findMany({})).map((e) => e.action)
     expect(actions).not.toContain('cra.envoye')
@@ -287,10 +300,135 @@ describe('sendCraForSignature', () => {
   it('refuse le CRA d un autre utilisateur', async () => {
     const r = await sendCraForSignature(autreUserId, craId, {
       connector: createFakeSignatureConnector(),
+      origine: ORIGINE,
+      mailer,
     })
     expect(r.ok).toBe(false)
 
     const cra = await prisma.cra.findUniqueOrThrow({ where: { id: craId } })
     expect(cra.status).toBe('BROUILLON')
+  })
+})
+
+describe('lot 3b — envoi par l outil', () => {
+  it('fige le contenu, avec son empreinte, sur l envoi', async () => {
+    await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector(), origine: ORIGINE, mailer })
+    const d = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
+    const doc = JSON.parse(d.contenuFige)
+    expect(doc.mois).toBe('2026-06')
+    expect(doc.totalCentiemes).toBe(100)
+    expect(d.empreinte).toMatch(/^[0-9a-f]{64}$/)
+    expect(d.externalId).toBe('ext-1')
+    expect(d.origine).toBe(ORIGINE)
+  })
+
+  it('confie notre référence au prestataire', async () => {
+    const connector = createFakeSignatureConnector()
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
+    expect(connector.envois[0]!.reference).toBe(craId)
+  })
+
+  it('écrit au signataire, avec un lien dont la base ne garde que l empreinte', async () => {
+    await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector(), origine: ORIGINE, mailer })
+    expect(courriels).toHaveLength(1)
+    expect(courriels[0]!.to).toBe('claire@send.test')
+    const lien = /https:\/\/cra\.test\/v\/([0-9a-f]{64})/.exec(courriels[0]!.corps)
+    expect(lien).not.toBeNull()
+    const enBase = await prisma.lienClient.findFirstOrThrow({ where: { craId } })
+    expect(enBase.jetonEmpreinte).toBe(empreinteJeton(lien![1]!))
+    expect(enBase.jetonSignataire).toBe('jeton-1')
+    expect(JSON.stringify(enBase)).not.toContain(lien![1]!)
+  })
+
+  it('COURRIEL EN ÉCHEC au moment de l envoi : envoie quand même et le dit', async () => {
+    const enPanne: Mailer = async () => {
+      throw new Error('serveur de courriel injoignable')
+    }
+    const r = await sendCraForSignature(userId, craId, {
+      connector: createFakeSignatureConnector(),
+      origine: ORIGINE,
+      mailer: enPanne,
+    })
+    expect(r).toMatchObject({ ok: true, status: 'ENVOYE', courrielEnvoye: false })
+    const journal = await prisma.auditEvent.findMany({ where: { entityId: craId }, orderBy: { seq: 'asc' } })
+    expect(journal.map((e) => e.action)).toContain('signature.courriel.echoue')
+  })
+
+  // Revue finale lot 3b : sans SMTP, le client ne recevrait jamais son code —
+  // le lien serait inutilisable. Refusé avant le prestataire.
+  it('SANS SMTP NI MAILER, refuse avant le prestataire et ne touche à rien', async () => {
+    await prisma.settings.deleteMany({})
+    const connector = createFakeSignatureConnector()
+    const r = await sendCraForSignature(userId, craId, { connector, origine: ORIGINE })
+    expect(r).toMatchObject({ ok: false, raison: 'PAS_DE_SMTP' })
+    if (!r.ok) expect(r.message).toMatch(/client ne pourrait pas recevoir son code/)
+    expect(connector.envois).toHaveLength(0)
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('BROUILLON')
+    expect(await prisma.signatureRequest.count({ where: { craId } })).toBe(0)
+  })
+
+  it('refuse sans origine publique, sans rien toucher', async () => {
+    const connector = createFakeSignatureConnector()
+    const r = await sendCraForSignature(userId, craId, { connector, origine: '', mailer })
+    expect(r).toMatchObject({ ok: false, raison: 'PAS_D_ORIGINE' })
+    expect(connector.envois).toHaveLength(0)
+  })
+
+  it('RENVOIE DIRECTEMENT DEPUIS REFUSE : clôt le premier envoi, numérote le second, révoque l ancien lien', async () => {
+    const connector = createFakeSignatureConnector()
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
+    await prisma.signatureRequest.update({ where: { craId }, data: { status: 'REFUSE', motifRefus: 'Il manque le 15.' } })
+    await transitionCra(userId, craId, 'REFUSER')
+
+    const r = await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
+    expect(r).toMatchObject({ ok: true, status: 'ENVOYE', numero: 2, externalId: 'ext-2' })
+
+    const clos = await prisma.signatureEnvoiClos.findMany({ where: { craId } })
+    expect(clos).toMatchObject([{ numero: 1, status: 'REFUSE', motifRefus: 'Il manque le 15.' }])
+    const d = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
+    expect(d).toMatchObject({ numero: 2, status: 'EN_ATTENTE', motifRefus: '', relances: 0 })
+
+    const liens = await prisma.lienClient.findMany({ where: { craId } })
+    expect(liens.find((l) => l.numero === 1)!.revokedAt).not.toBeNull()
+    expect(liens.find((l) => l.numero === 2)!.revokedAt).toBeNull()
+  })
+
+  it('consigne `signature.renvoyee` sur un renvoi, jamais sur un premier envoi', async () => {
+    const connector = createFakeSignatureConnector()
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
+    let actions = (await prisma.auditEvent.findMany({ where: { entityId: craId } })).map((e) => e.action)
+    expect(actions).not.toContain('signature.renvoyee')
+
+    await transitionCra(userId, craId, 'REFUSER')
+    await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
+    actions = (await prisma.auditEvent.findMany({ where: { entityId: craId } })).map((e) => e.action)
+    expect(actions).toContain('signature.renvoyee')
+  })
+
+  it("le journal ne contient ni le signataire, ni le jeton", async () => {
+    await sendCraForSignature(userId, craId, { connector: createFakeSignatureConnector(), origine: ORIGINE, mailer })
+    const tout = (await prisma.auditEvent.findMany({ where: { entityId: craId } })).map((e) => e.payloadJson).join('\n')
+    expect(tout).not.toContain('claire')
+    expect(tout).not.toContain('Claire')
+    expect(tout).not.toContain('jeton-1')
+  })
+
+  it('un CRA qui bouge entre la lecture et la transaction : rien n est écrit, l enveloppe est annulée', async () => {
+    const connector = createFakeSignatureConnector()
+    const envoiOrigine = connector.send.bind(connector)
+    connector.send = async (e) => {
+      const depot = await envoiOrigine(e)
+      await new Promise((r) => setTimeout(r, 5))
+      await prisma.cra.update({ where: { id: craId }, data: { invoiceNumber: 'X' } })
+      return depot
+    }
+    const r = await sendCraForSignature(userId, craId, { connector, origine: ORIGINE, mailer })
+    expect(r).toMatchObject({ ok: false, raison: 'TRANSITION_IMPOSSIBLE' })
+    expect(connector.annulations).toEqual(['ext-1'])
+    expect(await prisma.signatureRequest.findUnique({ where: { craId } })).toBeNull()
+    expect(await prisma.lienClient.count({ where: { craId } })).toBe(0)
+    expect(await prisma.signatureEnvoiClos.count({ where: { craId } })).toBe(0)
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('BROUILLON')
+    expect(courriels).toHaveLength(0)
   })
 })

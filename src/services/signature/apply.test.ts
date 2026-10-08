@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
+import type { Mailer } from '@/services/notify'
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/db/client'
 import { ENTITY_CRA } from '@/core/sync/policy'
@@ -11,6 +12,27 @@ import { saveInstanceCredential, revokeInstanceCredential } from '@/services/cre
 import { DOLIBARR } from '@/services/dolibarr/api'
 import { createFakeSignatureConnector } from './fake-connector'
 import { applySignatureStatus } from './apply'
+
+// Une fenêtre de course rendue déterministe : `course.avant`, s'il est posé,
+// s'exécute une fois juste avant la transition que demande l'applicateur —
+// c'est-à-dire après sa lecture et sa réclamation. Sans effet sinon.
+const course = vi.hoisted(() => ({ avant: null as null | (() => Promise<unknown>) }))
+
+vi.mock('@/services/cra', async (importOriginal) => {
+  const reel = await importOriginal<typeof import('@/services/cra')>()
+  return {
+    ...reel,
+    transitionCra: async (...args: Parameters<typeof reel.transitionCra>) => {
+      const avant = course.avant
+      course.avant = null
+      if (avant !== null) await avant()
+      return reel.transitionCra(...args)
+    },
+  }
+})
+
+const EMAIL_CONSULTANT = 'apply@test.local'
+const EMAIL_SIGNATAIRE = 'signataire-apply@client.test'
 
 let userId = ''
 let missionId = ''
@@ -41,7 +63,7 @@ beforeAll(async () => {
   process.env.CREDENTIALS_KEY = randomBytes(32).toString('base64')
 
   const u = await prisma.user.create({
-    data: { email: 'apply@test.local', name: 'T', passwordHash: 'x' },
+    data: { email: EMAIL_CONSULTANT, name: 'T', passwordHash: 'x' },
   })
   userId = u.id
   const c = await createClient('APPLY client')
@@ -61,7 +83,14 @@ beforeEach(async () => {
   craId = (await getOrCreateCra(userId, missionId, '2026-06')).id
   await prisma.cra.update({ where: { id: craId }, data: { status: 'ENVOYE' } })
   await prisma.signatureRequest.create({
-    data: { craId, provider: 'double', status: 'EN_ATTENTE' },
+    data: {
+      craId,
+      provider: 'double',
+      status: 'EN_ATTENTE',
+      externalId: 'ext-1',
+      signataireNom: 'Sam Signataire',
+      signataireEmail: EMAIL_SIGNATAIRE,
+    },
   })
 })
 
@@ -125,12 +154,16 @@ describe('applySignatureStatus', () => {
     expect(connector.telechargements).toEqual(['ext-1'])
   })
 
-  it('N ÉCRASE PAS l archive quand la transition est de nouveau franchissable', async () => {
+  it('N ÉCRASE PAS l archive, ni ne revalide, quand la transition est de nouveau franchissable', async () => {
     // Le cas que l idempotence de la transition ne couvre pas : rouvrir puis
     // renvoyer **à la main** ramène le CRA à ENVOYE sans passer par
     // `sendCraForSignature`, donc sans effacer l archive. Une livraison
     // tardive du prestataire retéléchargerait alors par-dessus le document
     // que le client a réellement signé.
+    //
+    // Depuis la revue finale du lot 3b, la demande déjà SIGNE n'est plus
+    // réclamable : la relivraison ne revalide pas non plus un mois qui a pu
+    // changer depuis la signature. Le consultant valide à la main.
     const connector = createFakeSignatureConnector()
     connector.poserPdfSigne('ext-1', new Uint8Array([1, 2, 3]))
     await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', connector })
@@ -141,7 +174,8 @@ describe('applySignatureStatus', () => {
     connector.poserPdfSigne('ext-1', new Uint8Array([9, 9, 9]))
     expect(
       await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', connector }),
-    ).toBe('VALIDE')
+    ).toBe('AUCUN')
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('ENVOYE')
 
     const demande = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
     expect(Array.from(demande.signedPdf!)).toEqual([1, 2, 3])
@@ -310,5 +344,156 @@ describe('applySignatureStatus', () => {
     await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'EXPIRE', connector: null })
     await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'REFUSE', connector: null })
     expect(await prisma.syncOutbox.count()).toBe(0)
+  })
+})
+
+describe('lot 3b — issue du circuit', () => {
+  let courriels: Array<{ to: string; sujet: string; pieces: number }> = []
+  const mailer: Mailer = async (m) => {
+    courriels.push({ to: m.to, sujet: m.sujet, pieces: m.pieces?.length ?? 0 })
+  }
+  beforeEach(() => {
+    courriels = []
+  })
+
+  it('un refus enregistre le motif et écrit au consultant ET au client, sans pièce jointe', async () => {
+    const effet = await applySignatureStatus({
+      craId,
+      externalId: 'ext-1',
+      statut: 'REFUSE',
+      motifRefus: 'Il manque le 15.',
+      mailer,
+    })
+    expect(effet).toBe('REFUSE')
+    const d = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
+    expect(d.motifRefus).toBe('Il manque le 15.')
+    expect(courriels.map((c) => c.to).sort()).toEqual([EMAIL_CONSULTANT, EMAIL_SIGNATAIRE].sort())
+    expect(courriels.every((c) => c.pieces === 0)).toBe(true)
+  })
+
+  it('une signature écrit aux deux, PDF signé joint', async () => {
+    const connector = createFakeSignatureConnector()
+    connector.poserPdfSigne('ext-1', new Uint8Array([0x25, 0x50, 0x44, 0x46]))
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', connector, mailer })
+    expect(courriels).toHaveLength(2)
+    expect(courriels.every((c) => c.pieces === 1)).toBe(true)
+  })
+
+  it('sans archive (téléchargement en échec), écrit quand même — sans pièce jointe', async () => {
+    const connector = createFakeSignatureConnector()
+    connector.faireEchouerTelechargement('panne')
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', connector, mailer })
+    expect(courriels).toHaveLength(2)
+    expect(courriels.every((c) => c.pieces === 0)).toBe(true)
+  })
+
+  it("UN REJEU N'ÉCRIT PAS DEUX FOIS", async () => {
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer })
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer })
+    expect(courriels).toHaveLength(2)
+  })
+
+  it("ignore l'état d'une ancienne enveloppe : seul l'envoi en cours fait foi", async () => {
+    const effet = await applySignatureStatus({
+      craId,
+      externalId: 'ext-ancienne',
+      statut: 'SIGNE',
+      mailer,
+    })
+    expect(effet).toBe('AUCUN')
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('ENVOYE')
+    expect(courriels).toHaveLength(0)
+  })
+
+  it('ignore une demande annulée', async () => {
+    await prisma.signatureRequest.update({ where: { craId }, data: { status: 'ANNULE' } })
+    expect(
+      await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer }),
+    ).toBe('AUCUN')
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('ENVOYE')
+  })
+
+  // Revue finale lot 3b : la page client, les webhooks et le balayage peuvent
+  // appliquer la même signature au même instant.
+  it('DEUX SIGNATURES CONCURRENTES : un seul signature.recue, un seul cra.valide, deux courriels', async () => {
+    await prisma.auditEvent.deleteMany({})
+
+    const effets = await Promise.all([
+      applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer }),
+      applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer }),
+    ])
+
+    expect([...effets].sort()).toEqual(['AUCUN', 'VALIDE'])
+    const actions = (await prisma.auditEvent.findMany({})).map((e) => e.action)
+    expect(actions.filter((a) => a === 'signature.recue')).toHaveLength(1)
+    expect(actions.filter((a) => a === 'cra.valide')).toHaveLength(1)
+    expect(courriels).toHaveLength(2)
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('VALIDE')
+  })
+
+  it('le CRA a quitté ENVOYE pendant la réclamation : AUCUN, ni courriel ni journal, demande restaurée', async () => {
+    // Une transition manuelle passe entre la réclamation de la demande et la
+    // transition de l'applicateur : `transitionCra` lève, l'applicateur rend
+    // AUCUN et remet la demande dans l'état où il l'a trouvée.
+    await prisma.auditEvent.deleteMany({})
+    course.avant = () => prisma.cra.update({ where: { id: craId }, data: { status: 'VALIDE' } })
+
+    const effet = await applySignatureStatus({
+      craId,
+      externalId: 'ext-1',
+      statut: 'REFUSE',
+      motifRefus: 'Il manque le 15.',
+      mailer,
+    })
+
+    expect(effet).toBe('AUCUN')
+    expect(courriels).toHaveLength(0)
+    const actions = (await prisma.auditEvent.findMany({})).map((e) => e.action)
+    expect(actions).not.toContain('signature.refusee')
+    expect(actions).not.toContain('cra.refuse')
+    const d = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
+    expect(d.status).toBe('EN_ATTENTE')
+    expect(d.completedAt).toBeNull()
+    expect(d.motifRefus).toBe('')
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('VALIDE')
+  })
+
+  it('UNE ERREUR QUELCONQUE DE LA TRANSITION rend la réclamation : rien n\'est coincé, le rejeu aboutit', async () => {
+    // Une panne (transaction, file de synchro…) après la réclamation ne doit
+    // pas laisser une demande SIGNE face à un CRA resté ENVOYE : plus
+    // réclamable, ni par le rafraîchissement, ni par le balayage, ni par un
+    // webhook relivré.
+    course.avant = async () => {
+      throw new Error('panne simulée')
+    }
+    await expect(
+      applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer }),
+    ).rejects.toThrow('panne simulée')
+
+    const d = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
+    expect(d.status).toBe('EN_ATTENTE')
+    expect(d.completedAt).toBeNull()
+    expect(courriels).toHaveLength(0)
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('ENVOYE')
+
+    const effet = await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer })
+    expect(effet).toBe('VALIDE')
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('VALIDE')
+  })
+
+  it('une expiration tardive n écrase pas une demande déjà signée', async () => {
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer })
+    expect(
+      await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'EXPIRE', mailer }),
+    ).toBe('AUCUN')
+    expect((await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })).status).toBe('SIGNE')
+  })
+
+  it('une signature met les temps en file pour Dolibarr, comme une validation manuelle', async () => {
+    await armerDolibarr()
+    await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer })
+    expect(
+      await prisma.syncOutbox.count({ where: { entityId: craId, provider: DOLIBARR } }),
+    ).toBe(1)
   })
 })

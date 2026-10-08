@@ -39,8 +39,20 @@ Prises explicitement, elles coûteraient cher à défaire.
 | **Synchronisation unidirectionnelle** | L'application est maître du CRA. Le bidirectionnel est là où ce type d'outil meurt |
 | **La conversion prévisionnel → réalisé n'est jamais automatique** | Ce serait du temps engageant créé sans décision humaine |
 | **Une saisie porte son facteur de conversion, figé à l'écriture** | Un CRA validé est un document signé ; son contenu ne peut pas changer après signature |
-| **Pas de portail client** | Le client reçoit un document et le signe. Tout un sous-système disparaît |
+| **Pas de compte client** | Le client reçoit un lien par CRA, s'identifie par un code à usage unique, voit et signe ce document-là, rien d'autre. Ni inscription, ni mot de passe, ni espace client à maintenir (affiné au lot 3b, qui a remplacé « pas de portail client ») |
 | **Aucun montant sur le CRA** | Le document atteste du temps, pas d'une somme |
+
+### Le lot 3b, et ce qu'il n'a pas rouvert
+
+Le client signe désormais dans l'outil : Documenso embarqué dans une page `/v/…`
+(API v2), derrière un code à usage unique envoyé par courriel. La page lit un
+contenu **figé** au moment de l'envoi, jamais le CRA vivant. `ENVOYE` ferme la
+saisie du mois ; c'est un refus du client (`REFUSE`) qui la rouvre, ou
+l'annulation de l'envoi, qui retire aussi l'enveloppe chez le prestataire. Le
+webhook n'est qu'un **signal** : l'application relit l'état de l'enveloppe par
+l'API avant de rien appliquer. Le code n'arrivant que par courriel, **SMTP est un
+prérequis du circuit** : sans lui, l'envoi pour signature est refusé. Il n'y a toujours ni compte, ni mot de passe, ni montant
+côté client.
 
 ### La facture, décision affinée en cours de route
 

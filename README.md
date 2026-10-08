@@ -82,7 +82,7 @@ Le nom se dit en deux temps, comme un mécanisme qui avance. Au milieu, un **k**
 |---|---|
 | Saisie au jour, au créneau ou à l'heure | Chronomètre, minuterie, pointage |
 | Prévisionnel adossé à l'engagement vendu | Facturation, devis, comptabilité |
-| CRA mensuel en PDF, signable | Portail client |
+| CRA mensuel en PDF, signable (le client signe dans l'outil, par lien et code à usage unique) | Compte ou espace client |
 | Verrouillage du mois validé | Modification rétroactive d'un mois signé |
 | Connecteurs Dolibarr, Google Agenda, signature | Rien d'obligatoire : tout est optionnel |
 
@@ -257,8 +257,8 @@ proprement la fonction correspondante au lieu d'empêcher le démarrage.
 | `SYNC_FLUSH_TOKEN` | non | vide : `POST /api/sync/flush` fermé |
 | `CRA_API_TOKEN` | non | vide : l'API d'événements et le réveil de l'ordonnanceur restent fermés |
 | `SMTP_PASSWORD` | non | vide : pas d'envoi de courriel |
-| `DOCUMENSO_URL`, `DOCUMENSO_API_KEY` | non | vides : pas de signature électronique |
-| `SIGNATURE_WEBHOOK_SECRET` | non | vide : `POST /api/webhooks/signature` refuse tout |
+| `DOCUMENSO_URL`, `DOCUMENSO_API_KEY` | non | vides : pas de signature électronique (Documenso ≥ 2.0.0). Le circuit exige aussi **SMTP** : sans serveur de courriel, l'envoi pour signature est refusé (le client ne recevrait pas son code) |
+| `SIGNATURE_WEBHOOK_SECRET` | non | vide : `POST /api/webhooks/signature` refuse tout. Doit être égal au secret déclaré dans le webhook Documenso |
 
 `.dockerignore` exclut `.env` : **rien n'entre dans le conteneur qui ne soit
 listé dans le bloc `environment:` du `docker-compose.yml`.** Ce bloc reprend donc

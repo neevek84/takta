@@ -245,6 +245,16 @@ describe('applyCellState', () => {
     expect(await saisiesDu(ligneJour, '2026-03-05')).toEqual([])
   })
 
+  it('refuse un mois dont le CRA est validé, sans rien écrire — aussi sur un mois ENVOYE (lot 3b)', async () => {
+    await prisma.cra.create({
+      data: { missionId, userId, month: new Date('2026-03-01T00:00:00.000Z'), status: 'ENVOYE' },
+    })
+
+    const r = await applyCellState({ userId, lineId: ligneJour, date: '2026-03-05', kind: 'REALISE', state: { kind: 'JOURNEE' } })
+    expect(r).toEqual({ ok: false, reason: 'VERROUILLE' })
+    expect(await saisiesDu(ligneJour, '2026-03-05')).toEqual([])
+  })
+
   it('ne détruit pas la case existante quand le mois se verrouille', async () => {
     await applyCellState({ userId, lineId: ligneJour, date: '2026-03-06', kind: 'REALISE', state: { kind: 'JOURNEE' } })
     await prisma.cra.create({

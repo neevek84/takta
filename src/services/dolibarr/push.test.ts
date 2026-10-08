@@ -588,6 +588,16 @@ describe('push des temps', () => {
     expect(api.timespents).toEqual([])
   })
 
+  it('ne pousse rien tant que le CRA n est pas validé — ni un CRA ENVOYE, qui attend la signature (lot 3b)', async () => {
+    await saveEntry({ userId, lineId, date: '2026-05-04', minutes: 480, kind: 'REALISE' })
+    const cra = await getOrCreateCra(userId, missionId, '2026-05')
+    await transitionCra(userId, cra.id, 'ENVOYER')
+
+    const r = await pushCraTimes({ userId, craId: cra.id, api })
+    expect(r).toEqual({ poussees: 0, misesAJour: 0, supprimees: 0, tachesCreees: 0 })
+    expect(api.timespents).toEqual([])
+  })
+
   // Rouvert entre la mise en file et le drainage : le CRA redevient un
   // brouillon, et le push ne doit surtout pas réconcilier — il retirerait de
   // Dolibarr tout ce qui y a été poussé, sur un CRA que l'utilisateur est en

@@ -1,13 +1,20 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
 /**
  * Authentification d'un webhook de signature.
  *
- * **Par signature de charge utile, jamais par un jeton dans l'URL.** Ce
- * webhook fait franchir une transition qui verrouille un mois et peut
- * déclencher une facturation en aval : un jeton d'URL fuit dans les journaux
- * d'accès, les en-têtes `Referer` et l'historique des proxys, et ne prouve
- * rien sur le contenu reçu, quand un HMAC prouve l'origine **et** l'intégrité.
+ * **Deux preuves d'origine, jamais un jeton dans l'URL.** Un jeton d'URL fuit
+ * dans les journaux d'accès, les en-têtes `Referer` et l'historique des
+ * proxys. Sont acceptés :
+ *
+ * - le secret partagé que Documenso recopie dans `X-Documenso-Secret`
+ *   (`verifierSecretDocumenso`) — c'est ce que Documenso envoie réellement ;
+ * - un HMAC SHA-256 de la charge dans `x-cra-signature`
+ *   (`verifyWebhookSignature`), pour les intégrations maison et les tests.
+ *
+ * Ni l'un ni l'autre n'est cru sur le contenu : le service relit l'état de
+ * l'enveloppe chez le prestataire avant d'appliquer quoi que ce soit
+ * (`services/signature/webhook.ts`).
  *
  * Module pur : `node:crypto` uniquement, ni Prisma, ni Next, ni React.
  */
@@ -50,5 +57,26 @@ export function verifyWebhookSignature(
   // les garantit égales, ce test reste une ceinture de sécurité.
   if (a.length !== b.length) return false
 
+  return timingSafeEqual(a, b)
+}
+
+/**
+ * **Documenso ne signe pas ses webhooks** : il recopie le secret configuré
+ * dans l'en-tête `X-Documenso-Secret` (`execute-webhook-call.ts`, et sa
+ * documentation « Verification »). Le lot 3 attendait un HMAC ; chaque
+ * webhook réel recevait donc 401.
+ *
+ * Un secret partagé prouve l'**origine**, pas l'**intégrité** : c'est pourquoi
+ * le service ne croit plus la charge et relit l'état chez le prestataire
+ * (`services/signature/webhook.ts`).
+ *
+ * Les deux valeurs sont hachées avant comparaison : `timingSafeEqual` exige
+ * deux longueurs égales, et comparer les longueurs d'abord révélerait celle du
+ * secret.
+ */
+export function verifierSecretDocumenso(header: string, secret: string): boolean {
+  if (secret === '' || header === '') return false
+  const a = createHash('sha256').update(header, 'utf8').digest()
+  const b = createHash('sha256').update(secret, 'utf8').digest()
   return timingSafeEqual(a, b)
 }

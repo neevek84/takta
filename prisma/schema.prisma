@@ -237,28 +237,45 @@ model Cra {
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   signatureRequest SignatureRequest?
+  envoisClos       SignatureEnvoiClos[]
+  liensClient      LienClient[]
 
   @@unique([missionId, userId, month])
   @@index([userId])
 }
 
-/// L'état d'une demande de signature. **Une seule par CRA** : renvoyer un CRA
-/// remplace la demande précédente. Empiler les demandes obligerait chaque
-/// lecture à décider laquelle fait foi, et une seule divergence suffirait à
-/// verrouiller un mois sur un document périmé.
+/// L'état de l'envoi **en cours**. Une seule par CRA : renvoyer recopie
+/// d'abord l'envoi précédent dans `SignatureEnvoiClos`, puis le remplace.
+/// Empiler les demandes obligerait chaque lecture à décider laquelle fait
+/// foi, et une seule divergence suffirait à verrouiller un mois sur un
+/// document périmé.
 model SignatureRequest {
   id       String @id @default(cuid())
   craId    String @unique
   /// identifiant du prestataire ; l'identifiant du document, lui, vit dans
   /// `ExternalLink` — un seul endroit porte la correspondance externe.
   provider String
-  /// 'EN_ATTENTE' | 'SIGNE' | 'REFUSE' | 'EXPIRE'
+  /// 'EN_ATTENTE' | 'SIGNE' | 'REFUSE' | 'EXPIRE' | 'ANNULE'
   status   String @default("EN_ATTENTE")
 
   /// destinataire au moment de l'envoi, figé : changer le signataire de la
   /// mission ne réécrit pas à qui le document a réellement été adressé.
   signataireNom   String @default("")
   signataireEmail String @default("")
+
+  /// 1, 2, 3… — incrémenté à chaque renvoi
+  numero      Int    @default(1)
+  /// l'enveloppe de **cet** envoi ; `ExternalLink` reste la correspondance du CRA
+  externalId  String @default("")
+  /// texte du client, tel quel ; ne sort jamais vers le journal
+  motifRefus  String @default("")
+  /// le `CraDocument` envoyé, en JSON, écrit et lu en bloc
+  contenuFige String @default("")
+  /// SHA-256 hexadécimal de `contenuFige`
+  empreinte   String @default("")
+  /// adresse publique de l'outil au moment de l'envoi : les relances n'ont pas
+  /// de requête d'où la déduire. Vide = envoi antérieur au lot 3b.
+  origine     String @default("")
 
   sentAt        DateTime  @default(now())
   relances      Int       @default(0)
@@ -280,6 +297,53 @@ model SignatureRequest {
   cra Cra @relation(fields: [craId], references: [id], onDelete: Cascade)
 
   @@index([status])
+}
+
+/// Un envoi **remplacé** (renvoi après refus, ou annulation), recopié tel
+/// quel au moment du remplacement. Une ligne close ne change plus jamais :
+/// rien ne peut donc diverger de l'envoi en cours.
+model SignatureEnvoiClos {
+  id              String    @id @default(cuid())
+  craId           String
+  numero          Int
+  /// 'EN_ATTENTE' | 'SIGNE' | 'REFUSE' | 'EXPIRE' | 'ANNULE'
+  status          String
+  motifRefus      String    @default("")
+  signataireNom   String    @default("")
+  signataireEmail String    @default("")
+  sentAt          DateTime
+  completedAt     DateTime?
+  empreinte       String    @default("")
+  closAt          DateTime  @default(now())
+
+  cra Cra @relation(fields: [craId], references: [id], onDelete: Cascade)
+
+  @@unique([craId, numero])
+}
+
+/// Le lien que reçoit le client. **Le jeton n'est jamais stocké** : seule son
+/// empreinte SHA-256, comme pour la réinitialisation de mot de passe.
+model LienClient {
+  id                     String    @id @default(cuid())
+  craId                  String
+  /// l'envoi servi ; un lien dont le numéro est dépassé est « remplacé »
+  numero                 Int
+  jetonEmpreinte         String    @unique
+  /// jeton Documenso du destinataire, pour le cadre embarqué
+  jetonSignataire        String    @default("")
+  revokedAt              DateTime?
+  codeEmpreinte          String    @default("")
+  codeExpireAt           DateTime?
+  codeEssais             Int       @default(0)
+  /// codes envoyés dans la fenêtre d'une heure qui commence à `codesFenetreAt`
+  codesEnvoyes           Int       @default(0)
+  codesFenetreAt         DateTime?
+  derniereConsultationAt DateTime?
+  createdAt              DateTime  @default(now())
+
+  cra Cra @relation(fields: [craId], references: [id], onDelete: Cascade)
+
+  @@index([craId, numero])
 }
 
 /// Les webhooks déjà traités. L'unicité du couple est le seul rempart contre

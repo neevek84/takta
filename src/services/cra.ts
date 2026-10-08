@@ -6,7 +6,7 @@ import {
 } from './cra-previsionnel'
 import { missionsArmeesPourDolibarr } from './dolibarr/push'
 import { syntheseParMission, SYNTHESE_VIDE, type SyntheseCra } from './cra-synthese'
-import { applyTransition, type CraTransition } from '@/core/cra/state-machine'
+import { applyTransition, InvalidTransitionError, type CraTransition } from '@/core/cra/state-machine'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import type { SignatureStatus } from '@/core/signature/connector'
 import type { CraStatus } from '@/core/types'
@@ -32,11 +32,19 @@ const ACTION_PAR_TRANSITION: Record<CraTransition, AuditAction> = {
   VALIDER: 'cra.valide',
   REFUSER: 'cra.refuse',
   ROUVRIR: 'cra.rouvert',
+  // Un renvoi est un envoi, une annulation est une réouverture : le catalogue
+  // public n'a pas à apprendre deux noms pour deux gestes qu'il connaît déjà.
+  RENVOYER: 'cra.envoye',
+  ANNULER_ENVOI: 'cra.rouvert',
 }
 
 export interface CraSignatureView {
   provider: string
-  status: SignatureStatus
+  status: SignatureStatus | 'ANNULE'
+  /** 1, 2, 3… — le rang de l'envoi en cours */
+  numero: number
+  /** le motif du dernier refus, tel que le client l'a écrit ; vide sinon */
+  motifRefus: string
   sentAt: Date
   relances: number
   lastRelanceAt: Date | null
@@ -104,10 +112,14 @@ const WITH_MISSION = {
     select: {
       provider: true,
       status: true,
+      numero: true,
+      motifRefus: true,
       sentAt: true,
       relances: true,
       lastRelanceAt: true,
       abandoned: true,
+      // `contenuFige` non plus : comme `signedPdf`, il traverserait chaque
+      // affichage de liste.
       // `signedPdf` n'est JAMAIS sélectionné ici : un blob de plusieurs
       // centaines de kilo-octets par ligne traverserait chaque affichage de
       // la page CRA pour un booléen. Sa présence se lit par un compte —
@@ -129,6 +141,8 @@ type Row = {
   signatureRequest: {
     provider: string
     status: string
+    numero: number
+    motifRefus: string
     sentAt: Date
     relances: number
     lastRelanceAt: Date | null
@@ -183,7 +197,9 @@ function toView(
         ? null
         : {
             provider: row.signatureRequest.provider,
-            status: row.signatureRequest.status as SignatureStatus,
+            status: row.signatureRequest.status as CraSignatureView['status'],
+            numero: row.signatureRequest.numero,
+            motifRefus: row.signatureRequest.motifRefus,
             sentAt: row.signatureRequest.sentAt,
             relances: row.signatureRequest.relances,
             lastRelanceAt: row.signatureRequest.lastRelanceAt,
@@ -313,11 +329,19 @@ export async function transitionCra(
 
   let previsionnelAnnule = 0
   const row = await prisma.$transaction(async (tx) => {
-    const updated = await tx.cra.update({
-      where: { id: craId },
+    // **Écriture gardée sur l'état lu.** La lecture précède la transaction :
+    // deux appels concurrents (confirmation de la page client, webhook,
+    // balayage) liraient tous deux ENVOYE et valideraient deux fois — deux
+    // `cra.valide`, deux mises en file. La garde `status: current.status` fait
+    // de l'écriture un compare-and-set : le second ne trouve plus la ligne
+    // dans l'état attendu, et sa transition est impossible — ce qu'elle est
+    // devenue.
+    const { count } = await tx.cra.updateMany({
+      where: { id: craId, status: current.status },
       data: { status: next },
-      include: WITH_MISSION,
     })
+    if (count === 0) throw new InvalidTransitionError(current.status as CraStatus, t)
+    const updated = await tx.cra.findUniqueOrThrow({ where: { id: craId }, include: WITH_MISSION })
 
     // La mise en file est transactionnelle avec le changement d'état, dans les
     // deux sens. Un CRA validé sans ligne de file, c'est un mois verrouillé

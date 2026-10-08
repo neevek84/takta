@@ -365,6 +365,26 @@ describe('consignation du CRA', () => {
     })
   })
 
+  // Revue finale lot 3b : une confirmation de la page client, un webhook et le
+  // balayage peuvent valider le même CRA au même instant. La lecture d'état
+  // précède la transaction ; sans garde sur l'écriture, les deux passaient.
+  it('deux validations concurrentes : une seule passe, une seule entrée cra.valide', async () => {
+    const cra = await getOrCreateCra(userId, missionId, '2027-05')
+    await transitionCra(userId, cra.id, 'ENVOYER')
+    await prisma.auditEvent.deleteMany({})
+
+    const issues = await Promise.allSettled([
+      transitionCra(userId, cra.id, 'VALIDER'),
+      transitionCra(userId, cra.id, 'VALIDER'),
+    ])
+
+    expect(issues.filter((i) => i.status === 'fulfilled')).toHaveLength(1)
+    const rejet = issues.find((i) => i.status === 'rejected') as PromiseRejectedResult
+    expect(rejet.reason).toBeInstanceOf(InvalidTransitionError)
+    const journal = await readAuditSince({ since: 0 })
+    expect(journal.filter((e) => e.action === 'cra.valide')).toHaveLength(1)
+  })
+
   it('ne consigne rien quand la transition est impossible', async () => {
     const cra = await getOrCreateCra(userId, missionId, '2027-02')
     await prisma.auditEvent.deleteMany({})
@@ -440,6 +460,8 @@ describe('CraView et signature', () => {
     expect(relu.signature).toEqual({
       provider: 'double',
       status: 'EN_ATTENTE',
+      numero: 1,
+      motifRefus: '',
       sentAt: new Date('2026-09-02T09:00:00.000Z'),
       relances: 2,
       lastRelanceAt: new Date('2026-09-16T09:00:00.000Z'),

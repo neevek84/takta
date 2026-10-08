@@ -314,3 +314,15 @@ describe('refreshPendingSignatures', () => {
     expect((await refreshPendingSignatures({ userId, connector })).examinees).toBe(1)
   })
 })
+
+describe('lot 3b — motif de refus', () => {
+  it('transmet le motif de refus rapporté par le prestataire', async () => {
+    await demandeEnCours()
+    const connector = createFakeSignatureConnector()
+    connector.regler('ext-1', 'REFUSE', 'Il manque le 15.')
+    await refreshSignatureStatus(userId, craId, { connector, mailer: async () => {} })
+    expect((await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })).motifRefus).toBe(
+      'Il manque le 15.',
+    )
+  })
+})

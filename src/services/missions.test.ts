@@ -1378,6 +1378,29 @@ describe('appliquer le lieu aux jours planifiés', () => {
     expect(await prisma.trajet.count({ where: { userId: planifUser } })).toBe(0)
   })
 
+  it('ne touche ni aux jours passés ni aux mois verrouillés — aussi sur un mois ENVOYE (lot 3b)', async () => {
+    await saisieLe('2026-09-10')
+    await saisieLe('2026-10-05')
+    await prisma.cra.create({
+      data: {
+        missionId: missionPlanif,
+        userId: planifUser,
+        month: new Date('2026-10-01T00:00:00.000Z'),
+        status: 'ENVOYE',
+      },
+    })
+
+    const r = await updateMissionLieu(planifUser, missionPlanif, 'SITE', {
+      appliquerAuxPlanifies: true,
+      aujourdhui: AUJOURDHUI,
+    })
+
+    expect(r).toEqual({ ok: true, saisiesMisesAJour: 0 })
+    expect((await lire('2026-09-10')).lieu).toBe('DISTANCE')
+    expect((await lire('2026-10-05')).lieu).toBe('DISTANCE')
+    expect(await prisma.trajet.count({ where: { userId: planifUser } })).toBe(0)
+  })
+
   it('laisse les jours planifiés tels quels sans la case', async () => {
     await saisieLe('2026-09-16')
 

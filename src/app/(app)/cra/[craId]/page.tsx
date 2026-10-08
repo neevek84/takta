@@ -5,6 +5,8 @@ import { canTransition, type CraTransition } from '@/core/cra/state-machine'
 import { etatSuivi } from '@/core/cra/etat-suivi'
 import { formatJours, libelleMois } from '@/core/cra/document'
 import { SignatureCard } from '@/components/cra/SignatureCard'
+import { HistoriqueEnvois } from '@/components/cra/HistoriqueEnvois'
+import { LienManuel } from '@/components/cra/LienManuel'
 import { StatusBadge } from '@/components/cra/StatusBadge'
 import { Origine } from '@/components/ui/Origine'
 import { Banner } from '@/components/ui/Banner'
@@ -12,7 +14,15 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
 import { PageShell } from '@/components/ui/PageShell'
-import { envoyerPourSignature, moveCra, rafraichirSignature, saveTracking } from './actions'
+import { compterCourrielsEchoues, listerEnvois } from '@/services/signature/envois'
+import {
+  annulerEnvoiAction,
+  copierLienClient,
+  envoyerPourSignature,
+  moveCra,
+  rafraichirSignature,
+  saveTracking,
+} from './actions'
 
 /**
  * Les motifs d'échec que les services de signature savent rendre, traduits en
@@ -33,7 +43,16 @@ const ERREURS: Record<string, string> = {
   TRANSITION_IMPOSSIBLE: 'Ce CRA ne peut pas être envoyé dans son état actuel.',
   CONNECTEUR_EN_ECHEC:
     'L’outil de signature n’a pas accepté le document. Le CRA n’a pas changé d’état.',
+  PAS_DE_SMTP:
+    'Le serveur de courriel n’est pas configuré : le client ne pourrait pas recevoir son code. Configurez SMTP dans l’administration, ou utilisez les transitions manuelles.',
+  PAS_D_ORIGINE:
+    'L’adresse publique de l’outil est inconnue : renseignez AUTH_URL, sinon le lien envoyé au client serait inutilisable.',
+  COURRIEL_NON_PARTI:
+    'Le CRA est envoyé, mais le courriel au client n’est pas parti. Copiez le lien ci-dessous et transmettez-le vous-même.',
   PAS_DE_DEMANDE: 'Ce CRA n’a jamais été envoyé pour signature.',
+  ANNULATION_TRANSITION_IMPOSSIBLE: 'Seul un CRA envoyé peut être retiré.',
+  ANNULATION_CONNECTEUR_EN_ECHEC:
+    'L’outil de signature n’a pas pu retirer le document. Le CRA reste envoyé : le client peut encore le signer.',
 }
 
 const LABELS: Record<CraTransition, string> = {
@@ -41,9 +60,13 @@ const LABELS: Record<CraTransition, string> = {
   VALIDER: 'Marquer validé',
   REFUSER: 'Marquer refusé',
   ROUVRIR: 'Rouvrir',
+  RENVOYER: 'Marquer renvoyé',
+  ANNULER_ENVOI: 'Annuler l’envoi',
 }
 
-const ALL: CraTransition[] = ['ENVOYER', 'VALIDER', 'REFUSER', 'ROUVRIR']
+// `ANNULER_ENVOI` n'est pas une transition manuelle : son bouton dédié
+// (tâche 10) annule aussi l'enveloppe chez le prestataire.
+const ALL: CraTransition[] = ['ENVOYER', 'VALIDER', 'REFUSER', 'ROUVRIR', 'RENVOYER']
 
 export default async function CraDetailPage({
   params,
@@ -61,8 +84,14 @@ export default async function CraDetailPage({
   // d'autre — et les deux cas rendent la même chose. Distinguer « absent » de
   // « pas à vous » apprendrait à un tiers quels identifiants existent.
   let cra
+  let envois
+  let courrielsEchoues
   try {
-    cra = await getCra(user.id, craId)
+    ;[cra, envois, courrielsEchoues] = await Promise.all([
+      getCra(user.id, craId),
+      listerEnvois(user.id, craId),
+      compterCourrielsEchoues(user.id, craId),
+    ])
   } catch {
     // `notFound()` interrompt le rendu en levant — ce `return` ne s'exécute
     // donc jamais en production. Il existe pour que `cra` ne soit jamais lu
@@ -75,7 +104,13 @@ export default async function CraDetailPage({
     <PageShell title={`${cra.clientName} · ${cra.missionLabel} — ${libelleMois(cra.month)}`}>
       {messageErreur !== undefined && (
         <div className="mb-6">
-          <Banner tone="warning" title="Envoi impossible">
+          <Banner tone="warning" title={
+              erreur === 'COURRIEL_NON_PARTI'
+                ? 'Courriel non parti'
+                : erreur?.startsWith('ANNULATION_')
+                  ? 'Action impossible'
+                  : 'Envoi impossible'
+            }>
             {messageErreur}
           </Banner>
         </div>
@@ -150,6 +185,14 @@ export default async function CraDetailPage({
         </div>
 
         {cra.signature !== null && <SignatureCard signature={cra.signature} />}
+        {courrielsEchoues > 0 && (
+          <div className="mb-4">
+            <Banner tone="warning" title="Courriel non parti">
+              {courrielsEchoues} courriel{courrielsEchoues > 1 ? 's' : ''} du circuit de signature n’{courrielsEchoues > 1 ? 'ont' : 'a'} pas pu partir. Vérifiez la configuration SMTP, ou transmettez le lien vous-même.
+            </Banner>
+          </div>
+        )}
+        <HistoriqueEnvois envois={envois} />
 
         {/* Dit **avant** la validation, jamais après : un jour prévu emporté
             sans préavis est une donnée perdue dont personne ne saura qu'elle
@@ -180,11 +223,11 @@ export default async function CraDetailPage({
             Télécharger le PDF
           </a>
 
-          {canTransition(cra.status, 'ENVOYER') && (
+          {(canTransition(cra.status, 'ENVOYER') || canTransition(cra.status, 'RENVOYER')) && (
             <form action={envoyerPourSignature}>
               <input type="hidden" name="craId" value={cra.id} />
               <Button variant="primary" disabled={cra.signataireEmail === ''}>
-                Envoyer pour signature
+                {cra.status === 'REFUSE' ? 'Renvoyer pour signature' : 'Envoyer pour signature'}
               </Button>
             </form>
           )}
@@ -195,7 +238,20 @@ export default async function CraDetailPage({
               <Button>Rafraîchir l’état</Button>
             </form>
           )}
+
+          {cra.status === 'ENVOYE' && cra.signature !== null && (
+            <form action={annulerEnvoiAction}>
+              <input type="hidden" name="craId" value={cra.id} />
+              <Button>Annuler l’envoi</Button>
+            </form>
+          )}
         </div>
+
+        {cra.status === 'ENVOYE' && cra.signature?.status === 'EN_ATTENTE' && (
+          <div className="mb-4">
+            <LienManuel craId={cra.id} action={copierLienClient} />
+          </div>
+        )}
 
         {cra.signataireEmail === '' && (
           <p className="mb-4 text-xs text-muted">

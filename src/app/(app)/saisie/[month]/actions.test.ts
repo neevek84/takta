@@ -452,6 +452,6 @@ describe('genererCraAction', () => {
     })
 
     expect(resultat.ok).toBe(false)
-    if (!resultat.ok) expect(resultat.raison).toBe('MOIS_VALIDE')
+    if (!resultat.ok) expect(resultat.raison).toBe('MOIS_FERME')
   })
 })

@@ -6,7 +6,11 @@ import { requireUser } from '@/auth'
 import { transitionCra, updateInvoiceTracking } from '@/services/cra'
 import { sendCraForSignature } from '@/services/signature/send'
 import { refreshSignatureStatus } from '@/services/signature/refresh'
-import type { CraTransition } from '@/core/cra/state-machine'
+import { annulerEnvoi } from '@/services/signature/annuler'
+import { nouveauLienManuel } from '@/services/signature/lien-client'
+import { estTransitionManuelle } from '@/core/cra/state-machine'
+import { headers } from 'next/headers'
+import { originePublique } from '@/core/http/origine'
 
 /**
  * Les server actions de signature ne rendent rien : le motif d'échec repasse
@@ -24,7 +28,11 @@ function retour(craId: string, raison?: string): never {
 export async function moveCra(formData: FormData) {
   const user = await requireUser()
   const craId = String(formData.get('craId'))
-  await transitionCra(user.id, craId, String(formData.get('transition')) as CraTransition)
+  // Liste blanche : le formulaire est forgeable. `ANNULER_ENVOI` en est exclue
+  // — elle doit retirer l'enveloppe chez le prestataire (`annulerEnvoi`).
+  const transition = String(formData.get('transition'))
+  if (!estTransitionManuelle(transition)) return
+  await transitionCra(user.id, craId, transition)
   revalidatePath('/cra')
   revalidatePath(`/cra/${craId}`)
   revalidatePath('/saisie')
@@ -46,15 +54,21 @@ export async function saveTracking(formData: FormData) {
   revalidatePath('/saisie')
 }
 
+/** L'origine publique de la requête : celle du lien que le client recevra. */
+async function origineDeLaRequete(): Promise<string> {
+  const entetes = await headers()
+  return originePublique(process.env.AUTH_URL, (nom) => entetes.get(nom))
+}
+
 export async function envoyerPourSignature(formData: FormData): Promise<void> {
   const user = await requireUser()
   const craId = String(formData.get('craId'))
-  const r = await sendCraForSignature(user.id, craId)
+  const r = await sendCraForSignature(user.id, craId, { origine: await origineDeLaRequete() })
 
   revalidatePath('/cra')
   revalidatePath(`/cra/${craId}`)
   revalidatePath('/saisie')
-  retour(craId, r.ok ? undefined : r.raison)
+  retour(craId, r.ok ? (r.courrielEnvoye ? undefined : 'COURRIEL_NON_PARTI') : r.raison)
 }
 
 export async function rafraichirSignature(formData: FormData): Promise<void> {
@@ -66,4 +80,24 @@ export async function rafraichirSignature(formData: FormData): Promise<void> {
   revalidatePath(`/cra/${craId}`)
   revalidatePath('/saisie')
   retour(craId, r.ok ? undefined : r.raison)
+}
+
+export async function annulerEnvoiAction(formData: FormData): Promise<void> {
+  const user = await requireUser()
+  const craId = String(formData.get('craId'))
+  const r = await annulerEnvoi(user.id, craId)
+  revalidatePath('/cra')
+  revalidatePath(`/cra/${craId}`)
+  revalidatePath('/saisie')
+  retour(craId, r.ok ? undefined : `ANNULATION_${r.raison}`)
+}
+
+export async function copierLienClient(
+  _prev: { url: string } | { erreur: string } | null,
+  formData: FormData,
+): Promise<{ url: string } | { erreur: string }> {
+  const user = await requireUser()
+  const craId = String(formData.get('craId'))
+  const r = await nouveauLienManuel(user.id, craId, await origineDeLaRequete())
+  return r.ok ? { url: r.url } : { erreur: 'Aucun envoi en attente de signature sur ce CRA.' }
 }

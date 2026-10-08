@@ -150,6 +150,23 @@ describe('saveEntry', () => {
     await prisma.cra.deleteMany({ where: { userId } })
   })
 
+  it('refuse toute écriture sur un mois dont le CRA est validé — aussi sur un mois ENVOYE (lot 3b)', async () => {
+    const line = await prisma.missionLine.findUniqueOrThrow({ where: { id: lineA } })
+    await prisma.cra.create({
+      data: {
+        missionId: line.missionId,
+        userId,
+        month: new Date('2026-04-01T00:00:00Z'),
+        status: 'ENVOYE',
+      },
+    })
+
+    const r = await saveEntry({ userId, lineId: lineA, date: '2026-04-10', minutes: 480, kind: 'REALISE' })
+    expect(r).toEqual({ ok: false, reason: 'VERROUILLE' })
+
+    await prisma.cra.deleteMany({ where: { userId } })
+  })
+
   it('ignore le contrôle en mode DESACTIVE', async () => {
     await updateSettings({ capacityMode: 'DESACTIVE' })
     await saveEntry({ userId, lineId: lineA, date: '2026-03-12', minutes: 480, kind: 'REALISE' })
