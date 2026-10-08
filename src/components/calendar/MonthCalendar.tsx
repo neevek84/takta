@@ -6,6 +6,8 @@ import { buildCellStates } from '@/core/saisie/cell-state'
 import { colorForLine, couleurDAplat, PREVU_COLOR } from '@/core/saisie/colors'
 import type { LineColor } from '@/core/saisie/colors'
 import { formeDeLaCase } from '@/core/saisie/forme'
+import type { Forme } from '@/core/saisie/forme'
+import { disposerAplats } from '@/core/saisie/disposition'
 import { positionDansLaPlage } from '@/core/saisie/plage'
 import type { Position } from '@/core/saisie/plage'
 import { kindDeLaJournee } from '@/core/saisie/kind'
@@ -194,8 +196,11 @@ function contenu(
   }
 }
 
-/** Une autre prestation saisie ce jour-là, telle que la case la détaille. */
-type AutreDuJour = { line: LineForGrid; valeur: string; previsionnel: boolean }
+/**
+ * Une autre prestation saisie ce jour-là, telle que la case la détaille : sa
+ * quantité pour la pastille et le nom accessible, sa forme pour l'aplat.
+ */
+type AutreDuJour = { line: LineForGrid; valeur: string; previsionnel: boolean; forme: Forme }
 
 const AUCUNE_AUTRE: AutreDuJour[] = []
 
@@ -228,6 +233,14 @@ function description(etat: CellState, slots: readonly Slot[]): string {
         ? 'Journée saisie en plusieurs créneaux'
         : `Durée libre${etat.slotId === '' ? '' : ` — ${libelleSlot(etat.slotId, slots)}`}`
   }
+}
+
+/**
+ * Une part de la case, en pourcentage. Arrondie au centième de point : un tiers
+ * vaut sinon `33.33333333333333%` dans le style, ce qui ne se voit pas mieux.
+ */
+function pourcent(part: number): string {
+  return `${Math.round(part * 10000) / 100}%`
 }
 
 /**
@@ -401,6 +414,12 @@ export function MonthCalendar({
     if (!toutLeMois) return new Map<string, AutreDuJour[]>()
 
     const parId = new Map(autresLignes.map((l) => [l.id, l]))
+    // L'état de chaque autre prestation se lit comme celui de la saisie, par
+    // `buildCellStates` : son aplat suit la même règle de forme, et une demie
+    // d'une autre prestation se dessine donc à la même moitié de case.
+    const etatsParLigne = new Map(
+      autresLignes.map((l) => [l.id, buildCellStates(entries, l.id, ctx)]),
+    )
     const parDate = new Map<string, Map<string, { saisies: MinutesAuFacteur[]; kinds: TimeEntryKind[] }>>()
     for (const e of entries) {
       if (!parId.has(e.lineId) || e.minutes === 0) continue
@@ -422,16 +441,18 @@ export function MonthCalendar({
           .filter((l) => duJour.has(l.id))
           .map((l) => {
             const cumul = duJour.get(l.id)!
+            const etat = etatsParLigne.get(l.id)?.get(date) ?? VIDE
             return {
               line: l,
               valeur: quantiteAutre(l, cumul.saisies),
               previsionnel: kindDeLaJournee(cumul.kinds) === 'PREVISIONNEL',
+              forme: formeDeLaCase(etat, cumul.saisies, slots),
             }
           }),
       )
     }
     return resultat
-  }, [toutLeMois, autresLignes, entries])
+  }, [toutLeMois, autresLignes, entries, ctx, slots])
 
   // `useDragSelect` applique une chaîne brute dans la vue tableau ; ici on ne
   // se sert que de la plage qu'il calcule, l'état à appliquer venant des
@@ -610,15 +631,23 @@ export function MonthCalendar({
    * journées entières de même nature, sur des jours ouvrés. Une demi-journée
    * n'est pas le même fait que le jour d'à côté — elle garde ses quatre
    * filets, son rayon et ses marges.
+   *
+   * Un jour qu'une autre prestation dessine aussi ne fusionne pas davantage :
+   * la case s'y partage en bandes, et souder la bande de gauche au jour voisin
+   * ferait lire une plage qui n'existe que pour une partie de la case.
    */
   const clesDePlage = useMemo(
     () =>
       semaines.flat().map((jour) => {
         if (jour === null || etatJour(jour) !== 'ouvre') return null
         if (etatDe(jour.date).kind !== 'JOURNEE') return null
+        const partage = (autresParDate.get(jour.date) ?? AUCUNE_AUTRE).some(
+          (a) => a.forme.kind !== 'AUCUNE',
+        )
+        if (partage) return null
         return previsionnelles.has(jour.date) ? 'PREVU' : 'REALISE'
       }),
-    [semaines, etatDe, previsionnelles],
+    [semaines, etatDe, previsionnelles, autresParDate],
   )
 
   return (
@@ -887,7 +916,23 @@ function Case({
     .join(' — ')
 
   const forme = formeDeLaCase(etat, saisies, slots)
-  const remplie = forme.kind !== 'AUCUNE'
+
+  // Le passé est froid, le futur est chaud : le prévisionnel prend sa teinte
+  // au lieu d'emprunter celle de la prestation. Le tireté de la case porte la
+  // même information sans la couleur, et l'horloge reste — elle nomme l'état
+  // dans l'infobulle et dans le nom accessible.
+  const couleurDeLaCase = previsionnel ? PREVU_COLOR : couleur
+
+  // La prestation saisie en tête, les autres dans l'ordre des prestations :
+  // c'est l'ordre des bandes quand la case doit se partager.
+  const disposition = disposerAplats([
+    { lineId: line.id, forme, previsionnel },
+    ...autres.map((a) => ({ lineId: a.line.id, forme: a.forme, previsionnel: a.previsionnel })),
+  ])
+  // L'encre suit l'aplat, quelle que soit la prestation qui le pose : le
+  // chiffre du jour reste en `text-ink`, la seule encre tenue à 4,5:1 sur
+  // chacune des teintes d'aplat.
+  const remplie = disposition.length > 0
 
   // La densité compacte perd le libellé — les valeurs en heures ou en
   // créneau ne survivent pas à la réduction —, jamais l'aplat qui le remplace
@@ -895,12 +940,6 @@ function Case({
   // la case détaille la journée : voir `detaille`.
   const valeur =
     densite === 'COMPACTE' && !detaille ? '' : contenu(etat, slots, line, saisies)
-
-  // Le passé est froid, le futur est chaud : le prévisionnel prend sa teinte
-  // au lieu d'emprunter celle de la prestation. Le tireté de la case porte la
-  // même information sans la couleur, et l'horloge reste — elle nomme l'état
-  // dans l'infobulle et dans le nom accessible.
-  const couleurDeLaCase = previsionnel ? PREVU_COLOR : couleur
 
   return (
     // La colonne s'étire sur la hauteur de la rangée, et la case avec elle :
@@ -1020,12 +1059,47 @@ function Case({
             les accueillir. `relative` en fait le repère de l'aplat, posé en
             absolu. */}
         <span className="relative flex min-h-0 flex-1 flex-col items-center justify-center">
-          <Aplat
-            cle={jour.date}
-            forme={forme}
-            couleur={couleurDeLaCase}
-            className={PLAGE_APLAT[position]}
-          />
+          {/* Un aplat par prestation du jour, chacun dans sa bande : toute la
+              largeur quand il est seul ou qu'un matin répond à un après-midi,
+              une bande verticale égale sinon (`disposerAplats`). La forme
+              reste celle de `formeDeLaCase`, dessinée par `Aplat` — la bande ne
+              fait que la cadrer, en absolu, sans rien coûter à la largeur. */}
+          {disposition.map((d) => {
+            const saisie = d.lineId === line.id
+            const couleurAutre = colorForLine(d.lineId)
+            return (
+              <span
+                key={d.lineId}
+                aria-hidden="true"
+                data-testid={saisie ? `bande-${jour.date}` : `bande-${d.lineId}-${jour.date}`}
+                data-bande={d.bande}
+                data-bandes={d.bandes}
+                className="pointer-events-none absolute inset-y-0"
+                style={{ left: pourcent(d.bande / d.bandes), width: pourcent(1 / d.bandes) }}
+              >
+                {saisie ? (
+                  <Aplat
+                    cle={jour.date}
+                    forme={d.forme}
+                    couleur={couleurDeLaCase}
+                    className={PLAGE_APLAT[position]}
+                  />
+                ) : (
+                  <Aplat
+                    cle={`${d.lineId}-${jour.date}`}
+                    forme={d.forme}
+                    couleur={couleurAutre}
+                    // Le prévisionnel d'une autre prestation garde sa teinte —
+                    // c'est elle qui dit laquelle — et se dit par le tireté,
+                    // comme sa pastille : jamais par la couleur seule.
+                    className={cn(
+                      d.previsionnel && ['border border-dashed', couleurAutre.border],
+                    )}
+                  />
+                )}
+              </span>
+            )
+          })}
 
           {/* Après l'aplat, jamais avant : sans z-index, c'est l'ordre du
               document qui décide, et le coin doit se poser par-dessus la teinte
@@ -1052,6 +1126,8 @@ function Case({
 
         {/* Les autres prestations, dans la case et non plus dessous : une
             pastille par prestation, à sa couleur, avec sa quantité du jour.
+            Elle sert aussi de légende à l'aplat de même teinte : la forme dit
+            la présence, la pastille dit laquelle et combien.
             Le libellé se tronque, jamais la quantité — « GU_2002… 0,5 » dit
             encore le détail de la journée, « GU_20026098-… » ne le dirait
             plus. Le prévisionnel se dit comme sur la case : tireté et
