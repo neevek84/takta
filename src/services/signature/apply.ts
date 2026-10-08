@@ -146,13 +146,12 @@ export async function applySignatureStatus(args: {
   try {
     await transitionCra(cra.userId, args.craId, transition)
   } catch (err) {
-    if (!(err instanceof InvalidTransitionError)) throw err
-    // Le CRA a quitté ENVOYE entre la lecture et l'écriture : c'est une
-    // transition manuelle qui l'a emporté. **La demande est restaurée** à ce
-    // qu'elle était — gardé sur ce qu'on vient d'y écrire — pour qu'elle
-    // raconte la même histoire que le CRA : rien n'a été signé ni refusé
-    // *par ce chemin*. C'est aussi l'état que laisse le pré-contrôle quand la
-    // transition manuelle arrive plus tôt.
+    // **La demande est restaurée** à ce qu'elle était — gardé sur ce qu'on
+    // vient d'y écrire — quelle que soit l'erreur : sinon une panne (transaction,
+    // file de synchro, lecture de l'armement Dolibarr) laisserait une demande
+    // SIGNE/REFUSE face à un CRA resté ENVOYE, que ni le rafraîchissement, ni
+    // le balayage (EN_ATTENTE seulement), ni un webhook relivré ne reprendraient :
+    // un CRA signé coincé, sans courriel d'issue.
     if (demande !== null) {
       await prisma.signatureRequest.updateMany({
         where: { craId: args.craId, status: args.statut, completedAt: maintenant },
@@ -163,6 +162,12 @@ export async function applySignatureStatus(args: {
         },
       })
     }
+    // Autre erreur : on la remonte, la demande est intacte et le rejeu aboutira.
+    if (!(err instanceof InvalidTransitionError)) throw err
+    // Le CRA a quitté ENVOYE entre la lecture et l'écriture : une transition
+    // manuelle l'a emporté. La demande raconte la même histoire que le CRA :
+    // rien n'a été signé ni refusé *par ce chemin* — c'est aussi l'état que
+    // laisse le pré-contrôle quand la transition manuelle arrive plus tôt.
     return 'AUCUN'
   }
 

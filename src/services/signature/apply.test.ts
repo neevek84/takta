@@ -458,6 +458,29 @@ describe('lot 3b — issue du circuit', () => {
     expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('VALIDE')
   })
 
+  it('UNE ERREUR QUELCONQUE DE LA TRANSITION rend la réclamation : rien n\'est coincé, le rejeu aboutit', async () => {
+    // Une panne (transaction, file de synchro…) après la réclamation ne doit
+    // pas laisser une demande SIGNE face à un CRA resté ENVOYE : plus
+    // réclamable, ni par le rafraîchissement, ni par le balayage, ni par un
+    // webhook relivré.
+    course.avant = async () => {
+      throw new Error('panne simulée')
+    }
+    await expect(
+      applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer }),
+    ).rejects.toThrow('panne simulée')
+
+    const d = await prisma.signatureRequest.findUniqueOrThrow({ where: { craId } })
+    expect(d.status).toBe('EN_ATTENTE')
+    expect(d.completedAt).toBeNull()
+    expect(courriels).toHaveLength(0)
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('ENVOYE')
+
+    const effet = await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer })
+    expect(effet).toBe('VALIDE')
+    expect((await prisma.cra.findUniqueOrThrow({ where: { id: craId } })).status).toBe('VALIDE')
+  })
+
   it('une expiration tardive n écrase pas une demande déjà signée', async () => {
     await applySignatureStatus({ craId, externalId: 'ext-1', statut: 'SIGNE', mailer })
     expect(
