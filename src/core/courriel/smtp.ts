@@ -210,12 +210,46 @@ const CODES_RESEAU = new Set(['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'EDNS', 'EC
  * Le message est lu pour **classer** (un « wrong version number » arrive sous
  * `ESOCKET`), jamais pour être affiché.
  */
+/**
+ * Le nom que l'outil annonce au serveur SMTP (`EHLO`).
+ *
+ * **Jamais le défaut de nodemailer** : dans un conteneur, il se présente comme
+ * `[127.0.0.1]`, et le relais SMTP de Google Workspace coupe aussitôt
+ * (`421 4.7.0 Try again later, closing connection. (EHLO)`) — constaté en
+ * production. Le nom public de l'outil (`AUTH_URL`) d'abord, sinon le domaine
+ * de l'adresse d'expédition ; jamais un nom local ni une adresse IP.
+ */
+export function nomAnnonce(authUrl: string | undefined, from: string): string | undefined {
+  const exploitable = (hote: string): boolean =>
+    hote.includes('.') && hote !== 'localhost' && !/^[\d.]+$/.test(hote) && !hote.includes(':')
+
+  if (authUrl !== undefined && authUrl.trim() !== '') {
+    try {
+      const hote = new URL(authUrl.trim()).hostname.toLowerCase()
+      if (exploitable(hote)) return hote
+    } catch {
+      // une `AUTH_URL` illisible ne doit pas empêcher d'envoyer : on passe au repli
+    }
+  }
+
+  const domaine = /@([^\s<>@]+?)>?\s*$/.exec(from)?.[1]?.toLowerCase()
+  return domaine !== undefined && exploitable(domaine) ? domaine : undefined
+}
+
 export function messageErreurSmtp(err: unknown): string {
   const brutCode = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined
   const code = typeof brutCode === 'string' && /^[A-Z][A-Z0-9_]{1,40}$/.test(brutCode) ? brutCode : ''
   const message = err instanceof Error ? err.message : ''
   const suffixe = code === '' ? '' : ` (code ${code})`
 
+  // Avant le chiffrement : le serveur coupe sur le nom annoncé, et le message
+  // de nodemailer peut contenir des mots qui feraient croire à un échec TLS.
+  if (/\(EHLO\)|\bEHLO\b|\bHELO\b/.test(message)) {
+    return (
+      "Le serveur a refusé le nom annoncé par l'outil (EHLO). Vérifiez que AUTH_URL porte " +
+      `l'adresse publique de l'outil, ou que l'adresse d'expédition est dans votre domaine${suffixe}.`
+    )
+  }
   if (/starttls/i.test(message)) {
     return (
       "Le serveur n'offre pas STARTTLS, que ce réglage exige : l'authentification ne partirait pas " +

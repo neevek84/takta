@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  nomAnnonce,
   PRESETS_SMTP,
   adresseExpediteur,
   messageErreurSmtp,
@@ -162,5 +163,40 @@ describe('messageErreurSmtp', () => {
   it('un code inattendu se cite, un code forgé non', () => {
     expect(messageErreurSmtp(erreur('EMESSAGE'))).toContain('EMESSAGE')
     expect(messageErreurSmtp(erreur('pass=hunter2'))).not.toContain('hunter2')
+  })
+})
+
+// Constaté en production : le relais SMTP de Google Workspace coupe
+// (`421 4.7.0 … (EHLO)`) tout client qui se présente comme `[127.0.0.1]`,
+// ce que fait nodemailer par défaut dans un conteneur.
+describe('nomAnnonce', () => {
+  it('prend le nom public de l outil', () => {
+    expect(nomAnnonce('https://takta.ckle-it.eu', 'cra@ckle-it.eu')).toBe('takta.ckle-it.eu')
+    expect(nomAnnonce('https://takta.ckle-it.eu:8443/chemin', '')).toBe('takta.ckle-it.eu')
+  })
+
+  it('à défaut, le domaine de l adresse d expédition', () => {
+    expect(nomAnnonce(undefined, 'Kreativ <cra@kreativpm.fr>')).toBe('kreativpm.fr')
+    expect(nomAnnonce('', 'cra@kreativpm.fr')).toBe('kreativpm.fr')
+  })
+
+  it('jamais un nom local ni une adresse IP', () => {
+    expect(nomAnnonce('http://localhost:3000', 'cra@kreativpm.fr')).toBe('kreativpm.fr')
+    expect(nomAnnonce('http://192.168.1.10:3000', 'cra@kreativpm.fr')).toBe('kreativpm.fr')
+    expect(nomAnnonce('http://localhost:3000', '')).toBeUndefined()
+    expect(nomAnnonce('pas une url', 'invalide')).toBeUndefined()
+  })
+})
+
+describe('messageErreurSmtp — nom annoncé refusé', () => {
+  it('dit que le serveur refuse le nom annoncé, pas une erreur de chiffrement', () => {
+    const err = Object.assign(
+      new Error('Server terminates connection. response=421-4.7.0 Try again later, closing connection. (EHLO)'),
+      { code: 'ECONNECTION' },
+    )
+    const texte = messageErreurSmtp(err)
+    expect(texte).toMatch(/nom annoncé/)
+    expect(texte).not.toMatch(/chiffr/)
+    expect(texte).not.toContain('4.7.0')
   })
 })

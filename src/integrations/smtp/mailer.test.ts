@@ -23,6 +23,18 @@ beforeEach(() => {
 })
 
 describe('buildSmtpMailer', () => {
+  it('annonce un vrai nom au serveur (EHLO), jamais [127.0.0.1]', () => {
+    const avant = process.env.AUTH_URL
+    process.env.AUTH_URL = 'https://takta.ckle-it.eu'
+    try {
+      buildSmtpMailer(CONFIG)
+      expect(createTransport).toHaveBeenCalledWith(expect.objectContaining({ name: 'takta.ckle-it.eu' }))
+    } finally {
+      if (avant === undefined) delete process.env.AUTH_URL
+      else process.env.AUTH_URL = avant
+    }
+  })
+
   it('borne la connexion, l accueil et la socket : un envoi ne pend jamais', () => {
     buildSmtpMailer(CONFIG)
     expect(createTransport).toHaveBeenCalledWith(
