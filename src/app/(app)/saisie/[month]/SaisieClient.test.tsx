@@ -192,6 +192,17 @@ describe('doitEffacerOccupations', () => {
     expect(doitEffacerOccupations('TABLEAU', '3MOIS')).toBe(false)
   })
 
+  // Le tableau 3 mois montre la même plage que la vue 3 mois : un verdict
+  // d'agenda tiré d'un seul mois y laisserait deux mois sans marqueur.
+  it('efface en passant au tableau 3 mois depuis une plage d un seul mois', () => {
+    expect(doitEffacerOccupations('TABLEAU_TROIS_MOIS', '1MOIS')).toBe(true)
+    expect(doitEffacerOccupations('TABLEAU_TROIS_MOIS', null)).toBe(true)
+  })
+
+  it('conserve en passant au tableau 3 mois depuis une plage de trois mois', () => {
+    expect(doitEffacerOccupations('TABLEAU_TROIS_MOIS', '3MOIS')).toBe(false)
+  })
+
   it('conserve entre calendrier et tableau, quelle que soit la plage vérifiée', () => {
     expect(doitEffacerOccupations('TABLEAU', '1MOIS')).toBe(false)
     expect(doitEffacerOccupations('CALENDRIER', null)).toBe(false)
@@ -1375,5 +1386,84 @@ describe('le bouton agenda se reinitialise quand la plage verifiee change', () =
 
     expect(screen.queryByText(/Aucune occupation/)).toBeNull()
     expect(screen.queryByRole('status')).toBeNull()
+  })
+})
+
+/**
+ * Le tableau 3 mois : toutes les prestations en lignes, les jours des trois
+ * mois bout à bout — le planning de tous les clients d'un seul coup d'œil.
+ */
+describe('SaisieClient — tableau 3 mois', () => {
+  beforeEach(() => {
+    saveCell.mockReset()
+    window.history.replaceState(null, '', '/saisie/2026-03')
+    window.localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  it('ne le propose qu au poste', () => {
+    ecranDe(375)
+    renderClient()
+    expect(screen.queryByRole('option', { name: 'Tableau 3 mois' })).toBeNull()
+    cleanup()
+
+    ecranDe(1280)
+    renderClient()
+    expect(screen.getByRole('option', { name: 'Tableau 3 mois' })).toBeDefined()
+  })
+
+  it('montre les trois mois, dans l ordre, et toutes les prestations', () => {
+    renderClient()
+    choisirVueDansLeSelect('TABLEAU_TROIS_MOIS')
+
+    expect(screen.getAllByTestId(/^entete-mois-/).map((e) => e.textContent)).toEqual([
+      'mars 2026',
+      'avril 2026',
+      'mai 2026',
+    ])
+    expect(screen.getByLabelText('Consultant ITSM 2026-03-12')).toBeDefined()
+    expect(screen.getByLabelText('Consultant ITSM Nuit 2026-05-29')).toBeDefined()
+    // Une seule table, pas trois grilles : le calendrier n'y est pas.
+    expect(screen.getAllByRole('table')).toHaveLength(1)
+    expect(screen.queryByTestId('grille-calendrier')).toBeNull()
+  })
+
+  it("inscrit le choix dans l'adresse", () => {
+    renderClient()
+    choisirVueDansLeSelect('TABLEAU_TROIS_MOIS')
+    expect(window.location.search).toBe('?vue=tableau3mois')
+  })
+
+  it("s'ouvre dessus quand l'adresse le demande", () => {
+    renderClient({ vueInitiale: 'TABLEAU_TROIS_MOIS' })
+    expect((screen.getByLabelText('Vue') as HTMLSelectElement).value).toBe('TABLEAU_TROIS_MOIS')
+    expect(screen.getAllByTestId(/^entete-mois-/)).toHaveLength(3)
+  })
+
+  it('écrit à la date du troisième mois, en rafraîchissant le mois affiché', async () => {
+    saveCell.mockResolvedValue({ ok: true })
+    renderClient({ vueInitiale: 'TABLEAU_TROIS_MOIS' })
+
+    const input = screen.getByLabelText('Consultant ITSM 2026-05-12') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '1' } })
+    fireEvent.blur(input)
+
+    await waitFor(() =>
+      expect(saveCell).toHaveBeenCalledWith(
+        expect.objectContaining({ lineId: 'l1', date: '2026-05-12', month: '2026-03' }),
+      ),
+    )
+  })
+
+  it('laisse en lecture seule le mois fermé, et saisissable les autres', () => {
+    renderClient({ vueInitiale: 'TABLEAU_TROIS_MOIS', verrous: ['l1|2026-04'] })
+
+    expect((screen.getByLabelText('Consultant ITSM 2026-04-14') as HTMLInputElement).readOnly).toBe(true)
+    expect((screen.getByLabelText('Consultant ITSM 2026-05-14') as HTMLInputElement).readOnly).toBe(false)
+  })
+
+  it('ne propose pas la bascule de portée, comme le tableau', () => {
+    renderClient({ vueInitiale: 'TABLEAU_TROIS_MOIS' })
+    expect(screen.queryByRole('button', { name: 'Cette prestation' })).toBeNull()
   })
 })

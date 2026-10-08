@@ -1,6 +1,7 @@
 'use client'
 
-import { saisiesParJour } from '@/core/month/build'
+import { Fragment } from 'react'
+import { grouperParMois, saisiesParJour } from '@/core/month/build'
 import { centiemesParFacteur, formatJours } from '@/core/time/units'
 import { checkCapacity } from '@/core/capacity/check'
 import type { MonthDay } from '@/core/month/build'
@@ -28,6 +29,7 @@ export function TotalsRow({
   entries,
   capacityCentiemes,
   capacityMode,
+  parMois = false,
 }: {
   days: MonthDay[]
   entries: MonthEntry[]
@@ -35,6 +37,12 @@ export function TotalsRow({
   capacityCentiemes: number
   /** mode réglé : c'est lui qui décide si un dépassement se dit */
   capacityMode: CapacityMode
+  /**
+   * vrai sur le tableau 3 mois : une colonne de total suit chaque mois, et le
+   * premier jour de chacun porte la frontière — la ligne reste alignée sur les
+   * colonnes que la grille pose au-dessus d'elle.
+   */
+  parMois?: boolean
 }) {
   const parJour = saisiesParJour(entries)
 
@@ -43,29 +51,45 @@ export function TotalsRow({
       <th scope="row" className="sticky left-0 bg-surface px-2 py-1 text-left text-sm">
         Total
       </th>
-      {days.map((d) => {
-        const saisies = parJour.get(d.date) ?? AUCUNE_SAISIE
-        // Capacité à zéro : aucun seuil n'est réglé, il n'y a rien à dépasser.
-        const over =
-          capacityCentiemes > 0 &&
-          !checkCapacity({ existing: saisies, added: [], capacityCentiemes, mode: capacityMode }).ok
-        return (
-          // Le dépassement porte trois signaux — teinte, graisse soulignée et
-          // glyphe — dont deux survivent à une vision monochrome.
-          <td
-            key={d.date}
-            data-testid={`total-${d.date}`}
-            data-depassement={over ? 'true' : 'false'}
-            title={over ? 'Capacité dépassée' : undefined}
-            className={`px-1 py-1 text-center text-xs ${
-              over ? 'font-bold text-danger-ink underline decoration-2' : 'text-muted'
-            }`}
-          >
-            {over && <span aria-hidden="true">! </span>}
-            {formatJours(centiemesParFacteur(saisies))}
-          </td>
-        )
-      })}
+      {grouperParMois(days).map((bloc) => (
+        <Fragment key={bloc.mois}>
+          {bloc.days.map((d, i) => {
+            const saisies = parJour.get(d.date) ?? AUCUNE_SAISIE
+            // Capacité à zéro : aucun seuil n'est réglé, il n'y a rien à dépasser.
+            const over =
+              capacityCentiemes > 0 &&
+              !checkCapacity({ existing: saisies, added: [], capacityCentiemes, mode: capacityMode }).ok
+            return (
+              // Le dépassement porte trois signaux — teinte, graisse soulignée et
+              // glyphe — dont deux survivent à une vision monochrome.
+              <td
+                key={d.date}
+                data-testid={`total-${d.date}`}
+                data-depassement={over ? 'true' : 'false'}
+                title={over ? 'Capacité dépassée' : undefined}
+                className={`px-1 py-1 text-center text-xs ${
+                  parMois && i === 0 ? 'border-l-2 border-l-ink' : ''
+                } ${over ? 'font-bold text-danger-ink underline decoration-2' : 'text-muted'}`}
+              >
+                {over && <span aria-hidden="true">! </span>}
+                {formatJours(centiemesParFacteur(saisies))}
+              </td>
+            )
+          })}
+          {/* Le total du mois, converti saisie par saisie sous son facteur
+              figé — le même calcul que chaque colonne de jour. */}
+          {parMois && (
+            <td
+              data-testid={`total-mois-${bloc.mois}`}
+              className="border-l border-rule px-1 py-1 text-center text-xs text-ink"
+            >
+              {formatJours(
+                centiemesParFacteur(bloc.days.flatMap((d) => parJour.get(d.date) ?? AUCUNE_SAISIE)),
+              )}
+            </td>
+          )}
+        </Fragment>
+      ))}
     </tr>
   )
 }

@@ -7,6 +7,7 @@ import {
   getPastForecastWithLockStatus,
 } from '@/services/time-entries'
 import { aUnConnecteurAgenda } from '@/services/credentials'
+import { listerVerrousParLigne } from '@/services/cells'
 import { vueParDefautDe } from '@/services/saisie/vue-par-defaut'
 import { buildMonthDays, shiftMonth } from '@/core/month/build'
 import { pauseDepuisColonnes } from '@/core/time/slots'
@@ -38,7 +39,9 @@ export default async function SaisiePage({
       ? 'TROIS_MOIS'
       : vue === 'tableau'
         ? 'TABLEAU'
-        : ((await vueParDefautDe(user.id)) ?? 'CALENDRIER')
+        : vue === 'tableau3mois'
+          ? 'TABLEAU_TROIS_MOIS'
+          : ((await vueParDefautDe(user.id)) ?? 'CALENDRIER')
 
   const settings = await getSettings()
   const lines = await listActiveLines(user.id)
@@ -63,6 +66,11 @@ export default async function SaisiePage({
     lines.map((l) => l.id),
   )
   const days = joursParMois[0]!
+
+  // Le verrou de chaque (prestation, mois) sur les trois mois lus : les deux
+  // tableaux laissent en lecture seule un mois envoyé ou validé, et seulement
+  // lui. Décidé par le service — `isLocked` sur le CRA —, jamais ici.
+  const verrous = await listerVerrousParLigne(user.id, mois)
 
   // Plus aucune lecture d'agenda ici : douze mois parcourus ne coûtaient pas
   // moins de douze appels freeBusy, pour un repère qu'on ne regardait peut-être
@@ -118,6 +126,7 @@ export default async function SaisiePage({
         // réalisé et le prévisionnel, et les deux ne peuvent pas la placer
         // ailleurs l'un que l'autre.
         aujourdhui={today}
+        verrous={verrous}
       />
     </PageShell>
   )

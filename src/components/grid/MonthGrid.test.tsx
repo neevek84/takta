@@ -1534,3 +1534,150 @@ describe('les deux vues ne marquent pas le même fait', () => {
     expect(marqueur.getAttribute('class')).toContain('absolute')
   })
 })
+
+/**
+ * Le tableau sur trois mois : la même grille, les mêmes cellules, sur des
+ * jours qui s'étendent de mars à mai. Rien n'est réécrit pour l'occasion —
+ * ces tests le vérifient en passant à `MonthGrid` les jours des trois mois
+ * bout à bout, exactement comme `SaisieClient` le fait.
+ */
+describe('MonthGrid — trois mois', () => {
+  afterEach(cleanup)
+
+  const troisMois = ['2026-03', '2026-04', '2026-05'].flatMap((m) =>
+    buildMonthDays(m, [1, 2, 3, 4, 5], []),
+  )
+
+  const saisiesTroisMois: MonthEntry[] = [
+    ...entries,
+    { id: 'e3', lineId: 'l1', date: '2026-04-14', minutes: 480, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+    { id: 'e4', lineId: 'l1', date: '2026-04-15', minutes: 240, kind: 'REALISE', slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+    { id: 'e5', lineId: 'l1', date: '2026-05-12', minutes: 480, kind: 'PREVISIONNEL', slotId: '', ...BORNES, minutesParJour: 480, lieu: 'DISTANCE' },
+  ]
+
+  function renderTroisMois(overrides: Partial<React.ComponentProps<typeof MonthGrid>> = {}) {
+    return renderGrid({ days: troisMois, entries: saisiesTroisMois, ...overrides })
+  }
+
+  it('nomme les trois mois, dans l ordre', () => {
+    renderTroisMois()
+    const entetes = screen.getAllByTestId(/^entete-mois-/)
+    expect(entetes.map((e) => e.textContent)).toEqual(['mars 2026', 'avril 2026', 'mai 2026'])
+  })
+
+  it('aligne les jours des trois mois bout à bout', () => {
+    renderTroisMois()
+    expect(screen.getAllByTestId(/^day-header-/)).toHaveLength(31 + 30 + 31)
+  })
+
+  it('montre toutes les prestations sur les trois mois', () => {
+    renderTroisMois()
+    for (const date of ['2026-03-12', '2026-04-14', '2026-05-12']) {
+      expect(cell('Consultant ITSM', date)).toBeDefined()
+      expect(cell('Consultant ITSM Nuit', date)).toBeDefined()
+    }
+    expect(cell('Consultant ITSM', '2026-04-14').value).toBe('1')
+    expect(cell('Consultant ITSM', '2026-05-12').value).toBe('1')
+  })
+
+  // La frontière se lit à la forme — un filet épais —, jamais à la seule teinte.
+  it('marque le premier jour de chaque mois comme une frontière', () => {
+    renderTroisMois()
+    for (const date of ['2026-03-01', '2026-04-01', '2026-05-01']) {
+      const entete = screen.getByTestId(`day-header-${date}`)
+      expect(entete.dataset.debutMois).toBe('true')
+      expect(entete.className).toContain('border-l-2')
+    }
+    expect(screen.getByTestId('day-header-2026-04-02').dataset.debutMois).toBeUndefined()
+  })
+
+  it('totalise chaque prestation mois par mois', () => {
+    renderTroisMois()
+    expect(screen.getByTestId('total-ligne-l1-2026-03').textContent).toContain('1')
+    expect(screen.getByTestId('total-ligne-l1-2026-04').textContent).toContain('1,5')
+    expect(screen.getByTestId('total-ligne-l1-2026-05').textContent).toContain('1')
+    // La ligne en heures garde son unité, comme ses cellules.
+    expect(screen.getByTestId('total-ligne-l2-2026-03').textContent).toContain('4')
+  })
+
+  it('totalise chaque mois, toutes prestations confondues', () => {
+    renderTroisMois()
+    // Mars : 1 j sur l1 et 0,5 j sur l2 (4 h sur une journée de 8 h).
+    expect(screen.getByTestId('total-mois-2026-03').textContent).toBe('1,5')
+    expect(screen.getByTestId('total-mois-2026-04').textContent).toBe('1,5')
+  })
+
+  it('n ajoute ni en-tête de mois ni colonne de total sur un seul mois', () => {
+    renderGrid()
+    expect(screen.queryAllByTestId(/^entete-mois-/)).toHaveLength(0)
+    expect(screen.queryAllByTestId(/^total-ligne-/)).toHaveLength(0)
+  })
+
+  describe('le verrou est propre à chaque mois', () => {
+    it('fige les cellules du mois fermé, et seulement celles de cette prestation', () => {
+      renderTroisMois({ verrous: ['l1|2026-04'] })
+
+      expect(cell('Consultant ITSM', '2026-04-14').readOnly).toBe(true)
+      expect(cell('Consultant ITSM', '2026-04-20').readOnly).toBe(true)
+      expect(cell('Consultant ITSM', '2026-03-12').readOnly).toBe(false)
+      expect(cell('Consultant ITSM', '2026-05-12').readOnly).toBe(false)
+      expect(cell('Consultant ITSM Nuit', '2026-04-14').readOnly).toBe(false)
+    })
+
+    it('n envoie rien au serveur depuis un mois fermé', async () => {
+      const onSave = vi.fn(async () => true)
+      renderTroisMois({ verrous: ['l1|2026-04'], onSave })
+
+      const ferme = cell('Consultant ITSM', '2026-04-20')
+      fireEvent.change(ferme, { target: { value: '1' } })
+      fireEvent.blur(ferme)
+
+      const ouvert = cell('Consultant ITSM', '2026-05-20')
+      fireEvent.change(ouvert, { target: { value: '1' } })
+      fireEvent.blur(ouvert)
+
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+      expect(onSave).toHaveBeenCalledWith('l1', '2026-05-20', '1', '')
+      expect(ferme.value).toBe('')
+    })
+
+    // Un champ en lecture seule ne se distingue pas d'un autre à l'œil : le
+    // verrou se dit en toutes lettres, pas par une teinte.
+    it('dit le verrou en toutes lettres', () => {
+      renderTroisMois({ verrous: ['l1|2026-04'] })
+
+      expect(screen.getByTestId('total-ligne-l1-2026-04').textContent).toContain('CRA fermé')
+      expect(screen.getByTestId('total-ligne-l1-2026-03').textContent).not.toContain('CRA fermé')
+      expect(cell('Consultant ITSM', '2026-04-14').title).toMatch(/envoyé ou validé/)
+    })
+
+    it('le dit aussi sur un seul mois', () => {
+      renderGrid({ verrous: ['l1|2026-03'] })
+
+      expect(cell('Consultant ITSM', '2026-03-12').readOnly).toBe(true)
+      expect(screen.getByRole('rowheader', { name: /Consultant ITSM\b.*CRA fermé/ })).toBeDefined()
+    })
+
+    // « Le gel se casse en lecture » : un mois validé doit garder ses chiffres
+    // quand le réglage de conversion de la prestation bouge après coup.
+    it('garde les chiffres d un mois validé quand le facteur de la prestation change', () => {
+      const lire = () => ({
+        cellule: cell('Consultant ITSM', '2026-04-15').value,
+        total: screen.getByTestId('total-ligne-l1-2026-04').textContent,
+        mois: screen.getByTestId('total-mois-2026-04').textContent,
+      })
+
+      const { unmount } = renderTroisMois({ verrous: ['l1|2026-04'] })
+      const avant = lire()
+      unmount()
+
+      // La journée passe de 8 h à 7 h : les saisies d'avril, elles, gardent
+      // les 8 h figées à leur écriture.
+      const septHeures = lines.map((l) => (l.id === 'l1' ? { ...l, minutesParJour: 420 } : l))
+      renderTroisMois({ verrous: ['l1|2026-04'], lines: septHeures })
+
+      expect(lire()).toEqual(avant)
+      expect(avant.cellule).toBe('0,5')
+    })
+  })
+})
