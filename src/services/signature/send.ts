@@ -38,7 +38,7 @@ const MESSAGES: Record<SendCraRaison, string> = {
   CONNECTEUR_EN_ECHEC:
     'L’outil de signature n’a pas accepté le document. Le CRA n’a pas changé d’état.',
   PAS_DE_SMTP:
-    'Le serveur de courriel n’est pas configuré : le client ne pourrait pas recevoir son code. Configurez SMTP dans l’administration, ou utilisez les transitions manuelles.',
+    'Le serveur de courriel n’est pas configuré : le client ne pourrait pas recevoir son code. Configurez-le dans Administration · Courriel, ou utilisez les transitions manuelles.',
 }
 
 /** Sentinelle : un autre appel a pris le CRA entre la lecture et la transaction. */

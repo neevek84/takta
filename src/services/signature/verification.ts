@@ -168,6 +168,6 @@ function verifierSmtp(configure: boolean): Verification {
         cle: 'smtp',
         etat: 'echec',
         texte:
-          "SMTP n'est pas configuré : l'envoi pour signature sera refusé, le client ne recevrait pas son code.",
+          "SMTP n'est pas configuré : l'envoi pour signature sera refusé, le client ne recevrait pas son code. Réglez-le dans Administration · Courriel.",
       }
 }

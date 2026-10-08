@@ -47,7 +47,7 @@ services:
       # Vide = ces endpoints restent fermés : une installation qui n'expose
       # rien à l'extérieur doit pouvoir démarrer.
       CRA_API_TOKEN: ${CRA_API_TOKEN:-}
-      # Seul secret SMTP ; le reste de la configuration se saisit en base.
+      # Repli du mot de passe SMTP ; la voie normale est Administration · Courriel.
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       # Signature électronique : entièrement optionnelle. Vides, le connecteur
       # n'existe pas — le PDF se génère et se télécharge, et les transitions du
