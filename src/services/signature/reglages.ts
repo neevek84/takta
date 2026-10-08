@@ -257,6 +257,9 @@ export async function genererSecretWebhook(args: { userId: string }): Promise<st
  * Le bouton « Tester », sur la configuration **en vigueur** — celle que le
  * circuit utilisera réellement, écran ou environnement.
  */
+/** Délai du test de connexion : au-delà, l'instance est dite injoignable. */
+const DELAI_TEST_MS = 10_000
+
 export async function testerConfigurationSignature(
   deps: {
     fetchFn?: SignatureFetchLike
@@ -278,7 +281,16 @@ export async function testerConfigurationSignature(
   }
 
   const fetchFn: SignatureFetchLike =
-    deps.fetchFn ?? ((url, init) => fetch(url, { ...(init as RequestInit), redirect: 'manual' }))
+    deps.fetchFn ??
+    ((url, init) =>
+      fetch(url, {
+        ...(init as RequestInit),
+        redirect: 'manual',
+        // Une instance qui ne répond pas doit se dire « injoignable » en
+        // quelques secondes, pas laisser l'écran attendre jusqu'à ce que le
+        // proxy coupe : l'abandon tombe dans le `catch` de la vérification.
+        signal: AbortSignal.timeout(DELAI_TEST_MS),
+      }))
   const smtpConfigure = deps.smtpConfigure ?? (async () => (await readSmtpConfig()) !== null)
 
   return verifierDocumenso({

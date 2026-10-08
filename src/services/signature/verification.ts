@@ -88,7 +88,13 @@ async function verifierInstance(
 
   // Le corps n'est jamais lu au-delà de son type : il n'a rien à nous dire
   // qui vaille le risque d'en afficher un morceau.
-  await reponse.body?.cancel().catch(() => {})
+  //
+  // **Jamais attendu.** Sous Next, `fetch` est enveloppé et le corps de la
+  // réponse peut être dédoublé en interne : l'annulation d'une branche ne se
+  // résout qu'une fois l'autre consommée — ce qui n'arrive jamais. Attendre
+  // ici suspendait l'action « Tester » sans fin ; derrière un proxy, la page
+  // recevait la coupure du proxy et tombait en « Application error ».
+  void reponse.body?.cancel().catch(() => {})
 
   const instanceRepond: Verification = { cle: 'instance', etat: 'ok', texte: "L'instance répond." }
 

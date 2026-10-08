@@ -56,6 +56,30 @@ function etat(verifications: Verification[], cle: Verification['cle']): Verifica
 }
 
 describe('verifierDocumenso', () => {
+  // Constaté en production : sous Next, `fetch` est enveloppé et le corps de
+  // la réponse peut être dédoublé — annuler une branche ne se résout jamais.
+  // Attendre cette annulation suspendait « Tester » sans fin, jusqu'à ce que
+  // le proxy coupe et que la page tombe en « Application error ».
+  it('ne reste pas suspendu à l annulation du corps de la réponse', async () => {
+    const corpsQuiNeSAnnuleJamais = {
+      cancel: () => new Promise<void>(() => {}),
+    } as unknown as ReadableStream
+    const fetchFn: SignatureFetchLike = async () => {
+      const reponse = new Response(null, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+      Object.defineProperty(reponse, 'body', { value: corpsQuiNeSAnnuleJamais })
+      return reponse
+    }
+    const delai = new Promise<'suspendu'>((r) => setTimeout(() => r('suspendu'), 500))
+    const resultat = await Promise.race([
+      verifierDocumenso({ baseUrl: 'https://sign.test', apiKey: 'k', fetchFn, smtpConfigure: true }),
+      delai,
+    ])
+    expect(resultat).not.toBe('suspendu')
+  })
+
   it('tout est vert : instance, clé, API v2 et SMTP', async () => {
     const { fetchFn } = fausseInstance()
     const r = await verifierDocumenso({ baseUrl: `${BASE}/`, apiKey: CLE, fetchFn, smtpConfigure: true })

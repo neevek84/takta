@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { MonthGrid } from '@/components/grid/MonthGrid'
 import { MonthCalendar } from '@/components/calendar/MonthCalendar'
 import { EngagementBar } from '@/components/grid/EngagementBar'
+import { BlocEngagement } from '@/components/grid/BlocEngagement'
 import { CellForm } from '@/components/calendar/CellForm'
 import { LineSelector } from '@/components/calendar/LineSelector'
 import { monthLabel } from '@/components/MonthNav'
@@ -706,6 +707,17 @@ export function SaisieClient(props: {
           aperçu à trois volets. */}
       {vue === 'TROIS_MOIS' && ligne !== undefined && (
         <>
+          {/* Le même bloc que les tableaux : légendes, puis une barre nommée
+              par prestation. L'engagement se lit sur toute la durée de la
+              ligne, pas sur un mois affiché — d'où un seul bloc au-dessus des
+              trois grilles. En « toutes les prestations » une barre par ligne,
+              dans l'ordre habituel ; sinon la seule ligne affichée, sans
+              empiler des chiffres qui ne concernent pas ce qu'on regarde. */}
+          <BlocEngagement
+            lines={toutLeMois ? props.lines : [ligne]}
+            engagementTotals={props.engagementTotals}
+            avecOccupation={occupations.length > 0}
+          />
           <div className="grid grid-cols-3 gap-3">
             {props.mois.map((m, i) => (
               <section key={m}>
@@ -726,16 +738,6 @@ export function SaisieClient(props: {
                 />
               </section>
             ))}
-          </div>
-          {/* L'engagement se lit sur toute la durée de la ligne, pas sur un
-              mois affiché : une seule réglette, sous l'ensemble des trois
-              grilles. L'empiler trois fois dirait trois fois le même chiffre. */}
-          <div className="mt-3">
-            <EngagementBar
-              line={ligne}
-              totals={props.engagementTotals[ligne.id] ?? AUCUN_TOTAL}
-              pleineLargeur
-            />
           </div>
         </>
       )}

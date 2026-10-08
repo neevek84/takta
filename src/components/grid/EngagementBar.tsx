@@ -22,15 +22,22 @@ import { cn } from '@/lib/cn'
  * la largeur de la grille. Le défaut est `false` : la vue tableau, qui empile
  * une barre par ligne, garde exactement le rendu qu'elle avait. Rien du calcul
  * ne change dans un cas ni dans l'autre — `computeEngagement` n'est pas touché.
+ *
+ * `avecLibelle` nomme la prestation à côté de la barre : dès que plusieurs
+ * barres s'empilent (tableaux, vue 3 mois), « 30 vendus · … » sans nom ne dit
+ * pas de quelle ligne il parle. Le nom tronque s'il est long — l'infobulle et
+ * le nom accessible du groupe portent le texte entier.
  */
 export function EngagementBar({
   line,
   totals,
   pleineLargeur = false,
+  avecLibelle = false,
 }: {
   line: LineForGrid
   totals: LineEngagementTotals
   pleineLargeur?: boolean
+  avecLibelle?: boolean
 }) {
   const e = computeEngagement({
     venduCentiemes: line.soldCentiemes,
@@ -42,11 +49,22 @@ export function EngagementBar({
   return (
     <div
       data-testid={`engagement-${line.id}`}
+      role={avecLibelle ? 'group' : undefined}
+      aria-label={avecLibelle ? `Engagement — ${line.label}` : undefined}
       className={cn(
         'flex items-center gap-3 text-xs',
         pleineLargeur && 'flex-col items-stretch gap-1',
       )}
     >
+      {avecLibelle && (
+        <span
+          data-testid={`libelle-engagement-${line.id}`}
+          title={line.label}
+          className="max-w-48 shrink-0 truncate font-medium text-ink"
+        >
+          {line.label}
+        </span>
+      )}
       <div
         data-testid={`piste-engagement-${line.id}`}
         className={cn(

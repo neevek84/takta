@@ -48,7 +48,7 @@ export function TotalsRow({
 
   return (
     <tr className="border-t-2 border-rule font-medium">
-      <th scope="row" className="sticky left-0 bg-surface px-2 py-1 text-left text-sm">
+      <th scope="row" className="sticky left-0 z-10 bg-surface px-2 py-1 text-left text-sm">
         Total
       </th>
       {grouperParMois(days).map((bloc) => (

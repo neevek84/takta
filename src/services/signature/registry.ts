@@ -20,7 +20,12 @@ export async function getSignatureConnector(
   if (provenance === 'aucune') return null
 
   return createDocumensoConnector({
-    fetchFn: deps.fetchFn ?? ((url, init) => fetch(url, init as RequestInit)),
+    // Un délai, toujours : un prestataire qui ne répond pas ne doit pas
+    // suspendre l'envoi, le webhook ou la page client jusqu'à la coupure du
+    // proxy — l'appel échoue et l'appelant dit ce qu'il sait dire.
+    fetchFn:
+      deps.fetchFn ??
+      ((url, init) => fetch(url, { ...(init as RequestInit), signal: AbortSignal.timeout(30_000) })),
     baseUrl,
     apiKey,
   })

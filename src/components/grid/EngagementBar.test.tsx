@@ -223,4 +223,27 @@ describe('EngagementBar en pleine largeur', () => {
     expect(texte()).toContain('7 prévus')
     expect(texte()).toContain('5 restants')
   })
+
+  // Dans un tableau ou une vue 3 mois, plusieurs barres s'empilent : sans nom,
+  // « 30 vendus · … » ne dirait pas de quelle prestation il parle.
+  it('nomme la prestation à côté de la barre quand le libellé est demandé', () => {
+    render(<EngagementBar line={line} totals={[]} avecLibelle />)
+    const nom = screen.getByTestId('libelle-engagement-l1')
+    expect(nom.textContent).toBe('Consultant ITSM')
+    expect(screen.getByRole('group', { name: /Consultant ITSM/ })).toBeDefined()
+  })
+
+  it('garde le nom entier en infobulle et en nom accessible quand il est long', () => {
+    const longue = { ...line, label: 'Consultant ITSM senior pilotage de la transformation du service desk' }
+    render(<EngagementBar line={longue} totals={[]} avecLibelle />)
+    const nom = screen.getByTestId('libelle-engagement-l1')
+    expect(nom.getAttribute('title')).toBe(longue.label)
+    expect(nom.className).toContain('truncate')
+    expect(screen.getByRole('group', { name: new RegExp(longue.label) })).toBeDefined()
+  })
+
+  it('n affiche aucun nom par défaut', () => {
+    render(<EngagementBar line={line} totals={[]} />)
+    expect(screen.queryByTestId('libelle-engagement-l1')).toBeNull()
+  })
 })
