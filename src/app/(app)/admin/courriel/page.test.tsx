@@ -38,7 +38,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 async function rendre() {
-  render(await AdminCourrielPage({ searchParams: Promise.resolve({}) }))
+  render(await AdminCourrielPage())
 }
 
 describe('page Administration · Courriel', () => {
@@ -73,6 +73,13 @@ describe('page Administration · Courriel', () => {
     expect((screen.getByLabelText('Destinataire du test') as HTMLInputElement).value).toBe(
       'admin@exemple.test',
     )
+  })
+
+  it('n affiche aucune bannière forgée par l URL', async () => {
+    // La page ne lit plus l'URL : elle n'accepte aucun paramètre de recherche.
+    expect(AdminCourrielPage.length).toBe(0)
+    await rendre()
+    expect(document.body.textContent).not.toContain('Faux message')
   })
 
   it('dit quand l envoi n est pas configuré, et quand le mot de passe vient de l environnement', async () => {

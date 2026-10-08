@@ -14,30 +14,16 @@ import { TestEnvoi } from './TestEnvoi'
  * alertes du journal. `SMTP_PASSWORD` reste un repli pour le mot de passe ;
  * ce qui s'enregistre ici l'emporte, et l'écran dit lequel est en vigueur.
  */
-export default async function AdminCourrielPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ message?: string; tone?: string }>
-}) {
+export default async function AdminCourrielPage() {
   // Le verdict **avant** tout service : rien de ce que cette page allait
   // lire n'est lu si l'accès est refusé.
   const { autorise, user } = await accesAdministration()
   if (!autorise) return <AccesRefuse role={user.role} />
-  const { message, tone } = await searchParams
-  // Rien ne se fait passer pour une réussite : une tonalité absente ou forgée
-  // retombe sur l'avertissement.
-  const toneMessage = tone === 'success' ? 'success' : tone === 'danger' ? 'danger' : 'warning'
 
   const vue = await vueReglagesCourriel(user.id)
 
   return (
     <PageShell title="Administration · Courriel">
-      {message !== undefined && (
-        <div className="mb-6">
-          <Banner tone={toneMessage}>{message}</Banner>
-        </div>
-      )}
-
       <div className="mb-6">
         {vue.complete ? (
           <Banner tone="success" title="Prêt à envoyer">

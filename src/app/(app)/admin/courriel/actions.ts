@@ -52,9 +52,15 @@ export async function enregistrerCourriel(
     })
     if (!r.ok) return r
   } catch (err) {
-    // Typiquement `CREDENTIALS_KEY` absente : le nom de la variable est utile
-    // et n'est pas un secret ; le mot de passe saisi n'apparaît nulle part.
-    return { ok: false, erreurs: [messageSansSecret(err, motDePasse)] }
+    // `CREDENTIALS_KEY` absente : le nom de la variable est utile et n'est pas
+    // un secret. Tout le reste (base, bibliothèque) reste générique : un
+    // message brut peut citer une adresse interne ou la valeur saisie.
+    const brut = messageSansSecret(err, motDePasse)
+    if (brut.includes('CREDENTIALS_KEY')) return { ok: false, erreurs: [brut] }
+    return {
+      ok: false,
+      erreurs: ['Enregistrement impossible : une erreur inattendue est survenue. Réessayez, puis consultez le journal du serveur.'],
+    }
   }
 
   revalidatePath(CHEMIN)

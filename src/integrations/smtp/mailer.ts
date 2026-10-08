@@ -20,6 +20,9 @@ export function buildSmtpMailer(config: SmtpConfig): Mailer {
     host: config.host,
     port: config.port,
     secure: config.secure,
+    // STARTTLS exigé, pas opportuniste : sinon un intermédiaire qui retire
+    // l'annonce STARTTLS du serveur ferait partir l'authentification en clair.
+    ...(!config.secure && { requireTLS: true }),
     ...DELAIS_SMTP,
     ...(config.user !== '' && { auth: { user: config.user, pass: config.password } }),
   })

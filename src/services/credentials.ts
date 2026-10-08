@@ -279,6 +279,18 @@ export async function getInstanceCredential(
  * monde ne les sépare.
  */
 export async function readInstanceSecret(provider: string): Promise<string | null> {
+  return (await readInstanceCredentialAndSecret(provider)).secret
+}
+
+/**
+ * La ligne d'un identifiant d'instance lue **une seule fois** : sa date de
+ * connexion, et son secret déscellé (`null` si la ligne manque ou ne se
+ * déchiffre plus — `existe` les distingue, et un seul avertissement est
+ * journalisé).
+ */
+export async function readInstanceCredentialAndSecret(
+  provider: string,
+): Promise<{ existe: boolean; secret: string | null; connectedAt: Date | null }> {
   const row = await prisma.providerCredential.findUnique({
     where: {
       ownerScope_userId_provider: {
@@ -288,16 +300,16 @@ export async function readInstanceSecret(provider: string): Promise<string | nul
       },
     },
   })
-  if (row === null) return null
+  if (row === null) return { existe: false, secret: null, connectedAt: null }
 
   try {
-    return decryptSecret(row.accessTokenEnc, credentialsKey())
+    return { existe: true, secret: decryptSecret(row.accessTokenEnc, credentialsKey()), connectedAt: row.connectedAt }
   } catch (err) {
     journalAvertissement('credentials.lecture', {
       provider,
       raison: err instanceof Error ? err.message : String(err),
     })
-    return null
+    return { existe: true, secret: null, connectedAt: row.connectedAt }
   }
 }
 

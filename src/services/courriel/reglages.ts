@@ -1,9 +1,8 @@
 import { prisma } from '@/db/client'
-import { DELAIS_SMTP, estAdresse, messageErreurSmtp, validerReglagesSmtp } from '@/core/courriel/smtp'
+import { DELAI_TEST_SMTP_MS, estAdresse, messageErreurSmtp, validerReglagesSmtp } from '@/core/courriel/smtp'
 import { gabaritCourrielTest } from '@/core/notify/templates'
 import { actorOf, appendAudit } from '@/services/audit'
 import {
-  getInstanceCredential,
   revokeInstanceCredential,
   saveInstanceCredential,
 } from '@/services/credentials'
@@ -39,16 +38,16 @@ export interface VueReglagesCourriel {
 }
 
 export async function vueReglagesCourriel(userId: string): Promise<VueReglagesCourriel> {
-  const [row, mdp, config, user, ligne] = await Promise.all([
+  const [row, mdp, user] = await Promise.all([
     prisma.settings.findUnique({
       where: { id: 'singleton' },
       select: { smtpHost: true, smtpPort: true, smtpUser: true, smtpFrom: true, smtpSecure: true },
     }),
     lireMotDePasseSmtp(),
-    readSmtpConfig(),
     prisma.user.findUnique({ where: { id: userId }, select: { email: true } }),
-    getInstanceCredential(PROVIDER_SMTP),
   ])
+  // Le mot de passe est résolu une seule fois pour toute la vue.
+  const config = await readSmtpConfig(mdp)
 
   return {
     host: row?.smtpHost ?? '',
@@ -59,7 +58,7 @@ export async function vueReglagesCourriel(userId: string): Promise<VueReglagesCo
     motDePasse: {
       provenance: mdp.provenance,
       illisible: mdp.illisible,
-      enregistreLe: mdp.provenance === 'ecran' ? (ligne?.connectedAt ?? null) : null,
+      enregistreLe: mdp.provenance === 'ecran' ? mdp.enregistreLe : null,
     },
     complete: config !== null,
     adresseAdministrateur: user?.email ?? '',
@@ -106,6 +105,21 @@ export async function enregistrerReglagesCourriel(args: {
     const enVigueur = await lireMotDePasseSmtp()
     if (enVigueur.provenance === 'aucune') {
       erreurs.push('Le mot de passe est requis quand un utilisateur est renseigné.')
+    } else if (enVigueur.provenance === 'ecran' && validation.ok) {
+      // Garder le mot de passe enregistré n'a de sens que pour le même
+      // serveur et le même utilisateur : sinon il partirait, à l'insu de
+      // l'administrateur, vers un autre serveur. (Le repli SMTP_PASSWORD ne
+      // peut pas être contrôlé de la même façon : il est hors de l'écran.)
+      const actuel = await prisma.settings.findUnique({
+        where: { id: 'singleton' },
+        select: { smtpHost: true, smtpUser: true },
+      })
+      const change =
+        (actuel?.smtpHost ?? '').toLowerCase() !== validation.valeur.host.toLowerCase() ||
+        (actuel?.smtpUser ?? '') !== validation.valeur.user
+      if (change) {
+        erreurs.push('Le serveur ou l’utilisateur a changé : ressaisissez le mot de passe.')
+      }
     }
   }
   if (!validation.ok || erreurs.length > 0) return { ok: false, erreurs }
@@ -159,12 +173,11 @@ export async function enregistrerReglagesCourriel(args: {
 export type ResultatTestCourriel = { ok: true; message: string } | { ok: false; message: string }
 
 /**
- * Délai total du test : la somme des délais du transport, plus une marge. Le
+ * Délai total du test, au-dessus de tous les délais du transport. Le
  * transport coupe normalement avant ; ce plafond garantit que l'action rend
  * toujours la main, même si un délai interne était contourné.
  */
-const DELAI_TEST_MS =
-  DELAIS_SMTP.connectionTimeout + DELAIS_SMTP.greetingTimeout + DELAIS_SMTP.socketTimeout + 5_000
+const DELAI_TEST_MS = DELAI_TEST_SMTP_MS
 
 /**
  * Envoie réellement un courriel de test par le transport configuré — le même

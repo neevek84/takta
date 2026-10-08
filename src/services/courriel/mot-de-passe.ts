@@ -1,4 +1,4 @@
-import { getInstanceCredential, readInstanceSecret } from '@/services/credentials'
+import { readInstanceCredentialAndSecret } from '@/services/credentials'
 import { confierSecret } from '@/services/log'
 
 /**
@@ -20,6 +20,8 @@ export interface MotDePasseSmtp {
   motDePasse: string
   /** un mot de passe est enregistré mais ne se déchiffre plus (`CREDENTIALS_KEY` changée) */
   illisible: boolean
+  /** date d'enregistrement de la ligne de l'écran, quand il y en a une */
+  enregistreLe: Date | null
 }
 
 /**
@@ -31,19 +33,18 @@ export interface MotDePasseSmtp {
  * l'écran de dire pourquoi le mot de passe saisi n'est pas en vigueur.
  */
 export async function lireMotDePasseSmtp(): Promise<MotDePasseSmtp> {
-  const [ligne, stocke] = await Promise.all([
-    getInstanceCredential(PROVIDER_SMTP),
-    readInstanceSecret(PROVIDER_SMTP),
-  ])
+  // Une seule lecture de la ligne : un secret illisible ne laisse qu'un
+  // avertissement par résolution.
+  const { existe, secret: stocke, connectedAt } = await readInstanceCredentialAndSecret(PROVIDER_SMTP)
   if (stocke !== null && stocke !== '') {
     // Il ne vit plus dans l'environnement : la liste des variables secrètes du
     // journal ne le couvre plus. On le confie au moment où on le lit.
     confierSecret(stocke)
-    return { provenance: 'ecran', motDePasse: stocke, illisible: false }
+    return { provenance: 'ecran', motDePasse: stocke, illisible: false, enregistreLe: connectedAt }
   }
 
-  const illisible = ligne !== null
+  const illisible = existe
   const env = process.env.SMTP_PASSWORD ?? ''
-  if (env !== '') return { provenance: 'env', motDePasse: env, illisible }
-  return { provenance: 'aucune', motDePasse: '', illisible }
+  if (env !== '') return { provenance: 'env', motDePasse: env, illisible, enregistreLe: null }
+  return { provenance: 'aucune', motDePasse: '', illisible, enregistreLe: null }
 }

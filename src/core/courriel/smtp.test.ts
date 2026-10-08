@@ -129,6 +129,15 @@ describe('messageErreurSmtp', () => {
     expect(m).toContain(code)
   })
 
+  it('un serveur qui n offre pas STARTTLS : message clair, sans recopier le serveur', () => {
+    const m = messageErreurSmtp(
+      erreur('ECONNECTION', 'Server does not support STARTTLS: 250-AUTH PLAIN secret-serveur'),
+    )
+    expect(m).toMatch(/STARTTLS/)
+    expect(m).toMatch(/refuse|n'offre pas|pas.*chiffr/i)
+    expect(m).not.toContain('secret-serveur')
+  })
+
   it('un défaut de certificat ou de TLS : chiffrement inadapté au port', () => {
     expect(messageErreurSmtp(erreur('ESOCKET', 'wrong version number'))).toMatch(/chiffrement/)
     expect(messageErreurSmtp(erreur('CERT_HAS_EXPIRED', 'certificate has expired'))).toMatch(

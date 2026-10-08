@@ -32,9 +32,22 @@ describe('buildSmtpMailer', () => {
         secure: true,
         connectionTimeout: 10_000,
         greetingTimeout: 10_000,
-        socketTimeout: 10_000,
+        socketTimeout: 30_000,
         auth: { user: 'cra@exemple.test', pass: 'mot-de-passe-fictif' },
       }),
+    )
+  })
+
+  it('TLS direct : pas de requireTLS', () => {
+    buildSmtpMailer(CONFIG)
+    const options = (createTransport.mock.calls[0] as unknown[])[0] as Record<string, unknown>
+    expect(options.requireTLS).toBeUndefined()
+  })
+
+  it('STARTTLS : exige la mise à niveau, sinon un attaquant la retire et l authentification part en clair', () => {
+    buildSmtpMailer({ ...CONFIG, port: 587, secure: false })
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ secure: false, requireTLS: true }),
     )
   })
 

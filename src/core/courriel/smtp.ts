@@ -16,8 +16,13 @@
 export const DELAIS_SMTP = {
   connectionTimeout: 10_000,
   greetingTimeout: 10_000,
-  socketTimeout: 10_000,
+  // Plus large : un PDF signé en pièce jointe peut attendre l'analyse du
+  // contenu par le serveur après DATA.
+  socketTimeout: 30_000,
 } as const
+
+/** Plafond du test d'envoi, au-dessus du plus long délai du transport. */
+export const DELAI_TEST_SMTP_MS = 45_000
 
 export type CleChiffrement = 'tls' | 'starttls'
 
@@ -211,6 +216,12 @@ export function messageErreurSmtp(err: unknown): string {
   const message = err instanceof Error ? err.message : ''
   const suffixe = code === '' ? '' : ` (code ${code})`
 
+  if (/starttls/i.test(message)) {
+    return (
+      "Le serveur n'offre pas STARTTLS, que ce réglage exige : l'authentification ne partirait pas " +
+      `chiffrée. Vérifiez le port (587 : STARTTLS, 465 : TLS direct) et le serveur${suffixe}.`
+    )
+  }
   if (
     CODES_TLS.has(code) ||
     /certificate|wrong version number|ssl routines|\btls\b/i.test(message)

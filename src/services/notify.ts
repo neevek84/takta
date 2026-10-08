@@ -1,6 +1,6 @@
 import { prisma } from '@/db/client'
 import type { Gabarit } from '@/core/notify/templates'
-import { lireMotDePasseSmtp } from '@/services/courriel/mot-de-passe'
+import { lireMotDePasseSmtp, type MotDePasseSmtp } from '@/services/courriel/mot-de-passe'
 
 /** Une pièce jointe, en octets — le transport ne relit jamais un fichier du disque. */
 export interface PieceJointe {
@@ -53,7 +53,9 @@ export interface NotifyResult {
  * pour avoir le droit d'écrire un courriel : exactement le contournement que
  * le retrait de la demande de facture a écarté.
  */
-export async function readSmtpConfig(): Promise<SmtpConfig | null> {
+export async function readSmtpConfig(
+  motDePasseResolu?: MotDePasseSmtp,
+): Promise<SmtpConfig | null> {
   const row = await prisma.settings.findUnique({
     where: { id: 'singleton' },
     select: {
@@ -66,7 +68,7 @@ export async function readSmtpConfig(): Promise<SmtpConfig | null> {
   })
   if (row === null) return null
 
-  const { motDePasse: password } = await lireMotDePasseSmtp()
+  const { motDePasse: password } = await (motDePasseResolu ?? lireMotDePasseSmtp())
   const incomplet =
     row.smtpHost === '' ||
     row.smtpPort <= 0 ||

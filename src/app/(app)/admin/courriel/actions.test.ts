@@ -102,6 +102,22 @@ describe('enregistrerCourriel', () => {
   })
 })
 
+describe('enregistrerCourriel : erreurs inattendues', () => {
+  it('une erreur quelconque devient un message générique', async () => {
+    enregistrerReglagesCourriel.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.5:5432'))
+    const r = await enregistrerCourriel(null, form(CHAMPS))
+    expect(r).toMatchObject({ ok: false })
+    expect(JSON.stringify(r)).not.toContain('10.0.0.5')
+    expect(JSON.stringify(r)).toMatch(/Enregistrement impossible/)
+  })
+
+  it('CREDENTIALS_KEY absente garde son message utile', async () => {
+    enregistrerReglagesCourriel.mockRejectedValue(new Error('CREDENTIALS_KEY est requise'))
+    const r = await enregistrerCourriel(null, form(CHAMPS))
+    expect(JSON.stringify(r)).toContain('CREDENTIALS_KEY')
+  })
+})
+
 describe('testerCourriel', () => {
   it('envoie au destinataire saisi et rend le verdict du service', async () => {
     envoyerCourrielTest.mockResolvedValue({ ok: false, message: 'Serveur injoignable.' })

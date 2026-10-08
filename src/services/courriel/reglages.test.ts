@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest'
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/db/client'
 import { currentAuditSeq, readAuditSince } from '@/services/audit'
@@ -63,7 +63,12 @@ afterAll(async () => {
 
 describe('le mot de passe en vigueur : écran > environnement', () => {
   it('rien de posé : aucun', async () => {
-    expect(await lireMotDePasseSmtp()).toEqual({ provenance: 'aucune', motDePasse: '', illisible: false })
+    expect(await lireMotDePasseSmtp()).toEqual({
+      provenance: 'aucune',
+      motDePasse: '',
+      illisible: false,
+      enregistreLe: null,
+    })
   })
 
   it('SMTP_PASSWORD reste un repli', async () => {
@@ -81,7 +86,12 @@ describe('le mot de passe en vigueur : écran > environnement', () => {
     await saveInstanceCredential({ provider: PROVIDER_SMTP, secret: MDP_ECRAN })
     process.env.CREDENTIALS_KEY = randomBytes(32).toString('base64')
     process.env.SMTP_PASSWORD = MDP_ENV
-    expect(await lireMotDePasseSmtp()).toEqual({ provenance: 'env', motDePasse: MDP_ENV, illisible: true })
+    expect(await lireMotDePasseSmtp()).toEqual({
+      provenance: 'env',
+      motDePasse: MDP_ENV,
+      illisible: true,
+      enregistreLe: null,
+    })
   })
 })
 
@@ -123,6 +133,40 @@ describe('enregistrerReglagesCourriel', () => {
     expect(r).toEqual({ ok: true })
     expect((await lireMotDePasseSmtp()).motDePasse).toBe(MDP_ECRAN)
     expect(await readSmtpConfig()).toMatchObject({ port: 587, secure: false })
+  })
+
+  it('serveur modifié sans nouveau mot de passe : refus, rien n est écrit', async () => {
+    await enregistrerReglagesCourriel({ userId, ...SAISIE })
+    const r = await enregistrerReglagesCourriel({
+      userId,
+      ...SAISIE,
+      host: 'smtp.autre.test',
+      motDePasse: '',
+    })
+    expect(r).toEqual({
+      ok: false,
+      erreurs: ['Le serveur ou l’utilisateur a changé : ressaisissez le mot de passe.'],
+    })
+    const row = await prisma.settings.findUniqueOrThrow({ where: { id: 'singleton' } })
+    expect(row.smtpHost).toBe('smtp.gmail.com')
+    expect((await lireMotDePasseSmtp()).motDePasse).toBe(MDP_ECRAN)
+  })
+
+  it('utilisateur modifié sans nouveau mot de passe : refus', async () => {
+    await enregistrerReglagesCourriel({ userId, ...SAISIE })
+    const r = await enregistrerReglagesCourriel({
+      userId,
+      ...SAISIE,
+      user: 'autre@exemple.test',
+      motDePasse: '',
+    })
+    expect(r.ok).toBe(false)
+  })
+
+  it('serveur modifié avec un nouveau mot de passe : accepté', async () => {
+    await enregistrerReglagesCourriel({ userId, ...SAISIE })
+    const r = await enregistrerReglagesCourriel({ userId, ...SAISIE, host: 'smtp.autre.test' })
+    expect(r).toEqual({ ok: true })
   })
 
   it('exige un mot de passe quand il y a un utilisateur et rien d enregistré', async () => {
@@ -181,6 +225,26 @@ describe('enregistrerReglagesCourriel', () => {
 })
 
 describe('vueReglagesCourriel', () => {
+  it('un mot de passe illisible ne journalise qu un avertissement par lecture', async () => {
+    await saveInstanceCredential({ provider: PROVIDER_SMTP, secret: MDP_ECRAN })
+    process.env.CREDENTIALS_KEY = randomBytes(32).toString('base64')
+    const find = vi.spyOn(prisma.providerCredential, 'findUnique')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      await vueReglagesCourriel(userId)
+      expect(find).toHaveBeenCalledTimes(1)
+      const lignes = [warn, err, out, info]
+        .flatMap((m) => m.mock.calls)
+        .filter((c) => JSON.stringify(c).includes('credentials.lecture'))
+      expect(lignes).toHaveLength(1)
+    } finally {
+      for (const m of [find, warn, err, out, info]) m.mockRestore()
+    }
+  })
+
   it('ne rend jamais le mot de passe, mais dit d où il vient', async () => {
     await enregistrerReglagesCourriel({ userId, ...SAISIE })
     const vue = await vueReglagesCourriel(userId)
