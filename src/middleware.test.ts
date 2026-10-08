@@ -152,15 +152,22 @@ describe('middleware — la page client du lot 3b', () => {
   })
 
   it('pose les en-têtes de la page client', async () => {
+    const r = await sansSession(`/v/${'a'.repeat(64)}`)
+    expect(r!.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(r!.headers.get('x-robots-tag')).toBe('noindex, nofollow')
+    expect(r!.headers.get('content-security-policy')).toBe("frame-ancestors 'none'")
+  })
+
+  // L'Edge n'a pas Prisma : le middleware ne peut pas lire l'instance réglée à
+  // l'écran. Le `frame-src` est donc posé par la page (balise meta), et deux
+  // politiques s'intersectant, le middleware ne doit plus en poser aucun — pas
+  // même depuis `DOCUMENSO_URL`, qui n'est plus qu'un repli.
+  it('ne pose plus aucun frame-src, même avec DOCUMENSO_URL', async () => {
     const avant = process.env.DOCUMENSO_URL
     process.env.DOCUMENSO_URL = 'https://sign.exemple.fr/'
     try {
       const r = await sansSession(`/v/${'a'.repeat(64)}`)
-      expect(r!.headers.get('referrer-policy')).toBe('no-referrer')
-      expect(r!.headers.get('x-robots-tag')).toBe('noindex, nofollow')
-      const csp = r!.headers.get('content-security-policy') ?? ''
-      expect(csp).toContain('frame-src https://sign.exemple.fr')
-      expect(csp).toContain("frame-ancestors 'none'")
+      expect(r!.headers.get('content-security-policy') ?? '').not.toContain('frame-src')
     } finally {
       if (avant === undefined) delete process.env.DOCUMENSO_URL
       else process.env.DOCUMENSO_URL = avant
