@@ -1,5 +1,6 @@
 import { prisma } from '@/db/client'
 import type { Gabarit } from '@/core/notify/templates'
+import { lireMotDePasseSmtp } from '@/services/courriel/mot-de-passe'
 
 /** Une pièce jointe, en octets — le transport ne relit jamais un fichier du disque. */
 export interface PieceJointe {
@@ -21,7 +22,7 @@ export interface SmtpConfig {
   user: string
   from: string
   secure: boolean
-  /** vient de l'environnement, jamais de la base */
+  /** saisi dans Administration · Courriel (chiffré), sinon `SMTP_PASSWORD` */
   password: string
 }
 
@@ -34,9 +35,11 @@ export interface NotifyResult {
 /**
  * La configuration SMTP, ou `null` s'il manque quoi que ce soit.
  *
- * Le serveur, le port et l'adresse d'expédition sont des réglages ; le
- * **secret d'authentification vit dans l'environnement**, comme
- * `AUTH_SECRET`. Il peut être vide sur un relais qui n'authentifie pas — mais
+ * Le serveur, le port, l'utilisateur et l'adresse d'expédition sont des
+ * réglages, saisis dans Administration · Courriel. Le **mot de passe** y est
+ * saisi aussi, et vit chiffré en identifiant d'instance ; `SMTP_PASSWORD`
+ * reste un repli (`services/courriel/mot-de-passe.ts`). Il peut être vide
+ * sur un relais qui n'authentifie pas — mais
  * pas s'il y a un utilisateur, sinon la connexion échouerait à l'envoi plutôt
  * qu'ici, où le diagnostic est lisible.
  *
@@ -63,7 +66,7 @@ export async function readSmtpConfig(): Promise<SmtpConfig | null> {
   })
   if (row === null) return null
 
-  const password = process.env.SMTP_PASSWORD ?? ''
+  const { motDePasse: password } = await lireMotDePasseSmtp()
   const incomplet =
     row.smtpHost === '' ||
     row.smtpPort <= 0 ||

@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/db/client'
 import { gabaritRuptureJournal } from '@/core/notify/templates'
+import { randomBytes } from 'node:crypto'
+import { saveInstanceCredential } from '@/services/credentials'
+import { PROVIDER_SMTP } from '@/services/courriel/mot-de-passe'
 import { notify, readSmtpConfig, type Mailer } from './notify'
 
 const GABARIT = gabaritRuptureJournal({ seq: 412, raison: 'EMPREINTE' })
 const MOT_DE_PASSE = process.env.SMTP_PASSWORD
+const CLE_INITIALE = process.env.CREDENTIALS_KEY
 
 beforeAll(async () => {
   await prisma.settings.upsert({
@@ -27,11 +31,16 @@ beforeEach(async () => {
     },
   })
   delete process.env.SMTP_PASSWORD
+  process.env.CREDENTIALS_KEY = randomBytes(32).toString('base64')
+  await prisma.providerCredential.deleteMany({ where: { provider: PROVIDER_SMTP } })
 })
 
 afterAll(async () => {
   if (MOT_DE_PASSE === undefined) delete process.env.SMTP_PASSWORD
   else process.env.SMTP_PASSWORD = MOT_DE_PASSE
+  if (CLE_INITIALE === undefined) delete process.env.CREDENTIALS_KEY
+  else process.env.CREDENTIALS_KEY = CLE_INITIALE
+  await prisma.providerCredential.deleteMany({ where: { provider: PROVIDER_SMTP } })
   await prisma.$disconnect()
 })
 
@@ -87,6 +96,17 @@ describe('lecture de la configuration SMTP', () => {
       secure: false,
       password: 'motdepasse',
     })
+  })
+
+  it('préfère le mot de passe enregistré à l écran à SMTP_PASSWORD', async () => {
+    await prisma.settings.update({
+      where: { id: 'singleton' },
+      data: { smtpHost: 'smtp.exemple.test', smtpPort: 465, smtpUser: 'cra', smtpFrom: 'cra@exemple.test' },
+    })
+    process.env.SMTP_PASSWORD = 'repli-environnement'
+    await saveInstanceCredential({ provider: PROVIDER_SMTP, secret: 'mot-de-passe-ecran' })
+
+    expect(await readSmtpConfig()).toMatchObject({ password: 'mot-de-passe-ecran' })
   })
 
   it('accepte un relais qui n authentifie pas', async () => {
