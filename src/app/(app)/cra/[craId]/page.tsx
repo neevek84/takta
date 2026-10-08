@@ -44,7 +44,7 @@ const ERREURS: Record<string, string> = {
   CONNECTEUR_EN_ECHEC:
     'L’outil de signature n’a pas accepté le document. Le CRA n’a pas changé d’état.',
   PAS_DE_SMTP:
-    'Le serveur de courriel n’est pas configuré : le client ne pourrait pas recevoir son code. Configurez SMTP dans l’administration, ou utilisez les transitions manuelles.',
+    'Le serveur de courriel n’est pas configuré : le client ne pourrait pas recevoir son code. Configurez-le dans Administration · Courriel, ou utilisez les transitions manuelles.',
   PAS_D_ORIGINE:
     'L’adresse publique de l’outil est inconnue : renseignez AUTH_URL, sinon le lien envoyé au client serait inutilisable.',
   COURRIEL_NON_PARTI:
@@ -188,7 +188,7 @@ export default async function CraDetailPage({
         {courrielsEchoues > 0 && (
           <div className="mb-4">
             <Banner tone="warning" title="Courriel non parti">
-              {courrielsEchoues} courriel{courrielsEchoues > 1 ? 's' : ''} du circuit de signature n’{courrielsEchoues > 1 ? 'ont' : 'a'} pas pu partir. Vérifiez la configuration SMTP, ou transmettez le lien vous-même.
+              {courrielsEchoues} courriel{courrielsEchoues > 1 ? 's' : ''} du circuit de signature n’{courrielsEchoues > 1 ? 'ont' : 'a'} pas pu partir. Vérifiez Administration · Courriel, ou transmettez le lien vous-même.
             </Banner>
           </div>
         )}

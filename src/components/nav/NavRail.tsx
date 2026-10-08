@@ -50,6 +50,7 @@ const REGLAGES = [
   { href: '/admin/theme', label: 'Apparence' },
   { href: '/admin/dolibarr', label: 'Dolibarr' },
   { href: '/admin/signature', label: 'Signature' },
+  { href: '/admin/courriel', label: 'Courriel' },
   { href: '/admin/google', label: 'Google' },
   { href: '/admin/sync', label: 'Synchro' },
   { href: '/admin/webhooks', label: 'Abonnements' },

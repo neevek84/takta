@@ -3,6 +3,7 @@ import {
   gabaritRappelSaisie,
   gabaritRappelCloture,
   gabaritReinitialisation,
+  gabaritCourrielTest,
   gabaritRuptureJournal,
 } from './templates'
 
@@ -62,3 +63,13 @@ describe('gabaritReinitialisation', () => {
   })
 })
 
+
+describe('gabaritCourrielTest', () => {
+  it('nomme le serveur et l expéditeur, et ne demande aucune action', () => {
+    const g = gabaritCourrielTest({ expediteur: 'Kreativ <cra@exemple.test>', serveur: 'smtp.gmail.com' })
+    expect(g.sujet).toMatch(/test/i)
+    expect(g.corps).toContain('smtp.gmail.com')
+    expect(g.corps).toContain('Kreativ <cra@exemple.test>')
+    expect(g.corps).toMatch(/aucune action/)
+  })
+})

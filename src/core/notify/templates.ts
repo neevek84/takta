@@ -85,3 +85,21 @@ export function gabaritReinitialisation(args: { lien: string; minutes: number })
   }
 }
 
+
+/**
+ * Le courriel envoyé par « Envoyer un courriel de test ». Il nomme le serveur
+ * et l'expéditeur : reçu, il prouve que ce réglage-là fonctionne, pas un autre.
+ */
+export function gabaritCourrielTest(args: { expediteur: string; serveur: string }): Gabarit {
+  return {
+    sujet: 'takta — courriel de test',
+    corps: [
+      "Ce courriel confirme que l'envoi fonctionne avec les réglages d'Administration · Courriel.",
+      '',
+      `  Serveur      : ${args.serveur}`,
+      `  Expéditeur   : ${args.expediteur}`,
+      '',
+      'Ce message ne demande aucune action.',
+    ].join('\n'),
+  }
+}

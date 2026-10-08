@@ -455,9 +455,9 @@ model Settings {
   /// destinataire des rappels internes. Vide = aucun envoi.
   notificationEmail String @default("")
 
-  /// configuration SMTP minimale, pour l'autoportance. Le mot de passe ne
-  /// vit PAS ici : il se saisit dans l'environnement (SMTP_PASSWORD), comme
-  /// AUTH_SECRET — un secret en base ressort dans chaque sauvegarde.
+  /// configuration SMTP, saisie dans Administration · Courriel. Le mot de
+  /// passe ne vit PAS ici en clair : il est chiffré en identifiant d'instance
+  /// (ProviderCredential, fournisseur "smtp"), SMTP_PASSWORD restant un repli.
   smtpHost   String  @default("")
   smtpPort   Int     @default(0)
   smtpUser   String  @default("")
