@@ -5,6 +5,7 @@ import type { Mailer } from '@/services/notify'
 import { applySignatureStatus, type SignatureEffet } from './apply'
 import { ENTITY_CRA, PROVIDER_DOCUMENSO } from './constants'
 import { parseDocumensoWebhook } from './documenso'
+import { lireSecretWebhook } from './reglages'
 import { getSignatureConnector } from './registry'
 
 export type WebhookOutcome =
@@ -43,7 +44,8 @@ export async function handleSignatureWebhook(args: {
   connector?: SignatureConnector | null
   mailer?: Mailer | null
 }): Promise<WebhookOutcome> {
-  const secret = args.secret ?? process.env.SIGNATURE_WEBHOOK_SECRET ?? ''
+  // Le secret d'Administration · Signature, sinon `SIGNATURE_WEBHOOK_SECRET`.
+  const secret = args.secret ?? (await lireSecretWebhook())
 
   const authentique =
     verifierSecretDocumenso(args.secretHeader, secret) ||
