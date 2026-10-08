@@ -95,6 +95,20 @@ describe('MonthGrid', () => {
     expect(screen.getByText('Consultant ITSM Nuit')).toBeDefined()
   })
 
+  // Les cases de jour sont `relative` (leur aplat s'y pose en absolu) : venues
+  // après le libellé dans le document, elles se peignaient **par-dessus** la
+  // colonne figée dès qu'on faisait défiler — le libellé restait en place,
+  // mais recouvert. Constaté sur le tableau 3 mois en production.
+  it('fige la colonne des libellés au-dessus des cases qui défilent', () => {
+    const { container } = renderGrid()
+    const figees = container.querySelectorAll('.sticky')
+    expect(figees.length).toBeGreaterThan(0)
+    for (const cellule of figees) {
+      expect(cellule.className).toMatch(/\bz-10\b/)
+      expect(cellule.className).toMatch(/\bbg-surface\b/)
+    }
+  })
+
   it('affiche 31 colonnes de jours en mars', () => {
     renderGrid()
     expect(screen.getAllByRole('columnheader')).toHaveLength(32) // 31 jours + colonne de libellé

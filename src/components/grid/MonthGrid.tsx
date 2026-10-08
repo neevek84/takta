@@ -494,7 +494,7 @@ export function MonthGrid({
               rien ne dirait où avril finit et où mai commence. */}
           {plusieursMois && (
             <tr>
-              <td className="sticky left-0 bg-surface" />
+              <td className="sticky left-0 z-10 bg-surface" />
               {blocs.map((bloc) => (
                 <th
                   key={bloc.mois}
@@ -509,7 +509,7 @@ export function MonthGrid({
             </tr>
           )}
           <tr>
-            <th scope="col" className="sticky left-0 bg-surface px-2 py-1 text-left">
+            <th scope="col" className="sticky left-0 z-10 bg-surface px-2 py-1 text-left">
               Ligne
             </th>
             {blocs.map((bloc) => (
@@ -562,7 +562,7 @@ export function MonthGrid({
         <tbody>
           {lines.map((l) => (
             <tr key={l.id} className="border-t border-rule">
-              <th scope="row" className="sticky left-0 bg-surface px-2 py-1 text-left font-normal">
+              <th scope="row" className="sticky left-0 z-10 bg-surface px-2 py-1 text-left font-normal">
                 <span className="mr-2">{l.label}</span>
                 {/* Sur un seul mois, aucune colonne de total ne porte le
                     verrou : il se dit à côté du libellé de la prestation. */}
