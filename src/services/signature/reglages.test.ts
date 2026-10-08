@@ -27,7 +27,11 @@ let userId = ''
 
 beforeAll(async () => {
   const u = await prisma.user.create({
-    data: { email: 'reglages-signature@test.local', name: 'Admin Signature', passwordHash: 'x' },
+    data: {
+      email: 'reglages-signature@test.local',
+      name: 'Admin Signature',
+      passwordHash: 'x',
+    },
   })
   userId = u.id
 })
@@ -46,12 +50,18 @@ afterAll(async () => {
     else process.env[n] = initial[n]
   }
   await prisma.providerCredential.deleteMany({})
-  await prisma.user.deleteMany({ where: { email: 'reglages-signature@test.local' } })
+  await prisma.user.deleteMany({
+    where: { email: 'reglages-signature@test.local' },
+  })
 })
 
 describe('la configuration en vigueur : écran > environnement', () => {
   it('rien de posé : aucune configuration', async () => {
-    expect(await lireConfigurationDocumenso()).toEqual({ provenance: 'aucune', baseUrl: '', apiKey: '' })
+    expect(await lireConfigurationDocumenso()).toEqual({
+      provenance: 'aucune',
+      baseUrl: '',
+      apiKey: '',
+    })
     expect(await origineDocumensoEnVigueur()).toBe('')
   })
 
@@ -92,7 +102,11 @@ describe('la configuration en vigueur : écran > environnement', () => {
   it('retirer le réglage de l écran rend la main à l environnement', async () => {
     process.env.DOCUMENSO_URL = 'https://env.documenso.test'
     process.env.DOCUMENSO_API_KEY = CLE_ENV
-    await enregistrerConnexionDocumenso({ userId, baseUrl: 'https://sign.exemple.test', apiKey: CLE_ECRAN })
+    await enregistrerConnexionDocumenso({
+      userId,
+      baseUrl: 'https://sign.exemple.test',
+      apiKey: CLE_ECRAN,
+    })
     await retirerConnexionDocumenso({ userId })
 
     expect((await lireConfigurationDocumenso()).provenance).toBe('env')
@@ -100,8 +114,29 @@ describe('la configuration en vigueur : écran > environnement', () => {
 })
 
 describe('enregistrerConnexionDocumenso', () => {
+  it('refuse une URL qui porte des identifiants', async () => {
+    for (const baseUrl of ['https://admin:mdp@sign.exemple.test', 'https://jeton@sign.exemple.test']) {
+      const r = await enregistrerConnexionDocumenso({
+        userId,
+        baseUrl,
+        apiKey: CLE_ECRAN,
+      })
+      expect(r).toEqual({
+        ok: false,
+        erreurs: [
+          "L'adresse ne doit pas contenir d'identifiants ; la clé d'API se saisit dans son propre champ.",
+        ],
+      })
+    }
+    expect(await prisma.providerCredential.count()).toBe(0)
+  })
+
   it('chiffre la clé au repos', async () => {
-    await enregistrerConnexionDocumenso({ userId, baseUrl: 'https://sign.exemple.test', apiKey: CLE_ECRAN })
+    await enregistrerConnexionDocumenso({
+      userId,
+      baseUrl: 'https://sign.exemple.test',
+      apiKey: CLE_ECRAN,
+    })
     const row = await prisma.providerCredential.findFirstOrThrow({
       where: { provider: PROVIDER_DOCUMENSO },
     })
@@ -110,7 +145,11 @@ describe('enregistrerConnexionDocumenso', () => {
   })
 
   it('une clé laissée vide conserve la clé enregistrée', async () => {
-    await enregistrerConnexionDocumenso({ userId, baseUrl: 'https://sign.exemple.test', apiKey: CLE_ECRAN })
+    await enregistrerConnexionDocumenso({
+      userId,
+      baseUrl: 'https://sign.exemple.test',
+      apiKey: CLE_ECRAN,
+    })
     const r = await enregistrerConnexionDocumenso({
       userId,
       baseUrl: 'https://autre.exemple.test',
@@ -125,14 +164,22 @@ describe('enregistrerConnexionDocumenso', () => {
   })
 
   it('refuse une clé vide quand aucune n est enregistrée', async () => {
-    const r = await enregistrerConnexionDocumenso({ userId, baseUrl: 'https://sign.exemple.test', apiKey: '' })
+    const r = await enregistrerConnexionDocumenso({
+      userId,
+      baseUrl: 'https://sign.exemple.test',
+      apiKey: '',
+    })
     expect(r).toEqual({ ok: false, erreurs: ["La clé d'API est requise."] })
     expect(await prisma.providerCredential.count()).toBe(0)
   })
 
   it('refuse une adresse illisible ou hors http(s)', async () => {
     for (const baseUrl of ['', 'pas une url', 'ftp://sign.exemple.test']) {
-      const r = await enregistrerConnexionDocumenso({ userId, baseUrl, apiKey: CLE_ECRAN })
+      const r = await enregistrerConnexionDocumenso({
+        userId,
+        baseUrl,
+        apiKey: CLE_ECRAN,
+      })
       expect(r.ok).toBe(false)
     }
     expect(await prisma.providerCredential.count()).toBe(0)
@@ -140,13 +187,23 @@ describe('enregistrerConnexionDocumenso', () => {
 
   it('consigne le changement, sans la clé', async () => {
     const avant = await currentAuditSeq()
-    await enregistrerConnexionDocumenso({ userId, baseUrl: 'https://sign.exemple.test', apiKey: CLE_ECRAN })
+    await enregistrerConnexionDocumenso({
+      userId,
+      baseUrl: 'https://sign.exemple.test',
+      apiKey: CLE_ECRAN,
+    })
     await retirerConnexionDocumenso({ userId })
 
     const journal = await readAuditSince({ since: avant })
     expect(journal.map((e) => e.action)).toEqual(['reglage.modifie', 'reglage.modifie'])
-    expect(journal[0]).toMatchObject({ actorId: userId, entityType: 'Settings', entityId: 'signature' })
-    expect(journal[0]!.payload).toMatchObject({ documensoUrl: 'https://sign.exemple.test' })
+    expect(journal[0]).toMatchObject({
+      actorId: userId,
+      entityType: 'Settings',
+      entityId: 'signature',
+    })
+    expect(journal[0]!.payload).toMatchObject({
+      documensoUrl: 'https://sign.exemple.test',
+    })
     expect(journal[1]!.payload).toMatchObject({ documensoUrl: '' })
     expect(JSON.stringify(journal)).not.toContain(CLE_ECRAN)
   })
@@ -188,7 +245,10 @@ describe('le secret du webhook', () => {
     const secret = await genererSecretWebhook({ userId })
     const journal = await readAuditSince({ since: avant })
     expect(journal).toHaveLength(1)
-    expect(journal[0]).toMatchObject({ action: 'reglage.modifie', entityId: 'signature' })
+    expect(journal[0]).toMatchObject({
+      action: 'reglage.modifie',
+      entityId: 'signature',
+    })
     expect(JSON.stringify(journal)).not.toContain(secret)
   })
 })
@@ -196,18 +256,31 @@ describe('le secret du webhook', () => {
 describe('vueReglagesSignature', () => {
   it('dit d où vient la configuration, sans aucun secret', async () => {
     expect(await vueReglagesSignature()).toEqual({
-      connexion: { provenance: 'aucune', baseUrl: '', enregistreLe: null },
-      webhook: { provenance: 'aucune', genereLe: null },
+      connexion: {
+        provenance: 'aucune',
+        baseUrl: '',
+        enregistreLe: null,
+        ligne: false,
+        illisible: false,
+      },
+      webhook: { provenance: 'aucune', genereLe: null, illisible: false },
     })
 
     process.env.DOCUMENSO_URL = 'https://env.documenso.test'
     process.env.DOCUMENSO_API_KEY = CLE_ENV
     process.env.SIGNATURE_WEBHOOK_SECRET = 'secret-env-de-repli'
     const env = await vueReglagesSignature()
-    expect(env.connexion).toMatchObject({ provenance: 'env', baseUrl: 'https://env.documenso.test' })
+    expect(env.connexion).toMatchObject({
+      provenance: 'env',
+      baseUrl: 'https://env.documenso.test',
+    })
     expect(env.webhook.provenance).toBe('env')
 
-    await enregistrerConnexionDocumenso({ userId, baseUrl: 'https://sign.exemple.test', apiKey: CLE_ECRAN })
+    await enregistrerConnexionDocumenso({
+      userId,
+      baseUrl: 'https://sign.exemple.test',
+      apiKey: CLE_ECRAN,
+    })
     const secret = await genererSecretWebhook({ userId })
     const ecran = await vueReglagesSignature()
     expect(ecran.connexion.provenance).toBe('ecran')
@@ -220,9 +293,46 @@ describe('vueReglagesSignature', () => {
   })
 })
 
+describe('réglages devenus illisibles (CREDENTIALS_KEY changée)', () => {
+  it('la vue le dit, garde la ligne, et l environnement reprend la main', async () => {
+    await enregistrerConnexionDocumenso({
+      userId,
+      baseUrl: 'https://sign.exemple.test',
+      apiKey: CLE_ECRAN,
+    })
+    await genererSecretWebhook({ userId })
+    process.env.CREDENTIALS_KEY = randomBytes(32).toString('base64')
+
+    const vue = await vueReglagesSignature()
+    expect(vue.connexion).toMatchObject({
+      provenance: 'aucune',
+      ligne: true,
+      illisible: true,
+    })
+    expect(vue.webhook).toMatchObject({
+      provenance: 'aucune',
+      illisible: true,
+    })
+  })
+
+  it('une ligne lisible n est pas illisible', async () => {
+    await enregistrerConnexionDocumenso({
+      userId,
+      baseUrl: 'https://sign.exemple.test',
+      apiKey: CLE_ECRAN,
+    })
+    const vue = await vueReglagesSignature()
+    expect(vue.connexion).toMatchObject({ ligne: true, illisible: false })
+    expect(vue.webhook.illisible).toBe(false)
+  })
+})
+
 describe('testerConfigurationSignature', () => {
   const repond: SignatureFetchLike = async () =>
-    new Response('{"data":[]}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    new Response('{"data":[]}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
 
   it('sans configuration, ne touche pas au réseau et le dit', async () => {
     let appels = 0
@@ -239,7 +349,11 @@ describe('testerConfigurationSignature', () => {
   })
 
   it('teste la configuration en vigueur, et lit SMTP', async () => {
-    await enregistrerConnexionDocumenso({ userId, baseUrl: 'https://sign.exemple.test', apiKey: CLE_ECRAN })
+    await enregistrerConnexionDocumenso({
+      userId,
+      baseUrl: 'https://sign.exemple.test',
+      apiKey: CLE_ECRAN,
+    })
     const urls: string[] = []
     const r = await testerConfigurationSignature({
       fetchFn: async (url, init) => {

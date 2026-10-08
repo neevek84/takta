@@ -52,9 +52,13 @@ export default async function AdminSignaturePage({
       )}
 
       <ConnexionForm
-        baseUrl={vue.connexion.baseUrl}
+        // Une URL venue de l'environnement ne descend pas au client : il ne
+        // la préremplit pas, elle n'a rien à y faire.
+        baseUrl={vue.connexion.provenance === 'env' ? '' : vue.connexion.baseUrl}
         provenance={vue.connexion.provenance}
         enregistreLe={vue.connexion.enregistreLe}
+        ligne={vue.connexion.ligne}
+        illisible={vue.connexion.illisible}
       />
 
       <Card title="Webhook à déclarer dans Documenso" className="mt-6">
@@ -87,7 +91,11 @@ export default async function AdminSignaturePage({
           ))}
         </ul>
 
-        <SecretWebhook provenance={vue.webhook.provenance} genereLe={vue.webhook.genereLe} />
+        <SecretWebhook
+          provenance={vue.webhook.provenance}
+          genereLe={vue.webhook.genereLe}
+          illisible={vue.webhook.illisible}
+        />
       </Card>
 
       <TestConnexion />

@@ -50,11 +50,27 @@ export interface ConfigurationDocumenso {
 
 /** Ce qu'un écran a le droit de voir : tout sauf la clé et le secret. */
 export interface VueReglagesSignature {
-  connexion: { provenance: Provenance; baseUrl: string; enregistreLe: Date | null }
-  webhook: { provenance: Provenance; genereLe: Date | null }
+  connexion: {
+    provenance: Provenance
+    baseUrl: string
+    enregistreLe: Date | null
+    /** une ligne existe à l'écran, lisible ou non : de quoi proposer « Déconnecter » */
+    ligne: boolean
+    /** la ligne existe mais sa clé ne se déchiffre plus (`CREDENTIALS_KEY` changée) */
+    illisible: boolean
+  }
+  webhook: {
+    provenance: Provenance
+    genereLe: Date | null
+    illisible: boolean
+  }
 }
 
-const AUCUNE: ConfigurationDocumenso = { provenance: 'aucune', baseUrl: '', apiKey: '' }
+const AUCUNE: ConfigurationDocumenso = {
+  provenance: 'aucune',
+  baseUrl: '',
+  apiKey: '',
+}
 
 /**
  * L'instance et la clé en vigueur. Réservé aux appelants qui vont réellement
@@ -122,6 +138,11 @@ export async function vueReglagesSignature(): Promise<VueReglagesSignature> {
   ])
 
   const secretEcran = secret !== null && secret !== ''
+  // Une ligne sans secret lisible : le repli reste celui de l'environnement,
+  // mais l'écran doit dire pourquoi le réglage saisi n'est pas en vigueur.
+  const webhookIllisible = ligneWebhook !== null && !secretEcran
+  const cleEcran = await readInstanceSecret(PROVIDER_DOCUMENSO)
+  const connexionIllisible = ligneConnexion !== null && (cleEcran === null || cleEcran === '')
   const secretEnv = (process.env.SIGNATURE_WEBHOOK_SECRET ?? '') !== ''
 
   return {
@@ -129,10 +150,13 @@ export async function vueReglagesSignature(): Promise<VueReglagesSignature> {
       provenance: config.provenance,
       baseUrl: config.baseUrl,
       enregistreLe: config.provenance === 'ecran' ? (ligneConnexion?.connectedAt ?? null) : null,
+      ligne: ligneConnexion !== null,
+      illisible: connexionIllisible,
     },
     webhook: {
       provenance: secretEcran ? 'ecran' : secretEnv ? 'env' : 'aucune',
       genereLe: secretEcran ? (ligneWebhook?.connectedAt ?? null) : null,
+      illisible: webhookIllisible,
     },
   }
 }
@@ -140,7 +164,7 @@ export async function vueReglagesSignature(): Promise<VueReglagesSignature> {
 export type ResultatEnregistrement = { ok: true } | { ok: false; erreurs: string[] }
 
 /** L'adresse de l'instance, réduite à ce qui se réaffiche : sans `/` final. */
-function normaliserUrl(brut: string): string | null {
+function normaliserUrl(brut: string): string | null | 'identifiants' {
   const texte = brut.trim()
   if (texte === '') return null
   let url: URL
@@ -150,6 +174,9 @@ function normaliserUrl(brut: string): string | null {
     return null
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+  // Le journal part vers des URL tierces et l'écran réaffiche l'adresse :
+  // des identifiants glissés dedans fuiraient aux deux endroits.
+  if (url.username !== '' || url.password !== '') return 'identifiants'
   return texte.replace(/\/+$/, '')
 }
 
@@ -168,7 +195,11 @@ export async function enregistrerConnexionDocumenso(args: {
 }): Promise<ResultatEnregistrement> {
   const erreurs: string[] = []
   const baseUrl = normaliserUrl(args.baseUrl)
-  if (baseUrl === null) {
+  if (baseUrl === 'identifiants') {
+    erreurs.push(
+      "L'adresse ne doit pas contenir d'identifiants ; la clé d'API se saisit dans son propre champ.",
+    )
+  } else if (baseUrl === null) {
     erreurs.push("L'adresse de l'instance Documenso doit être une URL complète, en http(s).")
   }
 
@@ -179,9 +210,14 @@ export async function enregistrerConnexionDocumenso(args: {
     if (existante === null || existante === '') erreurs.push("La clé d'API est requise.")
     else apiKey = existante
   }
-  if (erreurs.length > 0 || baseUrl === null) return { ok: false, erreurs }
+  if (erreurs.length > 0 || baseUrl === null || baseUrl === 'identifiants')
+    return { ok: false, erreurs }
 
-  await saveInstanceCredential({ provider: PROVIDER_DOCUMENSO, secret: apiKey, baseUrl })
+  await saveInstanceCredential({
+    provider: PROVIDER_DOCUMENSO,
+    secret: apiKey,
+    baseUrl,
+  })
 
   // Ni la clé ni son empreinte : le journal est poussé vers des URL tierces.
   // Le fait qu'elle ait changé, lui, est une information.
@@ -195,7 +231,10 @@ export async function enregistrerConnexionDocumenso(args: {
 /** Retire l'instance réglée à l'écran ; l'environnement, s'il existe, reprend la main. */
 export async function retirerConnexionDocumenso(args: { userId: string }): Promise<void> {
   await revokeInstanceCredential(PROVIDER_DOCUMENSO)
-  await consigner(args.userId, { cles: ['documensoUrl', 'documensoCle'], documensoUrl: '' })
+  await consigner(args.userId, {
+    cles: ['documensoUrl', 'documensoCle'],
+    documensoUrl: '',
+  })
 }
 
 /**
@@ -205,7 +244,10 @@ export async function retirerConnexionDocumenso(args: { userId: string }): Promi
  */
 export async function genererSecretWebhook(args: { userId: string }): Promise<string> {
   const secret = randomBytes(32).toString('hex')
-  await saveInstanceCredential({ provider: PROVIDER_DOCUMENSO_WEBHOOK, secret })
+  await saveInstanceCredential({
+    provider: PROVIDER_DOCUMENSO_WEBHOOK,
+    secret,
+  })
   confierSecret(secret)
   await consigner(args.userId, { cles: ['secretWebhook'] })
   return secret
@@ -216,7 +258,10 @@ export async function genererSecretWebhook(args: { userId: string }): Promise<st
  * circuit utilisera réellement, écran ou environnement.
  */
 export async function testerConfigurationSignature(
-  deps: { fetchFn?: SignatureFetchLike; smtpConfigure?: () => Promise<boolean> } = {},
+  deps: {
+    fetchFn?: SignatureFetchLike
+    smtpConfigure?: () => Promise<boolean>
+  } = {},
 ): Promise<ResultatVerification> {
   const config = await lireConfigurationDocumenso()
   if (config.provenance === 'aucune') {

@@ -25,9 +25,12 @@ const LIBELLE: Record<Provenance, string> = {
 export function SecretWebhook({
   provenance,
   genereLe,
+  illisible = false,
 }: {
   provenance: Provenance
   genereLe: Date | null
+  /** un secret est enregistré mais ne se déchiffre plus */
+  illisible?: boolean
 }) {
   const [state, formAction, enCours] = useActionState<SecretWebhookState, FormData>(
     genererSecret,
@@ -47,12 +50,21 @@ export function SecretWebhook({
         {provenance === 'ecran' && genereLe !== null && (
           <>
             {' '}
-            (le <time dateTime={genereLe.toISOString()}>{genereLe.toISOString().slice(0, 10)}</time>)
+            (le <time dateTime={genereLe.toISOString()}>{genereLe.toISOString().slice(0, 10)}</time>
+            )
           </>
         )}
         .
       </p>
 
+      {illisible && (
+        <div className="mb-2">
+          <Banner tone="warning" title="Secret enregistré illisible">
+            Le secret enregistré ne peut plus être déchiffré (la clé de chiffrement a changé) : il
+            n'est pas en vigueur. Générez-en un nouveau pour le remplacer.
+          </Banner>
+        </div>
+      )}
       {provenance === 'aucune' ? (
         <form action={formAction}>
           <Button type="submit" variant="primary" loading={enCours}>

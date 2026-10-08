@@ -99,14 +99,14 @@ describe('verifierDocumenso', () => {
     expect(JSON.stringify(r)).not.toContain('cle-fausse-recopiee-par-le-proxy')
   })
 
-  it('un 404 sur l API v2 annonce que Documenso 2.0 est requis', async () => {
+  it('un 404 sur l API v2 invite à vérifier l URL, ou la version 2.0', async () => {
     const { fetchFn } = fausseInstance({ v2: false })
     const r = await verifierDocumenso({ baseUrl: BASE, apiKey: CLE, fetchFn, smtpConfigure: true })
 
     expect(r.ok).toBe(false)
     expect(etat(r.verifications, 'instance').etat).toBe('ok')
     expect(etat(r.verifications, 'api-v2').etat).toBe('echec')
-    expect(etat(r.verifications, 'api-v2').texte).toContain('Documenso 2.0 ou plus est requis')
+    expect(etat(r.verifications, 'api-v2').texte).toContain('API v2 introuvable : vérifiez l\'URL de l\'instance, ou Documenso 2.0 ou plus est requis.')
     // Sans route, la clé n'a pas été jugée : ni vert ni rouge.
     expect(etat(r.verifications, 'cle').etat).toBe('non-verifie')
     expect(JSON.stringify(r)).not.toContain(CLE)

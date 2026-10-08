@@ -6,11 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
 import type { Provenance } from '@/services/signature/reglages'
-import {
-  deconnecterSignature,
-  enregistrerSignature,
-  type ConnexionSignatureState,
-} from './actions'
+import { deconnecterSignature, enregistrerSignature, type ConnexionSignatureState } from './actions'
 
 /** La provenance, en toutes lettres : c'est elle qui dit quoi corriger, et où. */
 export const LIBELLE_PROVENANCE: Record<Provenance, string> = {
@@ -30,10 +26,16 @@ export function ConnexionForm({
   baseUrl,
   provenance,
   enregistreLe,
+  ligne = false,
+  illisible = false,
 }: {
   baseUrl: string
   provenance: Provenance
   enregistreLe: Date | null
+  /** un réglage existe à l'écran, lisible ou non */
+  ligne?: boolean
+  /** ce réglage existe mais ne se déchiffre plus */
+  illisible?: boolean
 }) {
   const [state, formAction, enCours] = useActionState<ConnexionSignatureState, FormData>(
     enregistrerSignature,
@@ -53,10 +55,21 @@ export function ConnexionForm({
             ? 'Sans instance, le PDF se génère et se télécharge, et les transitions du CRA restent manuelles.'
             : "La clé d'API est chiffrée au repos et n'est jamais réaffichée."}
       </p>
+      {illisible && (
+        <div className="mb-3">
+          <Banner tone="warning" title="Réglage enregistré illisible">
+            Le réglage enregistré sur cet écran ne peut plus être déchiffré (la clé de chiffrement a
+            changé) : il n'est pas en vigueur. Ressaisissez la clé d'API, ou déconnectez-le.
+          </Banner>
+        </div>
+      )}
       {cleEnregistree && enregistreLe !== null && (
         <p className="mb-3 text-sm text-muted">
           Enregistrée le{' '}
-          <time dateTime={enregistreLe.toISOString()}>{enregistreLe.toISOString().slice(0, 10)}</time>.
+          <time dateTime={enregistreLe.toISOString()}>
+            {enregistreLe.toISOString().slice(0, 10)}
+          </time>
+          .
         </p>
       )}
 
@@ -78,7 +91,9 @@ export function ConnexionForm({
           type="password"
           autoComplete="off"
           // Aucune `defaultValue` : la saisie repart vide, toujours.
-          hint={cleEnregistree ? 'Une clé est enregistrée : laisser vide pour conserver.' : undefined}
+          hint={
+            cleEnregistree ? 'Une clé est enregistrée : laisser vide pour conserver.' : undefined
+          }
           className="w-64"
         />
         <Button type="submit" variant="primary" loading={enCours}>
@@ -103,7 +118,7 @@ export function ConnexionForm({
         </div>
       )}
 
-      {cleEnregistree && (
+      {(cleEnregistree || ligne) && (
         <form action={deconnecterSignature} className="mt-3">
           <Button type="submit" variant="danger">
             Déconnecter

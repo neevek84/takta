@@ -9,7 +9,12 @@ const { enregistrerSignature, deconnecterSignature, genererSecret, testerSignatu
   genererSecret: vi.fn(),
   testerSignature: vi.fn(),
 }))
-vi.mock('./actions', () => ({ enregistrerSignature, deconnecterSignature, genererSecret, testerSignature }))
+vi.mock('./actions', () => ({
+  enregistrerSignature,
+  deconnecterSignature,
+  genererSecret,
+  testerSignature,
+}))
 
 import { ConnexionForm } from './ConnexionForm'
 import { SecretWebhook } from './SecretWebhook'
@@ -51,6 +56,19 @@ describe('ConnexionForm (signature)', () => {
   })
 })
 
+describe('réglages illisibles', () => {
+  it('ConnexionForm le dit et propose Déconnecter même sans clé lisible', () => {
+    render(<ConnexionForm baseUrl="" provenance="aucune" enregistreLe={null} ligne illisible />)
+    expect(document.body.textContent).toContain('Réglage enregistré illisible')
+    expect(screen.getByRole('button', { name: 'Déconnecter' })).toBeTruthy()
+  })
+
+  it('SecretWebhook le dit', () => {
+    render(<SecretWebhook provenance="aucune" genereLe={null} illisible />)
+    expect(document.body.textContent).toContain('Secret enregistré illisible')
+  })
+})
+
 describe('SecretWebhook', () => {
   it('sans secret : génère et affiche le secret une seule fois', async () => {
     render(<SecretWebhook provenance="aucune" genereLe={null} />)
@@ -78,7 +96,10 @@ describe('SecretWebhook', () => {
   })
 
   it('annonce un refus', async () => {
-    genererSecret.mockResolvedValue({ ok: false, erreur: 'Confirmez la régénération.' })
+    genererSecret.mockResolvedValue({
+      ok: false,
+      erreur: 'Confirmez la régénération.',
+    })
     render(<SecretWebhook provenance="aucune" genereLe={null} />)
     await userEvent.click(screen.getByRole('button', { name: 'Générer le secret' }))
     expect((await screen.findByRole('alert')).textContent).toContain('Confirmez la régénération.')
@@ -91,8 +112,16 @@ describe('TestConnexion', () => {
       ok: false,
       verifications: [
         { cle: 'instance', etat: 'ok', texte: 'L’instance répond.' },
-        { cle: 'api-v2', etat: 'echec', texte: 'Documenso 2.0 ou plus est requis.' },
-        { cle: 'cle', etat: 'non-verifie', texte: 'La clé n’a pas pu être vérifiée.' },
+        {
+          cle: 'api-v2',
+          etat: 'echec',
+          texte: 'Documenso 2.0 ou plus est requis.',
+        },
+        {
+          cle: 'cle',
+          etat: 'non-verifie',
+          texte: 'La clé n’a pas pu être vérifiée.',
+        },
       ],
     })
     render(<TestConnexion />)

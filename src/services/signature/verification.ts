@@ -98,7 +98,7 @@ async function verifierInstance(
       {
         cle: 'api-v2',
         etat: 'echec',
-        texte: "L'API v2 est introuvable sur cette instance : Documenso 2.0 ou plus est requis.",
+        texte: "API v2 introuvable : vérifiez l'URL de l'instance, ou Documenso 2.0 ou plus est requis.",
       },
       NON_VERIFIEE_CLE,
     ]
