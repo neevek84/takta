@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer'
-import { DELAIS_SMTP } from '@/core/courriel/smtp'
+import { DELAIS_SMTP, nomAnnonce } from '@/core/courriel/smtp'
 import type { Mailer, SmtpConfig } from '@/services/notify'
 
 /**
@@ -16,7 +16,11 @@ import type { Mailer, SmtpConfig } from '@/services/notify'
  * l'envoi en `ETIMEDOUT` au lieu de suspendre un travail ou une action.
  */
 export function buildSmtpMailer(config: SmtpConfig): Mailer {
+  // Le nom annoncé au serveur : sans lui, nodemailer dit `[127.0.0.1]` et le
+  // relais Google Workspace refuse la connexion (`421 … (EHLO)`).
+  const nom = nomAnnonce(process.env.AUTH_URL, config.from)
   const transport = nodemailer.createTransport({
+    ...(nom !== undefined && { name: nom }),
     host: config.host,
     port: config.port,
     secure: config.secure,
