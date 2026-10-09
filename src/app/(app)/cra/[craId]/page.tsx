@@ -7,6 +7,7 @@ import { formatJours, libelleMois } from '@/core/cra/document'
 import { SignatureCard } from '@/components/cra/SignatureCard'
 import { HistoriqueEnvois } from '@/components/cra/HistoriqueEnvois'
 import { LienManuel } from '@/components/cra/LienManuel'
+import { RelectureAutomatique } from '@/components/cra/RelectureAutomatique'
 import { StatusBadge } from '@/components/cra/StatusBadge'
 import { Origine } from '@/components/ui/Origine'
 import { Banner } from '@/components/ui/Banner'
@@ -102,6 +103,9 @@ export default async function CraDetailPage({
 
   return (
     <PageShell title={`${cra.clientName} · ${cra.missionLabel} — ${libelleMois(cra.month)}`}>
+      {/* La signature arrive d'ailleurs — webhook, page du client — : sans
+          relecture, l'écran resservait l'état mémorisé par le navigateur. */}
+      <RelectureAutomatique enAttente={cra.status === 'ENVOYE'} />
       {messageErreur !== undefined && (
         <div className="mb-6">
           <Banner tone="warning" title={
