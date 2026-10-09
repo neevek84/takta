@@ -1,5 +1,6 @@
 'use server'
 
+import { annoncer } from '@/services/annonce'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireUser, exigerAdministration } from '@/auth'
@@ -109,6 +110,7 @@ export async function connecterDolibarr(
 export async function deconnecterDolibarr(): Promise<void> {
   await exigerAdministration()
   await revokeInstanceCredential(DOLIBARR)
+  await annoncer('Dolibarr est déconnecté.')
   revalidatePath(CHEMIN)
 }
 
@@ -126,6 +128,11 @@ export async function rattacherTiers(formData: FormData): Promise<void> {
   } else {
     await attachClient({ userId: user.id, clientId, dolibarrThirdpartyId })
   }
+  await annoncer(
+    clientId === ''
+      ? `Client « ${String(formData.get('nom') ?? '')} » créé et rattaché à son tiers Dolibarr.`
+      : 'Client rattaché à son tiers Dolibarr.',
+  )
   revalidatePath(CHEMIN)
 }
 
@@ -229,6 +236,7 @@ export async function detacher(formData: FormData): Promise<void> {
     entityType,
     entityId: String(formData.get('entityId') ?? ''),
   })
+  await annoncer(entityType === 'Client' ? 'Client détaché de Dolibarr.' : 'Mission détachée de Dolibarr.')
   revalidatePath(CHEMIN)
 }
 

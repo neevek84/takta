@@ -1,5 +1,6 @@
 'use server'
 
+import { annoncer } from '@/services/annonce'
 import { revalidatePath } from 'next/cache'
 import { requireUser, exigerAdministration } from '@/auth'
 import { updateSettings, loadFrenchHolidays, SettingsValidationError } from '@/services/settings'
@@ -104,12 +105,14 @@ export async function reloadHolidays() {
   await exigerAdministration()
   const y = new Date().getUTCFullYear()
   await loadFrenchHolidays(y - 1, y + 2)
+  await annoncer(`Jours fériés rechargés, de ${y - 1} à ${y + 2}.`)
   revalidatePath('/admin/saisie')
 }
 
 export async function lancerReetalonnage() {
   const user = await exigerAdministration()
   const r = await recalibrateOpenMonths(user.id)
+  await annoncer(`${r.recalibrees} saisie(s) réétalonnée(s).`)
   revalidatePath('/admin/saisie')
   return r
 }

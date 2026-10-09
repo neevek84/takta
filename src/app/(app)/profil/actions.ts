@@ -1,5 +1,6 @@
 'use server'
 
+import { annoncer } from '@/services/annonce'
 import { revalidatePath } from 'next/cache'
 import { requireUser } from '@/auth'
 import { disconnectGoogle } from '@/services/google/connect'
@@ -61,6 +62,7 @@ export async function enregistrerIdentifiantDolibarr(
 export async function deconnecterGoogle(): Promise<void> {
   const user = await requireUser()
   await disconnectGoogle(user.id)
+  await annoncer('Votre agenda Google est déconnecté.')
   revalidatePath('/profil')
 }
 

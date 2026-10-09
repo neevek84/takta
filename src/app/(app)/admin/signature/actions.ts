@@ -1,5 +1,6 @@
 'use server'
 
+import { annoncer } from '@/services/annonce'
 import { revalidatePath } from 'next/cache'
 import { exigerAdministration } from '@/auth'
 import {
@@ -73,6 +74,7 @@ export async function enregistrerSignature(
 export async function deconnecterSignature(): Promise<void> {
   const user = await exigerAdministration()
   await retirerConnexionDocumenso({ userId: user.id })
+  await annoncer('L’outil de signature est déconnecté.')
   revalidatePath(CHEMIN)
 }
 

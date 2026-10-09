@@ -9,20 +9,16 @@ import {
   tiersParClient,
   type ProjetCandidat,
 } from '@/services/dolibarr/commande'
-import { Banner } from '@/components/ui/Banner'
 import { PageShell } from '@/components/ui/PageShell'
 import { MissionsExplorer, type CommandeOuverte } from './MissionsExplorer'
 
 export default async function MissionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ message?: string; tone?: string; mission?: string }>
+  searchParams: Promise<{ mission?: string }>
 }) {
   const user = await requireUser()
-  const { message, tone, mission } = await searchParams
-  // Une tonalité forgée ou absente retombe sur « success », comme sur l'écran
-  // d'administration : ce canal ne porte pas toujours de tonalité explicite.
-  const toneMessage = tone === 'danger' ? 'danger' : 'success'
+  const { mission } = await searchParams
   const [clients, missions, settings, api] = await Promise.all([
     listClients(user.id),
     listMissionsForUser(user.id),
@@ -53,12 +49,6 @@ export default async function MissionsPage({
 
   return (
     <PageShell title="Missions">
-      {message !== undefined && (
-        <div className="mb-6">
-          <Banner tone={toneMessage}>{message}</Banner>
-        </div>
-      )}
-
       {/* La clé remonte l'explorateur à chaque création : son état local
           garderait sinon le volet « Nouvelle mission » ouvert, comme si rien
           ne s'était passé. */}

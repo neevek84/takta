@@ -133,11 +133,10 @@ describe('addMission', () => {
   })
 
   it('annonce la création et ouvre la mission créée', async () => {
+    const { annoncer } = await import('@/services/annonce')
     await addMission(formulaire({ clientId: 'c1', label: 'ITSM' }))
-    const cible = String(redirect.mock.calls[0]?.[0])
-    expect(cible).toContain('mission=m1')
-    expect(cible).toContain('tone=success')
-    expect(decodeURIComponent(cible)).toContain('Mission « ITSM » créée.')
+    expect(redirect).toHaveBeenCalledWith('/missions?mission=m1')
+    expect(annoncer).toHaveBeenCalledWith('Mission « ITSM » créée.', 'success')
   })
 
   it('attribue la création à l utilisateur de la session', async () => {
@@ -251,6 +250,12 @@ describe('addClient', () => {
     const { createClient } = await import('@/services/clients')
     await addClient(formulaire({ name: 'ACME' }))
     expect(createClient).toHaveBeenCalledWith('ACME', null, 'u1')
+  })
+
+  it('annonce la création, sans quoi rien ne dit que le clic a porté', async () => {
+    const { annoncer } = await import('@/services/annonce')
+    await addClient(formulaire({ name: 'ACME' }))
+    expect(annoncer).toHaveBeenCalledWith('Client « ACME » créé.')
   })
 })
 
