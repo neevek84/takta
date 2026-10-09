@@ -21,7 +21,7 @@ vi.mock('@/services/signature/envois', () => ({
   listerEnvois: async () => [],
   compterCourrielsEchoues: async () => echoues.valeur,
 }))
-vi.mock('next/navigation', () => ({ notFound: introuvable }))
+vi.mock('next/navigation', () => ({ notFound: introuvable, useRouter: () => ({ refresh: () => {} }) }))
 vi.mock('./actions', () => ({
   moveCra: vi.fn(),
   saveTracking: vi.fn(),
