@@ -10,9 +10,9 @@ describe('lireAnnonce', () => {
     })
   })
 
-  it('retombe sur « success » quand la tonalité est forgée', () => {
+  it('retombe sur l’avertissement, jamais sur le succès, quand la tonalité est forgée', () => {
     expect(lireAnnonce(JSON.stringify({ id: 'a', message: 'Créé.', ton: 'rouge' }))?.ton).toBe(
-      'success',
+      'warning',
     )
   })
 

@@ -1,5 +1,6 @@
 'use server'
 
+import { annoncer } from '@/services/annonce'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireUser, exigerAdministration } from '@/auth'
@@ -12,14 +13,14 @@ const CHEMIN_ABONNEMENTS = '/admin/webhooks'
 type Tone = 'success' | 'warning' | 'danger'
 
 /**
- * Un message porté par la redirection, **avec sa tonalité**. Un écran voisin
- * affichait tout retour de la même façon — bandeau vert et coche, refus
- * compris. La tonalité voyage donc avec le message, de bout en bout ; l'écran
- * qui la reçoit retombe sur l'avertissement quand elle manque, jamais sur le
- * succès.
+ * Annonce le résultat **avec sa tonalité**, et rend l'adresse où revenir. Un
+ * écran voisin affichait tout retour de la même façon — bandeau vert et
+ * coche, refus compris. La tonalité voyage donc avec le message, de bout en
+ * bout.
  */
-function annonce(chemin: string, message: string, tone: Tone = 'success'): string {
-  return `${chemin}?message=${encodeURIComponent(message)}&tone=${tone}`
+async function annonce(chemin: string, message: string, tone: Tone = 'success'): Promise<string> {
+  await annoncer(message, tone)
+  return chemin
 }
 
 function messageDe(err: unknown): string {
@@ -57,7 +58,7 @@ export async function executerTravail(formData: FormData): Promise<void> {
   }
 
   revalidatePath(CHEMIN)
-  redirect(annonce(CHEMIN, message, tone))
+  redirect(await annonce(CHEMIN, message, tone))
 }
 
 export async function basculerTravail(formData: FormData): Promise<void> {
@@ -78,7 +79,7 @@ export async function basculerTravail(formData: FormData): Promise<void> {
   }
 
   revalidatePath(CHEMIN)
-  redirect(annonce(CHEMIN, message, tone))
+  redirect(await annonce(CHEMIN, message, tone))
 }
 
 /** Partagée par les deux écrans : un renvoi est un renvoi, deux copies divergeraient. */
@@ -107,5 +108,5 @@ export async function renvoyerLivraison(formData: FormData): Promise<void> {
 
   revalidatePath(CHEMIN)
   revalidatePath(CHEMIN_ABONNEMENTS)
-  redirect(annonce(retour, message, tone))
+  redirect(await annonce(retour, message, tone))
 }

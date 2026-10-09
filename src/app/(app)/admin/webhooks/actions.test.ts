@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { annoncer } from '@/services/annonce'
 import { WebhookValidationError } from '@/services/webhooks/subscriptions'
 
 const {
@@ -67,7 +68,7 @@ function form(champs: Array<[string, string]>): FormData {
 }
 
 function cible(): string {
-  return decodeURIComponent(String(redirect.mock.calls[0]![0]))
+  return decodeURIComponent(retour())
 }
 
 const ABONNEMENT = {
@@ -82,10 +83,22 @@ const ABONNEMENT = {
   suspendedAt: new Date('2026-08-12T08:00:00.000Z'),
 }
 
+
+/**
+ * Le retour d'une action, tel qu'il s'écrivait quand le message voyageait
+ * dans l'adresse : la destination de la redirection, et ce qu'`annoncer()` a
+ * dit, avec sa tonalité. Garder cette forme laisse les assertions intactes.
+ */
+function retour(): string {
+  const [message, ton] = vi.mocked(annoncer).mock.calls[0] ?? ['', '']
+  return `${String(redirect.mock.calls[0]![0])}?message=${encodeURIComponent(String(message))}&tone=${String(ton ?? 'success')}`
+}
+
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
   revalidatePath.mockReset()
   redirect.mockReset()
+  vi.mocked(annoncer).mockClear()
   createWebhook.mockReset().mockResolvedValue({ ...ABONNEMENT, state: 'ACTIF' })
   updateWebhook.mockReset().mockResolvedValue({ ...ABONNEMENT, state: 'ACTIF', lastSeq: 4300 })
   deleteWebhook.mockReset().mockResolvedValue(undefined)
@@ -110,7 +123,7 @@ describe('creerAbonnement', () => {
       events: ['cra.valide', 'saisie.creee'],
     })
     expect(revalidatePath).toHaveBeenCalledWith('/admin/webhooks')
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=success')
+    expect(retour()).toContain('tone=success')
   })
 
   it('écarte un nom d événement hors catalogue plutôt que de le transmettre', async () => {
@@ -133,7 +146,7 @@ describe('creerAbonnement', () => {
 
     await creerAbonnement(form([['label', 'n8n'], ['url', 'pas-une-url']]))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
     expect(cible()).toContain('http ou https')
   })
 })
@@ -163,7 +176,7 @@ describe('modifierAbonnement', () => {
     await modifierAbonnement(form([['id', 'w1'], ['state', 'ZOMBIE']]))
 
     expect(updateWebhook).not.toHaveBeenCalled()
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
   })
 
   it('rapporte le refus du service plutôt que de tomber', async () => {
@@ -171,7 +184,7 @@ describe('modifierAbonnement', () => {
 
     await modifierAbonnement(form([['id', 'w1'], ['state', 'ACTIF']]))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
   })
 })
 
@@ -180,7 +193,7 @@ describe('supprimerAbonnement', () => {
     await supprimerAbonnement(form([['id', 'w1']]))
 
     expect(deleteWebhook).toHaveBeenCalledWith('u1', 'w1')
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=success')
+    expect(retour()).toContain('tone=success')
   })
 
   it('rapporte le refus du service plutôt que de tomber', async () => {
@@ -188,7 +201,7 @@ describe('supprimerAbonnement', () => {
 
     await supprimerAbonnement(form([['id', 'w1']]))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
   })
 })
 
@@ -197,7 +210,7 @@ describe('essayerAbonnement', () => {
     await essayerAbonnement(form([['id', 'w1']]))
 
     expect(sendTestWebhook).toHaveBeenCalledWith('u1', 'w1')
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=success')
+    expect(retour()).toContain('tone=success')
     expect(cible()).toContain('200')
   })
 
@@ -213,7 +226,7 @@ describe('essayerAbonnement', () => {
 
     await essayerAbonnement(form([['id', 'w1']]))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
     expect(cible()).toContain('fetch failed')
   })
 
@@ -222,6 +235,6 @@ describe('essayerAbonnement', () => {
 
     await essayerAbonnement(form([['id', 'w1']]))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
   })
 })

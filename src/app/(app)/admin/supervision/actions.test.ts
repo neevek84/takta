@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { annoncer } from '@/services/annonce'
 
 const { requireUser, revalidatePath, redirect, runJobNow, setJobEnabled, resendDelivery } =
   vi.hoisted(() => ({
@@ -43,13 +44,25 @@ function form(champs: Record<string, string>): FormData {
 
 /** La cible de la redirection, décodée. */
 function cible(): string {
-  return decodeURIComponent(String(redirect.mock.calls[0]![0]))
+  return decodeURIComponent(retour())
+}
+
+
+/**
+ * Le retour d'une action, tel qu'il s'écrivait quand le message voyageait
+ * dans l'adresse : la destination de la redirection, et ce qu'`annoncer()` a
+ * dit, avec sa tonalité. Garder cette forme laisse les assertions intactes.
+ */
+function retour(): string {
+  const [message, ton] = vi.mocked(annoncer).mock.calls[0] ?? ['', '']
+  return `${String(redirect.mock.calls[0]![0])}?message=${encodeURIComponent(String(message))}&tone=${String(ton ?? 'success')}`
 }
 
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
   revalidatePath.mockReset()
   redirect.mockReset()
+  vi.mocked(annoncer).mockClear()
   runJobNow.mockReset().mockResolvedValue({
     name: 'webhooks.distribute',
     state: 'SUCCES',
@@ -72,7 +85,7 @@ describe('executerTravail', () => {
     await executerTravail(form({ name: 'webhooks.distribute' }))
 
     expect(cible()).toContain('3 livraison(s) tentées.')
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=success')
+    expect(retour()).toContain('tone=success')
   })
 
   it('N AFFICHE PAS UN ÉCHEC EN VERT', async () => {
@@ -87,7 +100,7 @@ describe('executerTravail', () => {
 
     await executerTravail(form({ name: 'webhooks.distribute' }))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
     expect(cible()).toContain('URL injoignable')
   })
 
@@ -101,7 +114,7 @@ describe('executerTravail', () => {
 
     await executerTravail(form({ name: 'signature.relance' }))
 
-    expect(String(redirect.mock.calls[0]![0])).not.toContain('tone=success')
+    expect(retour()).not.toContain('tone=success')
     expect(cible()).toContain('lot 3')
   })
 
@@ -110,7 +123,7 @@ describe('executerTravail', () => {
 
     await executerTravail(form({ name: 'x' }))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
     expect(cible()).toContain('n’existe pas')
   })
 })
@@ -135,7 +148,7 @@ describe('basculerTravail', () => {
 
     await basculerTravail(form({ name: 'z', enabled: '1' }))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
   })
 })
 
@@ -152,7 +165,7 @@ describe('renvoyerLivraison', () => {
   it('rend la main sur l écran d où l on vient', async () => {
     await renvoyerLivraison(form({ id: 'd1', retour: '/admin/webhooks' }))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('/admin/webhooks?message=')
+    expect(retour()).toContain('/admin/webhooks?message=')
   })
 
   it('REFUSE UNE DESTINATION FORGÉE', async () => {
@@ -160,8 +173,8 @@ describe('renvoyerLivraison', () => {
     // une redirection ouverte vers n'importe quel site.
     await renvoyerLivraison(form({ id: 'd1', retour: 'https://ailleurs.test/vol' }))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('/admin/supervision?message=')
-    expect(String(redirect.mock.calls[0]![0])).not.toContain('ailleurs.test')
+    expect(retour()).toContain('/admin/supervision?message=')
+    expect(retour()).not.toContain('ailleurs.test')
   })
 
   it('n annonce pas un renvoi encore en échec comme une réussite', async () => {
@@ -169,7 +182,7 @@ describe('renvoyerLivraison', () => {
 
     await renvoyerLivraison(form({ id: 'd1', retour: '/admin/webhooks' }))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
   })
 
   it('rapporte la panne au lieu de laisser tomber l écran', async () => {
@@ -177,7 +190,7 @@ describe('renvoyerLivraison', () => {
 
     await renvoyerLivraison(form({ id: 'd1', retour: '/admin/webhooks' }))
 
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
     expect(cible()).toContain('introuvable')
   })
 })

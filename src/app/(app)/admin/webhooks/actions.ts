@@ -1,5 +1,6 @@
 'use server'
 
+import { annoncer } from '@/services/annonce'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireUser, exigerAdministration } from '@/auth'
@@ -22,8 +23,9 @@ type Tone = 'success' | 'danger'
  * renvoi qui échoue : tout cela s'affiche comme ce que c'est, et jamais avec
  * l'apparence d'une réussite.
  */
-function annonce(message: string, tone: Tone = 'success'): string {
-  return `${CHEMIN}?message=${encodeURIComponent(message)}&tone=${tone}`
+async function annonce(message: string, tone: Tone = 'success'): Promise<string> {
+  await annoncer(message, tone)
+  return CHEMIN
 }
 
 function messageDe(err: unknown): string {
@@ -59,7 +61,7 @@ export async function creerAbonnement(formData: FormData): Promise<void> {
   }
 
   revalidatePath(CHEMIN)
-  redirect(annonce(message, tone))
+  redirect(await annonce(message, tone))
 }
 
 export async function modifierAbonnement(formData: FormData): Promise<void> {
@@ -68,7 +70,7 @@ export async function modifierAbonnement(formData: FormData): Promise<void> {
   const etat = formData.has('state') ? etatDe(formData.get('state')) : undefined
 
   if (etat === null) {
-    redirect(annonce("L'état demandé n'existe pas : l'abonnement n'a pas été modifié.", 'danger'))
+    redirect(await annonce("L'état demandé n'existe pas : l'abonnement n'a pas été modifié.", 'danger'))
     return
   }
 
@@ -100,7 +102,7 @@ export async function modifierAbonnement(formData: FormData): Promise<void> {
   }
 
   revalidatePath(CHEMIN)
-  redirect(annonce(message, tone))
+  redirect(await annonce(message, tone))
 }
 
 export async function supprimerAbonnement(formData: FormData): Promise<void> {
@@ -119,7 +121,7 @@ export async function supprimerAbonnement(formData: FormData): Promise<void> {
   }
 
   revalidatePath(CHEMIN)
-  redirect(annonce(message, tone))
+  redirect(await annonce(message, tone))
 }
 
 /**
@@ -147,5 +149,5 @@ export async function essayerAbonnement(formData: FormData): Promise<void> {
   }
 
   revalidatePath(CHEMIN)
-  redirect(annonce(message, tone))
+  redirect(await annonce(message, tone))
 }

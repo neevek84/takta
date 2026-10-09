@@ -30,7 +30,9 @@ export function lireAnnonce(brut: string | undefined): Annonce | null {
     if (typeof v !== 'object' || v === null) return null
     const { id, message, ton } = v as Record<string, unknown>
     if (typeof id !== 'string' || typeof message !== 'string' || message === '') return null
-    return { id, message, ton: TONS.includes(ton as TonAnnonce) ? (ton as TonAnnonce) : 'success' }
+    // Une tonalité forgée ou absente retombe sur l'avertissement, jamais sur
+    // le succès : un refus ne doit pas pouvoir se peindre en réussite.
+    return { id, message, ton: TONS.includes(ton as TonAnnonce) ? (ton as TonAnnonce) : 'warning' }
   } catch {
     return null
   }

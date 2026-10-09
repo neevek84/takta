@@ -152,25 +152,6 @@ describe('écran de supervision', () => {
     expect(screen.getByText(/aucune entrée/i)).toBeTruthy()
   })
 
-  it('porte le message de retour avec SA tonalité', async () => {
-    await rendre({ message: 'Le travail a échoué.', tone: 'danger' })
-
-    const bandeau = screen.getByRole('alert')
-    expect(bandeau.textContent).toContain('Le travail a échoué.')
-    expect(bandeau.querySelector('svg[data-icone="danger"]')).not.toBeNull()
-  })
-
-  it('NE FAIT JAMAIS PASSER UN RETOUR POUR UNE RÉUSSITE en l absence de tonalité', async () => {
-    for (const tone of [undefined, 'vert', 'SUCCESS']) {
-      cleanup()
-      await rendre({ message: 'Retour sans tonalité.', ...(tone === undefined ? {} : { tone }) })
-      // `warning` porte le rôle d'alerte et le triangle, jamais la coche.
-      const bandeau = screen.getByRole('alert')
-      expect(bandeau.querySelector('svg[data-icone="avertissement"]'), String(tone)).not.toBeNull()
-      expect(bandeau.querySelector('svg[data-icone="succes"]'), String(tone)).toBeNull()
-    }
-  })
-
   it('mène à l écran de synchronisation plutôt que de le redoubler', async () => {
     await rendre()
 

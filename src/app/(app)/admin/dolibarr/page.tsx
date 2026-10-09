@@ -28,20 +28,11 @@ import { rattacherTiers, rattacherProjet, detacher, pousserClient } from './acti
  * connectée comme déconnectée, et une instance en panne n'y produit qu'un
  * bandeau — la saisie et la validation des CRA n'en dépendent pas.
  */
-export default async function AdminDolibarrPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ message?: string; tone?: string }>
-}) {
+export default async function AdminDolibarrPage() {
   // Le verdict **avant** tout service : rien de ce que cette page allait
   // lire n'est lu si l'accès est refusé.
   const { autorise, user } = await accesAdministration()
   if (!autorise) return <AccesRefuse role={user.role} />
-  const { message, tone } = await searchParams
-  // Une tonalité forgée ou absente retombe sur « success » : c'est déjà le
-  // comportement historique de ce canal, pour les messages qui ne portent pas
-  // de tonalité explicite.
-  const toneMessage = tone === 'danger' ? 'danger' : 'success'
 
   const [credential, api, clients, missions] = await Promise.all([
     getInstanceCredential(DOLIBARR),
@@ -69,12 +60,6 @@ export default async function AdminDolibarrPage({
 
   return (
     <PageShell title="Administration · Dolibarr">
-      {message !== undefined && (
-        <div className="mb-6">
-          <Banner tone={toneMessage}>{message}</Banner>
-        </div>
-      )}
-
       <ConnexionForm
         instanceUrl={instanceDepuisBaseApi(credential?.baseUrl ?? '')}
         connecte={credential !== null}
