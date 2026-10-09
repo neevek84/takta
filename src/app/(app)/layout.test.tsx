@@ -29,6 +29,7 @@ vi.mock('@/auth', () => ({
 // pour marquer la page active. Hors de Next, le contexte de routeur n'existe
 // pas et `usePathname()` rend `null` : on le fournit ici.
 vi.mock('next/navigation', () => ({ usePathname: () => '/saisie/2026-08' }))
+vi.mock('next/headers', () => ({ cookies: async () => ({ get: () => undefined }) }))
 
 import AppLayout from './layout'
 

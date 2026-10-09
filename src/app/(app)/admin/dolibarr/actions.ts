@@ -1,5 +1,6 @@
 'use server'
 
+import { annoncer } from '@/services/annonce'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireUser, exigerAdministration } from '@/auth'
@@ -109,6 +110,7 @@ export async function connecterDolibarr(
 export async function deconnecterDolibarr(): Promise<void> {
   await exigerAdministration()
   await revokeInstanceCredential(DOLIBARR)
+  await annoncer('Dolibarr est déconnecté.')
   revalidatePath(CHEMIN)
 }
 
@@ -126,6 +128,11 @@ export async function rattacherTiers(formData: FormData): Promise<void> {
   } else {
     await attachClient({ userId: user.id, clientId, dolibarrThirdpartyId })
   }
+  await annoncer(
+    clientId === ''
+      ? `Client « ${String(formData.get('nom') ?? '')} » créé et rattaché à son tiers Dolibarr.`
+      : 'Client rattaché à son tiers Dolibarr.',
+  )
   revalidatePath(CHEMIN)
 }
 
@@ -206,13 +213,13 @@ export async function rattacherProjet(formData: FormData): Promise<void> {
       )
     }
   } catch (err) {
-    redirect(annonce(err instanceof Error ? err.message : String(err), 'danger'))
+    redirect(await annonce(err instanceof Error ? err.message : String(err), 'danger'))
     return
   }
   revalidatePath(CHEMIN)
   // Un rattachement ordinaire ne dit rien : la page se réaffiche, la
   // correspondance est visible. Seuls les deux effets invisibles s'annoncent.
-  if (resume !== null) redirect(annonce(resume))
+  if (resume !== null) redirect(await annonce(resume))
 }
 
 export async function detacher(formData: FormData): Promise<void> {
@@ -229,6 +236,7 @@ export async function detacher(formData: FormData): Promise<void> {
     entityType,
     entityId: String(formData.get('entityId') ?? ''),
   })
+  await annoncer(entityType === 'Client' ? 'Client détaché de Dolibarr.' : 'Mission détachée de Dolibarr.')
   revalidatePath(CHEMIN)
 }
 
@@ -246,7 +254,7 @@ export async function pousserClient(formData: FormData): Promise<void> {
 
   const api = await getDolibarrApi()
   if (api === null) {
-    redirect(annonce("Dolibarr n'est pas connecté : aucun tiers n'a été créé.", 'danger'))
+    redirect(await annonce("Dolibarr n'est pas connecté : aucun tiers n'a été créé.", 'danger'))
     return
   }
 
@@ -263,7 +271,7 @@ export async function pousserClient(formData: FormData): Promise<void> {
   }
 
   revalidatePath(CHEMIN)
-  redirect(annonce(message, tone))
+  redirect(await annonce(message, tone))
 }
 
 /**
@@ -309,7 +317,7 @@ export async function reprendreReglages(formData: FormData): Promise<void> {
 
   const api = await getDolibarrApi()
   if (api === null) {
-    redirect(annonce("Dolibarr n'est pas connecté : aucun réglage n'a été repris.", 'danger'))
+    redirect(await annonce("Dolibarr n'est pas connecté : aucun réglage n'a été repris.", 'danger'))
     return
   }
 
@@ -342,7 +350,7 @@ export async function reprendreReglages(formData: FormData): Promise<void> {
   revalidatePath('/admin/saisie')
   revalidatePath('/saisie')
   revalidatePath('/charge')
-  redirect(annonce(message, tone))
+  redirect(await annonce(message, tone))
 }
 
 /**
@@ -351,6 +359,9 @@ export async function reprendreReglages(formData: FormData): Promise<void> {
  * exactement le genre de confusion qu'une information non redondante avec la
  * seule couleur doit éviter.
  */
-function annonce(message: string, tone: 'success' | 'danger' = 'success'): string {
-  return `${CHEMIN}?message=${encodeURIComponent(message)}&tone=${tone}`
+async function annonce(message: string, tone: 'success' | 'danger' = 'success'): Promise<string> {
+  // Par le bandeau flottant, plus par l'adresse : le message y restait collé
+  // et ressortait à côté du suivant.
+  await annoncer(message, tone)
+  return CHEMIN
 }

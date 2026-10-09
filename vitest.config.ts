@@ -33,6 +33,7 @@ export default defineConfig({
     // écrivent réellement (la ligne singleton `Settings`, entre autres). Voir
     // vitest.globalSetup.ts pour le détail.
     globalSetup: ['./vitest.globalSetup.ts'],
+    setupFiles: ['./vitest.setup.ts'],
     env: { DATABASE_URL: `file:${TEST_DB_PATH}` },
     server: {
       deps: {

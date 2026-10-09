@@ -1,5 +1,6 @@
 'use server'
 
+import { annoncer } from '@/services/annonce'
 import { revalidatePath } from 'next/cache'
 import { requireUser, exigerAdministration } from '@/auth'
 import { validerClientOAuth } from '@/core/google/oauth-client'
@@ -79,5 +80,6 @@ export async function enregistrerClientGoogle(
 export async function oublierClientGoogle(): Promise<void> {
   await exigerAdministration()
   await forgetGoogleOAuthClient()
+  await annoncer('Le client OAuth Google est oublié.')
   revalidatePath(CHEMIN)
 }

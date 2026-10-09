@@ -11,7 +11,9 @@ const {
   impactSuppressionPrestation,
   supprimerPrestation,
   ligneTrouvee,
+  redirect,
 } = vi.hoisted(() => ({
+  redirect: vi.fn(),
   requireUser: vi.fn(),
   revalidatePath: vi.fn(),
   createMission: vi.fn(),
@@ -23,6 +25,8 @@ const {
   supprimerPrestation: vi.fn(),
   ligneTrouvee: vi.fn(),
 }))
+
+vi.mock('next/navigation', () => ({ redirect }))
 
 vi.mock('@/auth', () => ({
   requireUser,
@@ -82,6 +86,7 @@ import {
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
   revalidatePath.mockReset()
+  redirect.mockReset()
   createMission.mockReset().mockResolvedValue({ id: 'm1' })
   updateMissionSignataire.mockReset().mockResolvedValue({ ok: true })
   updateLine.mockReset().mockResolvedValue({ ok: true })
@@ -125,6 +130,13 @@ describe('addMission', () => {
       // serait une preuve fausse.
       userId: 'u1',
     })
+  })
+
+  it('annonce la création et ouvre la mission créée', async () => {
+    const { annoncer } = await import('@/services/annonce')
+    await addMission(formulaire({ clientId: 'c1', label: 'ITSM' }))
+    expect(redirect).toHaveBeenCalledWith('/missions?mission=m1')
+    expect(annoncer).toHaveBeenCalledWith('Mission « ITSM » créée.', 'success')
   })
 
   it('attribue la création à l utilisateur de la session', async () => {
@@ -238,6 +250,12 @@ describe('addClient', () => {
     const { createClient } = await import('@/services/clients')
     await addClient(formulaire({ name: 'ACME' }))
     expect(createClient).toHaveBeenCalledWith('ACME', null, 'u1')
+  })
+
+  it('annonce la création, sans quoi rien ne dit que le clic a porté', async () => {
+    const { annoncer } = await import('@/services/annonce')
+    await addClient(formulaire({ name: 'ACME' }))
+    expect(annoncer).toHaveBeenCalledWith('Client « ACME » créé.')
   })
 })
 

@@ -2,7 +2,6 @@ import Link from 'next/link'
 import { accesAdministration } from '@/auth'
 import { AccesRefuse } from '@/components/ui/AccesRefuse'
 import { Badge, type Tone } from '@/components/ui/Badge'
-import { Banner } from '@/components/ui/Banner'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { DataTable } from '@/components/ui/DataTable'
@@ -31,21 +30,11 @@ const ETATS_LIVRAISON: Record<string, { libelle: string; tone: Tone; icone: Icon
   ABANDONNE: { libelle: 'Abandonnée', tone: 'danger', icone: IconeDanger },
 }
 
-export default async function WebhooksPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ message?: string; tone?: string }>
-}) {
+export default async function WebhooksPage() {
   // Le verdict **avant** tout service : rien de ce que cette page allait
   // lire n'est lu si l'accès est refusé.
   const { autorise, user } = await accesAdministration()
   if (!autorise) return <AccesRefuse role={user.role} />
-  const filtres = await searchParams
-
-  // Une tonalité absente ou forgée retombe sur l'avertissement, jamais sur le
-  // succès : un refus ne doit pas pouvoir se peindre en réussite.
-  const toneMessage =
-    filtres.tone === 'success' ? 'success' : filtres.tone === 'danger' ? 'danger' : 'warning'
 
   const [abonnements, seuil, livraisons] = await Promise.all([
     listWebhooks(user.id),
@@ -56,8 +45,6 @@ export default async function WebhooksPage({
   return (
     <PageShell title="Abonnements sortants">
       <div className="flex flex-col gap-6">
-        {filtres.message !== undefined && <Banner tone={toneMessage}>{filtres.message}</Banner>}
-
         <Card title="Ce que fait cet écran">
           <p className="text-sm text-muted">
             L’application n’appelle que les URL enregistrées ici. Chaque appel est signé

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { annoncer } from '@/services/annonce'
 
 const {
   requireUser,
@@ -110,10 +111,22 @@ function form(champs: Record<string, string>): FormData {
   return fd
 }
 
+
+/**
+ * Le retour d'une action, tel qu'il s'écrivait quand le message voyageait
+ * dans l'adresse : la destination de la redirection, et ce qu'`annoncer()` a
+ * dit, avec sa tonalité. Garder cette forme laisse les assertions intactes.
+ */
+function retour(): string {
+  const [message, ton] = vi.mocked(annoncer).mock.calls[0] ?? ['', '']
+  return `${String(redirect.mock.calls[0]![0])}?message=${encodeURIComponent(String(message))}&tone=${String(ton ?? 'success')}`
+}
+
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
   revalidatePath.mockReset()
   redirect.mockReset()
+  vi.mocked(annoncer).mockClear()
   saveInstanceCredential.mockReset().mockResolvedValue(undefined)
   revokeInstanceCredential.mockReset().mockResolvedValue(undefined)
   listProjects.mockReset().mockResolvedValue([])
@@ -409,7 +422,7 @@ describe('rattachement des projets', () => {
     await rattacherProjet(form({ dolibarrId: '30', missionId: 'm1', ref: 'PJ030', socid: '5' }))
 
     expect(redirect).toHaveBeenCalledTimes(1)
-    const cible = decodeURIComponent(String(redirect.mock.calls[0]![0]))
+    const cible = decodeURIComponent(retour())
     expect(cible).toContain('2 correspondance(s) de prestation')
     expect(cible).toContain('9 de temps consommé')
     expect(cible).toContain('3 CRA')
@@ -436,7 +449,7 @@ describe('rattachement des projets', () => {
     await rattacherProjet(form({ dolibarrId: '30', missionId: 'm1', ref: 'PJ030', socid: '5' }))
 
     expect(redirect).toHaveBeenCalledTimes(1)
-    const cible = decodeURIComponent(String(redirect.mock.calls[0]![0]))
+    const cible = decodeURIComponent(retour())
     expect(cible).toContain('PJ030')
     expect(cible).toContain('tiers Dolibarr n° 5')
     expect(cible).toContain('tone=danger')
@@ -475,9 +488,9 @@ describe('pousserClient', () => {
       api: { listProjects },
     })
     expect(redirect).toHaveBeenCalledTimes(1)
-    expect(String(redirect.mock.calls[0]![0])).toContain('/admin/dolibarr?message=')
+    expect(retour()).toContain('/admin/dolibarr?message=')
     // Un succès s'affiche en succès, jamais en alerte.
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=success')
+    expect(retour()).toContain('tone=success')
   })
 
   it('dit que Dolibarr n est pas connecté au lieu de ne rien faire', async () => {
@@ -490,9 +503,9 @@ describe('pousserClient', () => {
     expect(pushClientToDolibarr).not.toHaveBeenCalled()
     // Une panne ne s'affiche pas comme un succès : la tonalité le distingue,
     // et pas seulement la couleur — le texte le dit aussi.
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(retour()).toContain('tone=danger')
     expect(redirect).toHaveBeenCalledTimes(1)
-    expect(decodeURIComponent(String(redirect.mock.calls[0]![0]))).toContain('pas connecté')
+    expect(decodeURIComponent(retour())).toContain('pas connecté')
   })
 
   it('rapporte la panne au lieu de laisser tomber l écran', async () => {
@@ -501,15 +514,15 @@ describe('pousserClient', () => {
     await pousserClient(form({ clientId: 'c1' }))
 
     expect(redirect).toHaveBeenCalledTimes(1)
-    expect(decodeURIComponent(String(redirect.mock.calls[0]![0]))).toContain('injoignable')
-    expect(String(redirect.mock.calls[0]![0])).toContain('tone=danger')
+    expect(decodeURIComponent(retour())).toContain('injoignable')
+    expect(retour()).toContain('tone=danger')
   })
 })
 
 describe('reprendreReglages', () => {
   /** Le message porté par la redirection, décodé. */
   function annonce(): string {
-    return decodeURIComponent(String(redirect.mock.calls[0]![0]))
+    return decodeURIComponent(retour())
   }
 
   it('ne reprend que ce qui est coché', async () => {

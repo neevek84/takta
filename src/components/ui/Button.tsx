@@ -1,6 +1,7 @@
 'use client'
 
 import type { ButtonHTMLAttributes, Ref } from 'react'
+import { useFormStatus } from 'react-dom'
 
 import { cn } from '@/lib/cn'
 
@@ -33,14 +34,20 @@ export function Button({
    *  besoin pour donner le focus au bouton de confirmation à l'ouverture. */
   ref?: Ref<HTMLButtonElement>
 }) {
+  // Un bouton d'envoi se met en attente tout seul pendant que son formulaire
+  // part : sans ce retour, un enregistrement lent ressemblait à un clic perdu,
+  // et l'on recliquait — une mission créée à chaque essai. Hors formulaire,
+  // `pending` reste à faux.
+  const { pending } = useFormStatus()
+  const occupe = loading || (pending && rest.type !== 'button' && rest.type !== 'reset')
   return (
     <button
       {...rest}
       ref={ref}
-      disabled={disabled === true || loading}
+      disabled={disabled === true || occupe}
       // Hors chargement l'attribut n'a rien à dire : `aria-busy="false"` sur
       // chaque bouton de l'application est du bruit pour rien.
-      aria-busy={loading || undefined}
+      aria-busy={occupe || undefined}
       className={cn(
         'touch-target inline-flex items-center justify-center gap-2 rounded-md px-4 text-sm font-medium',
         // Le survol change une teinte et, sur les variantes pleines, une
@@ -56,7 +63,7 @@ export function Button({
     >
       {/* L'état de chargement se lit dans le texte, pas seulement dans une
           teinte atténuée : l'atténuation seule n'est pas perceptible par tous. */}
-      {loading ? <>{children}…</> : children}
+      {occupe ? <>{children}…</> : children}
     </button>
   )
 }

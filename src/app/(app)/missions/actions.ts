@@ -1,5 +1,6 @@
 'use server'
 
+import { annoncer } from '@/services/annonce'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireUser } from '@/auth'
@@ -73,6 +74,7 @@ export async function addClient(formData: FormData) {
     surchargeOuNull(formData.get('heuresParJour')),
     user.id,
   )
+  await annoncer(`Client « ${String(formData.get('name'))} » créé.`)
   revalidatePath('/missions')
 }
 
@@ -129,9 +131,13 @@ export async function addMission(formData: FormData) {
   // parce que c'est inutile : c'est la promesse du produit. L'application
   // s'utilise entière sans Dolibarr, et le chemin ordinaire ne doit pas
   // traverser son service.
+  // Le bandeau et la sélection de la mission créée sont la seule preuve que
+  // le clic a porté : sans eux, le formulaire restait affiché tel quel, et
+  // l'on recommençait — une mission en double à chaque essai.
   if (projet.type === 'AUCUN') {
-    await createMission(commun)
+    const { id } = await createMission(commun)
     revalidatePath('/missions')
+    redirect(await annonceMission(`Mission « ${label} » créée.`, 'success', id))
     return
   }
 
@@ -139,7 +145,7 @@ export async function addMission(formData: FormData) {
   try {
     resultat = await creerMissionAvecProjet({ ...commun, projet, api: await getDolibarrApi() })
   } catch (err) {
-    redirect(annonceMission(err instanceof Error ? err.message : String(err), 'danger'))
+    redirect(await annonceMission(err instanceof Error ? err.message : String(err), 'danger'))
     return
   }
 
@@ -148,10 +154,10 @@ export async function addMission(formData: FormData) {
   const phrases: string[] = []
   phrases.push(
     resultat.projetCree
-      ? `Mission créée, avec le projet « ${resultat.projet?.ref} ».`
-      : 'Mission créée et rattachée au projet Dolibarr choisi.',
+      ? `Mission « ${label} » créée, avec le projet « ${resultat.projet?.ref} ».`
+      : `Mission « ${label} » créée et rattachée au projet Dolibarr choisi.`,
   )
-  redirect(annonceMission(phrases.join(' ')))
+  redirect(await annonceMission(phrases.join(' '), 'success', resultat.missionId))
 }
 
 /** `null` = rien n'a encore été soumis. */
@@ -317,7 +323,7 @@ export async function addLine(formData: FormData) {
 
   if (echec !== null) {
     redirect(
-      annonceMission(
+      await annonceMission(
         `Prestation ajoutée, mais sa tâche Dolibarr n'a pas pu être créée (${echec}). ` +
           'Les temps ne partiront pas tant qu’elle manque.',
         'danger',
@@ -325,8 +331,9 @@ export async function addLine(formData: FormData) {
     )
   }
   if (creee) {
-    redirect(annonceMission(`Prestation ajoutée, avec sa tâche « ${label} » dans le projet.`))
+    redirect(await annonceMission(`Prestation ajoutée, avec sa tâche « ${label} » dans le projet.`))
   }
+  await annoncer(`Prestation « ${label} » ajoutée.`)
 }
 
 /**
@@ -342,7 +349,7 @@ export async function creerMissionDepuisCommande(formData: FormData): Promise<vo
   const user = await requireUser()
   const api = await getDolibarrApi()
   if (api === null) {
-    redirect(annonceMission("Dolibarr n'est pas connecté : aucune mission n'a été créée.", 'danger'))
+    redirect(await annonceMission("Dolibarr n'est pas connecté : aucune mission n'a été créée.", 'danger'))
     return
   }
 
@@ -360,7 +367,7 @@ export async function creerMissionDepuisCommande(formData: FormData): Promise<vo
       api,
     })
   } catch (err) {
-    redirect(annonceMission(err instanceof Error ? err.message : String(err), 'danger'))
+    redirect(await annonceMission(err instanceof Error ? err.message : String(err), 'danger'))
     return
   }
 
@@ -391,13 +398,28 @@ export async function creerMissionDepuisCommande(formData: FormData): Promise<vo
 
   revalidatePath('/missions')
   redirect(
-    annonceMission(phrases.join(' '), resultat.commandeNonRattachee === null ? 'success' : 'danger'),
+    await annonceMission(
+      phrases.join(' '),
+      resultat.commandeNonRattachee === null ? 'success' : 'danger',
+      resultat.missionId,
+    ),
   )
 }
 
-/** Un message porté par la redirection, avec sa tonalité. */
-function annonceMission(message: string, tone: 'success' | 'danger' = 'success'): string {
-  return `/missions?message=${encodeURIComponent(message)}&tone=${tone}`
+/**
+ * Annonce le résultat, et rend l'adresse où revenir — sur la mission à
+ * ouvrir, quand l'acte vient d'en créer une.
+ *
+ * Le message ne voyage plus dans l'adresse : il y restait collé, et
+ * ressortait à côté du suivant après chaque action qui ne redirige pas.
+ */
+async function annonceMission(
+  message: string,
+  tone: 'success' | 'danger' = 'success',
+  missionId?: string,
+): Promise<string> {
+  await annoncer(message, tone)
+  return missionId === undefined ? '/missions' : `/missions?mission=${encodeURIComponent(missionId)}`
 }
 
 /**

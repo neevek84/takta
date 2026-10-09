@@ -147,8 +147,8 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
-async function rendre(params: { message?: string; tone?: string } = {}) {
-  render(await AdminDolibarrPage({ searchParams: Promise.resolve(params) }))
+async function rendre() {
+  render(await AdminDolibarrPage())
 }
 
 describe('page Administration · Dolibarr — câblage', () => {
@@ -248,32 +248,6 @@ describe('page Administration · Dolibarr — câblage', () => {
     expect(alerte.textContent).toContain('La saisie et la validation des CRA fonctionnent')
     expect(screen.getByTestId('connexion')).toBeTruthy()
     expect(screen.queryByText('ACME distant')).toBeNull()
-  })
-
-  it('affiche le message rapporté par une action', async () => {
-    await rendre({ message: 'Le tiers a été créé dans Dolibarr.' })
-    expect(screen.getByRole('status').textContent).toContain('Le tiers a été créé dans Dolibarr.')
-  })
-
-  it('n annonce rien quand aucune action n a laissé de message', async () => {
-    await rendre()
-    expect(screen.queryByRole('status')).toBeNull()
-  })
-
-  it('affiche un refus de rattachement en alerte, pas en succès', async () => {
-    // Le danger fermé par cette tâche : un refus rendu avec le glyphe et le
-    // rôle d'un succès contredirait le texte qu'il porte. `tone=danger`
-    // bascule le bandeau en alerte.
-    await rendre({
-      message:
-        'Le projet « PJ001 » appartient au tiers Dolibarr n° 5, mais « ACME » est rattaché au tiers Dolibarr n° 7.',
-      tone: 'danger',
-    })
-
-    const alerte = screen.getByRole('alert')
-    expect(alerte.textContent).toContain('PJ001')
-    expect(alerte.textContent).toContain('tiers Dolibarr n° 5')
-    expect(screen.queryByRole('status')).toBeNull()
   })
 
   it('propose un projet avec sa référence et son tiers en champs cachés', async () => {

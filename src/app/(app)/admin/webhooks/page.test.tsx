@@ -80,8 +80,8 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
-async function rendre(filtres: Record<string, string> = {}) {
-  render(await WebhooksPage({ searchParams: Promise.resolve(filtres) }))
+async function rendre() {
+  render(await WebhooksPage())
 }
 
 describe('écran des abonnements sortants', () => {
@@ -137,23 +137,5 @@ describe('écran des abonnements sortants', () => {
 
     expect(screen.getByText(/aucun abonnement/i)).toBeTruthy()
     expect(screen.getByText(/aucune livraison/i)).toBeTruthy()
-  })
-
-  it('porte le message de retour avec SA tonalité', async () => {
-    await rendre({ message: "L’URL n’a pas répondu.", tone: 'danger' })
-
-    const bandeau = screen.getByRole('alert')
-    expect(bandeau.textContent).toContain('L’URL n’a pas répondu.')
-    expect(bandeau.querySelector('svg[data-icone="danger"]')).not.toBeNull()
-  })
-
-  it('NE FAIT JAMAIS PASSER UN RETOUR POUR UNE RÉUSSITE en l absence de tonalité', async () => {
-    for (const tone of [undefined, 'vert', 'SUCCESS']) {
-      cleanup()
-      await rendre({ message: 'Retour sans tonalité.', ...(tone === undefined ? {} : { tone }) })
-      const bandeau = screen.getByRole('alert')
-      expect(bandeau.querySelector('svg[data-icone="avertissement"]'), String(tone)).not.toBeNull()
-      expect(bandeau.querySelector('svg[data-icone="succes"]'), String(tone)).toBeNull()
-    }
   })
 })

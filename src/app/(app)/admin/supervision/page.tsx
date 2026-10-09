@@ -25,19 +25,13 @@ export const dynamic = 'force-dynamic'
 export default async function SupervisionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ action?: string; du?: string; au?: string; message?: string; tone?: string }>
+  searchParams: Promise<{ action?: string; du?: string; au?: string }>
 }) {
   // Le verdict **avant** tout service : rien de ce que cette page allait
   // lire n'est lu si l'accès est refusé.
   const { autorise, user } = await accesAdministration()
   if (!autorise) return <AccesRefuse role={user.role} />
   const filtres = await searchParams
-
-  // La tonalité voyage avec le message. Une valeur forgée ou absente retombe
-  // sur l'avertissement, jamais sur le succès : rien ne doit pouvoir se faire
-  // passer pour une réussite.
-  const toneMessage =
-    filtres.tone === 'success' ? 'success' : filtres.tone === 'danger' ? 'danger' : 'warning'
 
   const action =
     filtres.action !== undefined && isAuditAction(filtres.action) ? filtres.action : undefined
@@ -57,10 +51,6 @@ export default async function SupervisionPage({
   return (
     <PageShell title="Supervision">
       <div className="flex flex-col gap-6">
-        {filtres.message !== undefined && (
-          <Banner tone={toneMessage}>{filtres.message}</Banner>
-        )}
-
         <AlertesPanel alertes={alertes} />
         <TravauxPanel travaux={travaux} ordonnanceur={ordonnanceur} />
 
