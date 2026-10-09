@@ -16,10 +16,10 @@ import { MissionsExplorer, type CommandeOuverte } from './MissionsExplorer'
 export default async function MissionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ message?: string; tone?: string }>
+  searchParams: Promise<{ message?: string; tone?: string; mission?: string }>
 }) {
   const user = await requireUser()
-  const { message, tone } = await searchParams
+  const { message, tone, mission } = await searchParams
   // Une tonalité forgée ou absente retombe sur « success », comme sur l'écran
   // d'administration : ce canal ne porte pas toujours de tonalité explicite.
   const toneMessage = tone === 'danger' ? 'danger' : 'success'
@@ -59,7 +59,12 @@ export default async function MissionsPage({
         </div>
       )}
 
+      {/* La clé remonte l'explorateur à chaque création : son état local
+          garderait sinon le volet « Nouvelle mission » ouvert, comme si rien
+          ne s'était passé. */}
       <MissionsExplorer
+        key={mission ?? ''}
+        missionInitiale={mission ?? null}
         missions={missions}
         clients={clients}
         heuresParJourDefaut={settings.minutesParJour / 60}

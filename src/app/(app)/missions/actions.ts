@@ -129,9 +129,13 @@ export async function addMission(formData: FormData) {
   // parce que c'est inutile : c'est la promesse du produit. L'application
   // s'utilise entière sans Dolibarr, et le chemin ordinaire ne doit pas
   // traverser son service.
+  // Le bandeau et la sélection de la mission créée sont la seule preuve que
+  // le clic a porté : sans eux, le formulaire restait affiché tel quel, et
+  // l'on recommençait — une mission en double à chaque essai.
   if (projet.type === 'AUCUN') {
-    await createMission(commun)
+    const { id } = await createMission(commun)
     revalidatePath('/missions')
+    redirect(annonceMission(`Mission « ${label} » créée.`, 'success', id))
     return
   }
 
@@ -148,10 +152,10 @@ export async function addMission(formData: FormData) {
   const phrases: string[] = []
   phrases.push(
     resultat.projetCree
-      ? `Mission créée, avec le projet « ${resultat.projet?.ref} ».`
-      : 'Mission créée et rattachée au projet Dolibarr choisi.',
+      ? `Mission « ${label} » créée, avec le projet « ${resultat.projet?.ref} ».`
+      : `Mission « ${label} » créée et rattachée au projet Dolibarr choisi.`,
   )
-  redirect(annonceMission(phrases.join(' ')))
+  redirect(annonceMission(phrases.join(' '), 'success', resultat.missionId))
 }
 
 /** `null` = rien n'a encore été soumis. */
@@ -391,13 +395,25 @@ export async function creerMissionDepuisCommande(formData: FormData): Promise<vo
 
   revalidatePath('/missions')
   redirect(
-    annonceMission(phrases.join(' '), resultat.commandeNonRattachee === null ? 'success' : 'danger'),
+    annonceMission(
+      phrases.join(' '),
+      resultat.commandeNonRattachee === null ? 'success' : 'danger',
+      resultat.missionId,
+    ),
   )
 }
 
-/** Un message porté par la redirection, avec sa tonalité. */
-function annonceMission(message: string, tone: 'success' | 'danger' = 'success'): string {
-  return `/missions?message=${encodeURIComponent(message)}&tone=${tone}`
+/**
+ * Un message porté par la redirection, avec sa tonalité — et la mission à
+ * ouvrir, quand l'acte vient d'en créer une.
+ */
+function annonceMission(
+  message: string,
+  tone: 'success' | 'danger' = 'success',
+  missionId?: string,
+): string {
+  const suite = missionId === undefined ? '' : `&mission=${encodeURIComponent(missionId)}`
+  return `/missions?message=${encodeURIComponent(message)}&tone=${tone}${suite}`
 }
 
 /**

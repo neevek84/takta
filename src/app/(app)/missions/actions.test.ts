@@ -11,7 +11,9 @@ const {
   impactSuppressionPrestation,
   supprimerPrestation,
   ligneTrouvee,
+  redirect,
 } = vi.hoisted(() => ({
+  redirect: vi.fn(),
   requireUser: vi.fn(),
   revalidatePath: vi.fn(),
   createMission: vi.fn(),
@@ -23,6 +25,8 @@ const {
   supprimerPrestation: vi.fn(),
   ligneTrouvee: vi.fn(),
 }))
+
+vi.mock('next/navigation', () => ({ redirect }))
 
 vi.mock('@/auth', () => ({
   requireUser,
@@ -82,6 +86,7 @@ import {
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue({ id: 'u1', role: 'ADMIN' })
   revalidatePath.mockReset()
+  redirect.mockReset()
   createMission.mockReset().mockResolvedValue({ id: 'm1' })
   updateMissionSignataire.mockReset().mockResolvedValue({ ok: true })
   updateLine.mockReset().mockResolvedValue({ ok: true })
@@ -125,6 +130,14 @@ describe('addMission', () => {
       // serait une preuve fausse.
       userId: 'u1',
     })
+  })
+
+  it('annonce la création et ouvre la mission créée', async () => {
+    await addMission(formulaire({ clientId: 'c1', label: 'ITSM' }))
+    const cible = String(redirect.mock.calls[0]?.[0])
+    expect(cible).toContain('mission=m1')
+    expect(cible).toContain('tone=success')
+    expect(decodeURIComponent(cible)).toContain('Mission « ITSM » créée.')
   })
 
   it('attribue la création à l utilisateur de la session', async () => {

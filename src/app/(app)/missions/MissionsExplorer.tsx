@@ -73,6 +73,7 @@ export function MissionsExplorer({
   tiersParClient,
   dolibarrActif,
   panneDolibarr,
+  missionInitiale = null,
 }: {
   missions: MissionForUser[]
   clients: Array<{ id: string; name: string }>
@@ -92,9 +93,15 @@ export function MissionsExplorer({
   dolibarrActif: boolean
   /** message d'une instance Dolibarr injoignable, `null` sinon */
   panneDolibarr: string | null
+  /** mission à ouvrir d'emblée — celle qu'on vient de créer —, `null` sinon */
+  missionInitiale?: string | null
 }) {
   const [recherche, setRecherche] = useState('')
-  const [selection, setSelection] = useState<string>(missions[0]?.id ?? NOUVELLE)
+  const [selection, setSelection] = useState<string>(
+    missions.some((m) => m.id === missionInitiale)
+      ? (missionInitiale as string)
+      : (missions[0]?.id ?? NOUVELLE),
+  )
   // Le sélecteur de la carte Dolibarr porte des **tiers**, pas des clients
   // locaux : c'est chez Dolibarr que vivent les commandes, et exiger un
   // rattachement préalable obligeait à quitter la page pour y revenir.
