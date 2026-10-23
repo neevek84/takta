@@ -12,6 +12,7 @@ import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { LIEUX } from '@/core/types'
 import type { CraStatus, DisplayUnit, EngagementSource, Lieu } from '@/core/types'
 import { isLocked } from '@/core/cra/state-machine'
+import { couvreLaLigne, estModeCra, type ModeCra } from '@/core/cra/perimetre'
 import { appendAudit, actorOf } from './audit'
 import { planifierTrajets } from './trajets'
 
@@ -26,6 +27,8 @@ export interface LineForGrid {
   allowedSlotIds: string[]
   /** lieu par défaut de la mission ; une saisie en hérite, et peut le changer */
   lieuDefaut: Lieu
+  /** ce que couvre le CRA généré depuis cette prestation */
+  modeCra: ModeCra
 }
 
 /**
@@ -163,6 +166,8 @@ export interface MissionForUser {
   signataireEmail: string
   /** lieu par défaut des saisies de cette mission */
   lieuDefaut: Lieu
+  /** ce que couvre un CRA de cette mission : toute la mission, ou une prestation */
+  modeCra: ModeCra
   lines: Array<{
     id: string
     label: string
@@ -238,6 +243,7 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
     signataireNom: m.signataireNom,
     signataireEmail: m.signataireEmail,
     lieuDefaut: m.lieuDefaut as Lieu,
+    modeCra: estModeCra(m.modeCra) ? m.modeCra : 'MISSION',
     lines: m.lines.map((l) => ({
       id: l.id,
       label: l.label,
@@ -433,7 +439,10 @@ export async function updateMissionLieu(
   const aujourdhui = options.aujourdhui ?? new Date().toISOString().slice(0, 10)
   const [{ dureeTrajetMinutes }, cras, aVenir] = await Promise.all([
     getSettings(),
-    prisma.cra.findMany({ where: { missionId, userId }, select: { month: true, status: true } }),
+    prisma.cra.findMany({
+      where: { missionId, userId },
+      select: { month: true, lineId: true, status: true },
+    }),
     prisma.timeEntry.findMany({
       where: {
         userId,
@@ -443,16 +452,21 @@ export async function updateMissionLieu(
       // Dans l'ordre du temps : un trajet se raccourcit contre ceux déjà
       // posés, et le résultat ne doit pas dépendre de l'ordre de la base.
       orderBy: [{ date: 'asc' }, { startMinute: 'asc' }],
-      select: { id: true, date: true, lieu: true },
+      select: { id: true, lineId: true, date: true, lieu: true },
     }),
   ])
 
-  const moisVerrouilles = new Set(
-    cras.filter((c) => isLocked(c.status as CraStatus)).map((c) => c.month.toISOString().slice(0, 7)),
-  )
-  const concernees = aVenir.filter(
-    (e) => e.lieu !== lieu && !moisVerrouilles.has(e.date.toISOString().slice(0, 7)),
-  )
+  // Fermé pour toute la mission, ou pour la seule prestation de la saisie.
+  const fermes = cras.filter((c) => isLocked(c.status as CraStatus))
+  const concernees = aVenir.filter((e) => {
+    const mois = e.date.toISOString().slice(0, 7)
+    return (
+      e.lieu !== lieu &&
+      !fermes.some(
+        (c) => c.month.toISOString().slice(0, 7) === mois && couvreLaLigne(c.lineId, e.lineId),
+      )
+    )
+  })
 
   // Tout ou rien : une mission passée chez le client dont la moitié des jours
   // seulement aurait suivi serait pire que l'état de départ. Le délai est
@@ -553,5 +567,49 @@ export async function listActiveLines(userId: string): Promise<LineForGrid[]> {
     soldCentiemes: a.soldCentiemes,
     allowedSlotIds: a.line.allowedSlotIds === '' ? [] : a.line.allowedSlotIds.split(','),
     lieuDefaut: a.line.mission.lieuDefaut as Lieu,
+    modeCra: estModeCra(a.line.mission.modeCra) ? a.line.mission.modeCra : 'MISSION',
   }))
+}
+
+export type ModeCraResult = { ok: true } | { ok: false; erreur: string }
+
+/**
+ * Règle ce que couvre un CRA de cette mission : toute la mission, ou chacune
+ * de ses prestations (`@/core/cra/perimetre`).
+ *
+ * **Rien n'est converti ici.** Les CRA déjà générés gardent ce qu'ils couvrent :
+ * un CRA envoyé ou validé est un document que le client a vu, et le réglage ne
+ * le réécrit pas. Le changement prend effet à la prochaine génération, qui
+ * remplace d'elle-même un brouillon jamais envoyé de l'autre forme, et refuse
+ * de doubler un CRA qui a vécu (`genererCra`).
+ *
+ * Scopé par affectation, comme le lieu et le signataire. Consigné sous
+ * `reglage.modifie` : c'est un réglage, et il décide de ce qui se facture.
+ */
+export async function updateMissionModeCra(
+  userId: string,
+  missionId: string,
+  mode: string,
+): Promise<ModeCraResult> {
+  if (!estModeCra(mode)) return { ok: false, erreur: 'Réglage de facturation inconnu.' }
+
+  const mission = await prisma.mission.findFirst({
+    where: { id: missionId, lines: { some: { assignments: { some: { userId } } } } },
+    select: { id: true, modeCra: true },
+  })
+  if (mission === null) return { ok: false, erreur: 'Cette mission ne vous est pas affectée.' }
+
+  // Le formulaire repose le champ à chaque soumission : rien à écrire ni à
+  // consigner quand rien ne change.
+  if (mission.modeCra === mode) return { ok: true }
+
+  await prisma.mission.update({ where: { id: missionId }, data: { modeCra: mode } })
+  await appendAudit({
+    ...(await actorOf(userId)),
+    action: 'reglage.modifie',
+    entityType: 'Mission',
+    entityId: missionId,
+    payload: { modeCra: { avant: mission.modeCra, apres: mode } },
+  })
+  return { ok: true }
 }

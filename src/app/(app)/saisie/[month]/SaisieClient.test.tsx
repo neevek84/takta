@@ -48,6 +48,7 @@ const lines: LineForGrid[] = [
     soldCentiemes: 3000,
     allowedSlotIds: [],
     lieuDefaut: 'DISTANCE',
+    modeCra: 'MISSION',
   },
   {
     id: 'l2',
@@ -59,6 +60,7 @@ const lines: LineForGrid[] = [
     soldCentiemes: 1000,
     allowedSlotIds: [],
     lieuDefaut: 'DISTANCE',
+    modeCra: 'MISSION',
   },
 ]
 
@@ -79,6 +81,7 @@ const lignesDistinctes: LineForGrid[] = [
     soldCentiemes: 3000,
     allowedSlotIds: [],
     lieuDefaut: 'DISTANCE',
+    modeCra: 'MISSION',
   },
   {
     id: 'lB',
@@ -90,6 +93,7 @@ const lignesDistinctes: LineForGrid[] = [
     soldCentiemes: 3000,
     allowedSlotIds: [],
     lieuDefaut: 'DISTANCE',
+    modeCra: 'MISSION',
   },
 ]
 
@@ -844,6 +848,35 @@ describe('SaisieClient — calendrier', () => {
       const lien = await screen.findByRole('link', { name: /Ouvrir le CRA/ })
       expect(lien.getAttribute('href')).toBe('/cra/cra-envoye')
       expect(screen.getByText(/envoyé au client\. Annulez l’envoi/)).toBeDefined()
+    })
+
+    it('nomme la prestation quand la mission fait un CRA par prestation', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(2)
+      renderClient({ lines: lines.map((l) => ({ ...l, modeCra: 'PRESTATION' as const })) })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      expect(
+        await screen.findByText(/2 jours en prévisionnel sur la prestation « ACME · ITSM · Consultant ITSM »/),
+      ).toBeDefined()
+    })
+
+    it('refuse de doubler un CRA de l’autre forme, et y renvoie', async () => {
+      compterPrevisionnelDeLaLigne.mockResolvedValue(0)
+      genererCraAction.mockResolvedValue({
+        ok: false,
+        raison: 'AUTRE_PERIMETRE',
+        craId: 'cra-commande',
+        statut: 'ENVOYE',
+        prestationLabel: 'Renouvellement',
+      })
+      renderClient()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Générer le CRA' }))
+
+      const lien = await screen.findByRole('link', { name: /Ouvrir le CRA/ })
+      expect(lien.getAttribute('href')).toBe('/cra/cra-commande')
+      expect(screen.getByText(/« Renouvellement » a déjà son propre CRA/)).toBeDefined()
     })
 
     it('renonce sans générer', async () => {

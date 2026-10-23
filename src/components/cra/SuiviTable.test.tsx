@@ -8,6 +8,8 @@ function unCra(extra: Record<string, unknown> = {}) {
     id: 'cra-1',
     missionLabel: 'ITSM',
     clientName: 'ACME',
+    lineId: '',
+    prestationLabel: null,
     month: '2026-03',
     status: 'ENVOYE',
     invoiceNumber: null,

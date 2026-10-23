@@ -102,7 +102,11 @@ export default async function CraDetailPage({
   }
 
   return (
-    <PageShell title={`${cra.clientName} · ${cra.missionLabel} — ${libelleMois(cra.month)}`}>
+    <PageShell
+      title={`${cra.clientName} · ${cra.missionLabel}${
+        cra.prestationLabel === null ? '' : ` · ${cra.prestationLabel}`
+      } — ${libelleMois(cra.month)}`}
+    >
       {/* La signature arrive d'ailleurs — webhook, page du client — : sans
           relecture, l'écran resservait l'état mémorisé par le navigateur. */}
       <RelectureAutomatique enAttente={cra.status === 'ENVOYE'} />
@@ -124,6 +128,7 @@ export default async function CraDetailPage({
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <h2 className="text-lg">
             {cra.clientName} · {cra.missionLabel}
+            {cra.prestationLabel !== null && <> · {cra.prestationLabel}</>}
           </h2>
           {/* La période, sur la carte et pas seulement en tête de page : deux
               missions aux noms voisins et un mois implicite, et l'on ne sait

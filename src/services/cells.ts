@@ -12,6 +12,8 @@ import { getSettings } from './settings'
 import { enqueueTimeEntry } from './sync/outbox'
 import { resolveLineMinutesParJour, type CapacityWarning } from './time-entries'
 import { planifierTrajets } from './trajets'
+import { moisFermePourLaLigne } from './cra-perimetre'
+import { couvreLaLigne } from '@/core/cra/perimetre'
 
 export type CellResult =
   | { ok: true; state: CellState; warning?: CapacityWarning; signalement?: string }
@@ -36,20 +38,9 @@ export async function isMonthLocked(
   lineId: string,
   month: string,
 ): Promise<boolean> {
-  const line = await prisma.missionLine.findUnique({
-    where: { id: lineId },
-    select: { missionId: true },
-  })
-  if (line === null) return false
-
-  const cra = await prisma.cra.findUnique({
-    where: {
-      missionId_userId_month: { missionId: line.missionId, userId, month: monthStartOf(month) },
-    },
-    select: { status: true },
-  })
-
-  return cra !== null && isLocked(cra.status as CraStatus)
+  // Le CRA de la prestation ou celui de toute la mission : un seul juge pour
+  // les deux formes (`cra-perimetre.ts`).
+  return moisFermePourLaLigne(userId, lineId, month)
 }
 
 /**
@@ -57,8 +48,9 @@ export async function isMonthLocked(
  * `cleVerrou(ligne, mois)` par prestation affectée dont le CRA du mois est
  * fermé à la saisie.
  *
- * Le même verdict que `isMonthLocked` — `isLocked` sur le CRA du couple
- * (mission, mois) de **ce** compte —, en deux requêtes plutôt qu'une par
+ * Le même verdict que `isMonthLocked` — `isLocked` sur un CRA de **ce** compte
+ * qui couvre la prestation ce mois-là, le sien ou celui de toute sa mission —,
+ * en deux requêtes plutôt qu'une par
  * cellule : le tableau 3 mois en interrogerait sinon des centaines. Il ne sert
  * qu'à l'affichage ; `saveEntry` revérifie le verrou à chaque écriture.
  */
@@ -77,16 +69,22 @@ export async function listerVerrousParLigne(userId: string, mois: string[]): Pro
       month: { in: mois.map(monthStartOf) },
       missionId: { in: [...new Set(lignes.map((l) => l.missionId))] },
     },
-    select: { missionId: true, month: true, status: true },
+    select: { missionId: true, lineId: true, month: true, status: true },
   })
 
-  const verrous: string[] = []
+  // Un ensemble : un mois fermé pour toute la mission **et** pour une de ses
+  // prestations (la mission a changé de réglage) ne compte qu'une fois.
+  const verrous = new Set<string>()
   for (const cra of cras) {
     if (!isLocked(cra.status as CraStatus)) continue
     const m = cra.month.toISOString().slice(0, 7)
-    for (const l of lignes) if (l.missionId === cra.missionId) verrous.push(cleVerrou(l.id, m))
+    for (const l of lignes) {
+      if (l.missionId === cra.missionId && couvreLaLigne(cra.lineId, l.id)) {
+        verrous.add(cleVerrou(l.id, m))
+      }
+    }
   }
-  return verrous
+  return [...verrous]
 }
 
 /** Une durée libre venue du client n'est jamais crue sur parole. */

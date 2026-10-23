@@ -326,7 +326,7 @@ describe('remplirMois et viderMois', () => {
 
 /**
  * Tâche 9 — le bouton « Générer le CRA » de la Saisie. Les deux actions
- * partagent la résolution ligne → mission (`resoudreMissionAffectee`, dans
+ * partagent la résolution ligne → périmètre (`resoudrePerimetreAffecte`, dans
  * `cra-generation.ts`), déjà éprouvée par les tests de `genererCra` : ici on
  * vérifie le branchement, pas la logique métier qu'il délègue.
  */

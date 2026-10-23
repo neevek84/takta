@@ -9,6 +9,7 @@
 import { timingSafeEqual } from 'node:crypto'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/db/client'
+import { libelleDuCra } from '@/core/cra/perimetre'
 import { empreinteJeton, fabriquerJeton } from '@/core/auth/reinitialisation'
 import type { CraDocument } from '@/core/cra/document'
 import {
@@ -401,12 +402,12 @@ export async function pdfSigneDuLien(lienId: string): Promise<{ fileName: string
   if (lien === null || lien.revokedAt !== null) return null
   const demande = await prisma.signatureRequest.findUnique({
     where: { craId: lien.craId },
-    select: { numero: true, status: true, signedPdf: true, cra: { select: { month: true, mission: { select: { label: true, client: { select: { name: true } } } } } } },
+    select: { numero: true, status: true, signedPdf: true, cra: { select: { month: true, lineId: true, mission: { select: { label: true, client: { select: { name: true } }, lines: { select: { id: true, label: true } } } } } } },
   })
   if (demande === null || demande.numero !== lien.numero || demande.status !== 'SIGNE' || demande.signedPdf == null) return null
   const mois = demande.cra.month.toISOString().slice(0, 7)
   return {
-    fileName: nomFichierCra(demande.cra.mission.client.name, demande.cra.mission.label, mois).replace(/\.pdf$/, '-signe.pdf'),
+    fileName: nomFichierCra(demande.cra.mission.client.name, libelleDuCra(demande.cra), mois).replace(/\.pdf$/, '-signe.pdf'),
     bytes: new Uint8Array(demande.signedPdf),
   }
 }

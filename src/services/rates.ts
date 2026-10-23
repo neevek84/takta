@@ -1,6 +1,7 @@
 import { prisma } from '@/db/client'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { isLocked } from '@/core/cra/state-machine'
+import { TOUTE_LA_MISSION } from '@/core/cra/perimetre'
 import { getSettings } from './settings'
 import { appendAudit, actorOf } from './audit'
 import type { CraStatus } from '@/core/types'
@@ -32,6 +33,7 @@ async function candidats(userId: string, globalOverride?: number): Promise<Candi
     where: { userId },
     select: {
       id: true,
+      lineId: true,
       date: true,
       minutesParJour: true,
       line: {
@@ -50,12 +52,14 @@ async function candidats(userId: string, globalOverride?: number): Promise<Candi
 
   const cras = await prisma.cra.findMany({
     where: { userId },
-    select: { missionId: true, month: true, status: true },
+    select: { missionId: true, lineId: true, month: true, status: true },
   })
+  // Clé par périmètre : un CRA de toute la mission porte un `lineId` vide, et
+  // chaque saisie cherche les deux — le sien et celui de sa mission.
   const verrous = new Set(
     cras
       .filter((c) => isLocked(c.status as CraStatus))
-      .map((c) => `${c.missionId}|${c.month.toISOString().slice(0, 7)}`),
+      .map((c) => `${c.missionId}|${c.lineId}|${c.month.toISOString().slice(0, 7)}`),
   )
 
   const out: Candidate[] = []
@@ -68,8 +72,11 @@ async function candidats(userId: string, globalOverride?: number): Promise<Candi
     })
     if (cible === e.minutesParJour) continue
 
-    const cle = `${e.line.missionId}|${e.date.toISOString().slice(0, 7)}`
-    out.push({ id: e.id, actuel: e.minutesParJour, cible, verrouille: verrous.has(cle) })
+    const mois = e.date.toISOString().slice(0, 7)
+    const verrouille =
+      verrous.has(`${e.line.missionId}|${TOUTE_LA_MISSION}|${mois}`) ||
+      verrous.has(`${e.line.missionId}|${e.lineId}|${mois}`)
+    out.push({ id: e.id, actuel: e.minutesParJour, cible, verrouille })
   }
   return out
 }

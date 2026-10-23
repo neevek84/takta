@@ -15,6 +15,7 @@ const ligne: LineForGrid = {
   soldCentiemes: 3000,
   allowedSlotIds: [],
   lieuDefaut: 'DISTANCE',
+  modeCra: 'MISSION',
 }
 
 const ligneRestreinte: LineForGrid = { ...ligne, allowedSlotIds: ['matin', 'apres-midi'] }

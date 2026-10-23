@@ -341,3 +341,19 @@ describe('getCraPdfForDownload', () => {
     await expect(getCraPdfForDownload(autreUserId, craId)).rejects.toThrow()
   })
 })
+
+describe('buildCraPdf — un CRA par prestation', () => {
+  it('n’imprime que sa prestation, et la nomme dans le titre et le fichier', async () => {
+    await saisir(ligneJour, '2026-06-01', 480)
+    await saisir(ligneNuit, '2026-06-02', 480)
+    const parPrestation = await getOrCreateCra(userId, missionId, '2026-07', undefined, undefined, ligneNuit)
+    await saisir(ligneJour, '2026-07-01', 480)
+    await saisir(ligneNuit, '2026-07-02', 480)
+
+    const { document, fileName } = await buildCraPdf(userId, parPrestation.id)
+
+    expect(document.lignes.map((l) => l.label)).toEqual(['Nuit'])
+    expect(document.missionLabel).toBe('Consultant ITSM · Nuit')
+    expect(fileName).toBe('CRA-PDF-client-Consultant-ITSM-Nuit-2026-07.pdf')
+  })
+})

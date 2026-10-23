@@ -14,6 +14,7 @@ const line: LineForGrid = {
   soldCentiemes: 3000, // 30 jours vendus
   allowedSlotIds: [],
   lieuDefaut: 'DISTANCE',
+  modeCra: 'MISSION',
 }
 
 function texte(): string {

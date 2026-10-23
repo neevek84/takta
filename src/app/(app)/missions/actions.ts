@@ -13,6 +13,8 @@ import {
   updateMissionLabel,
   updateMissionSignataire,
   updateMissionLieu,
+  updateMissionModeCra,
+  type ModeCraResult,
   type SignataireResult,
   type LieuResult,
 } from '@/services/missions'
@@ -211,6 +213,29 @@ export async function saveLieuMission(
 
   revalidatePath('/missions')
   // La grille de saisie lit le lieu par défaut pour pré-remplir le formulaire.
+  revalidatePath('/saisie', 'layout')
+  return resultat
+}
+
+/** `null` = rien n'a encore été soumis. */
+export type ModeCraState = ModeCraResult | null
+
+/** Règle ce que couvre un CRA de cette mission, et rend son verdict. */
+export async function saveModeCra(
+  _prevState: ModeCraState,
+  formData: FormData,
+): Promise<ModeCraState> {
+  const user = await requireUser()
+
+  const resultat = await updateMissionModeCra(
+    user.id,
+    String(formData.get('missionId')),
+    String(formData.get('modeCra') ?? ''),
+  )
+  if (!resultat.ok) return resultat
+
+  revalidatePath('/missions')
+  // La saisie lit le réglage pour dire ce que « Générer le CRA » couvrira.
   revalidatePath('/saisie', 'layout')
   return resultat
 }

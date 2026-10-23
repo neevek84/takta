@@ -1,4 +1,5 @@
 import { prisma } from '@/db/client'
+import { libelleDuCra } from '@/core/cra/perimetre'
 import { canTransition, type CraTransition } from '@/core/cra/state-machine'
 import { libelleMois } from '@/core/cra/document'
 import { figerContenu } from '@/core/signature/contenu-fige'
@@ -68,7 +69,7 @@ export async function sendCraForSignature(
 ): Promise<SendCraResult> {
   const cra = await prisma.cra.findFirst({
     where: { id: craId, userId },
-    include: { mission: { include: { client: true } } },
+    include: { mission: { include: { client: true, lines: { select: { id: true, label: true } } } } },
   })
   if (cra === null) return echec('TRANSITION_IMPOSSIBLE')
 
@@ -100,7 +101,7 @@ export async function sendCraForSignature(
   const { fileName, bytes, champs, document } = await buildCraPdf(userId, craId)
   const { json, empreinte } = figerContenu(document)
   const mois = cra.month.toISOString().slice(0, 7)
-  const titre = `CRA ${cra.mission.client.name} — ${cra.mission.label} — ${libelleMois(mois)}`
+  const titre = `CRA ${cra.mission.client.name} — ${libelleDuCra(cra)} — ${libelleMois(mois)}`
 
   let depot: SignatureDepot
   try {
@@ -202,7 +203,7 @@ export async function sendCraForSignature(
     to: destinataire.email,
     gabarit: gabaritEnvoiClient({
       clientNom: cra.mission.client.name,
-      missionLabel: cra.mission.label,
+      missionLabel: libelleDuCra(cra),
       moisLibelle: libelleMois(mois),
       signataireNom: destinataire.nom,
       lien: `${origine}/v/${jeton}`,

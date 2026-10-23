@@ -315,6 +315,7 @@ export function SaisieClient(props: {
   const [generation, setGeneration] = useState<{
     lineId: string
     missionLabel: string
+    parPrestation: boolean
     previsionnel: number
   } | null>(null)
 
@@ -462,7 +463,14 @@ export function SaisieClient(props: {
                 : `Le CRA de ce mois est déjà validé. Rouvrez-le depuis le suivi pour le regénérer.`,
               r.craId,
             )
-          : refus(`Vous n'êtes pas affecté à cette prestation.`),
+          : r.raison === 'AUTRE_PERIMETRE'
+            ? refus(
+                r.prestationLabel === null
+                  ? `Ce mois a déjà un CRA pour toute la mission, envoyé avant le passage à un CRA par prestation. Il reste celui de ce mois.`
+                  : `La prestation « ${r.prestationLabel} » a déjà son propre CRA ce mois-ci : un CRA pour toute la mission compterait ses jours deux fois.`,
+                r.craId,
+              )
+            : refus(`Vous n'êtes pas affecté à cette prestation.`),
       )
       return
     }
@@ -584,7 +592,12 @@ export function SaisieClient(props: {
                 // panneau — s'il s'ouvre — doit rester celui de la
                 // prestation pour laquelle la question a été posée.
                 const lineIdVise = lineId
-                const missionLabelVise = `${ligne.clientName} · ${ligne.missionLabel}`
+                // Réglée par prestation, la mission génère le CRA de celle-ci
+                // seule : le panneau doit la nommer, pas la mission entière.
+                const parPrestation = ligne.modeCra === 'PRESTATION'
+                const missionLabelVise = parPrestation
+                  ? `${ligne.clientName} · ${ligne.missionLabel} · ${ligne.label}`
+                  : `${ligne.clientName} · ${ligne.missionLabel}`
                 const previsionnel = await compterPrevisionnelDeLaLigne({
                   lineId: lineIdVise,
                   month: props.month,
@@ -592,7 +605,14 @@ export function SaisieClient(props: {
                 // Rien à trancher : on génère sans poser de question — une
                 // question sur zéro jour apprendrait à cliquer sans lire.
                 if (previsionnel === 0) await lancerGeneration(lineIdVise, 'SUPPRIMER')
-                else setGeneration({ lineId: lineIdVise, missionLabel: missionLabelVise, previsionnel })
+                else {
+                  setGeneration({
+                    lineId: lineIdVise,
+                    missionLabel: missionLabelVise,
+                    parPrestation,
+                    previsionnel,
+                  })
+                }
               }}
             >
               Générer le CRA
@@ -639,6 +659,7 @@ export function SaisieClient(props: {
         <PanneauGeneration
           month={props.month}
           missionLabel={generation.missionLabel}
+          parPrestation={generation.parPrestation}
           previsionnel={generation.previsionnel}
           onChoix={(choix) => {
             void lancerGeneration(generation.lineId, choix)

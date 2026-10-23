@@ -22,6 +22,7 @@ const lines: LineForGrid[] = [
     soldCentiemes: 3000,
     allowedSlotIds: [],
     lieuDefaut: 'DISTANCE',
+    modeCra: 'MISSION',
   },
 ]
 

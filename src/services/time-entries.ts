@@ -10,6 +10,8 @@ import { getSettings } from './settings'
 import { enqueueTimeEntry } from './sync/outbox'
 import { appendAudit, actorOf } from './audit'
 import { planifierTrajets } from './trajets'
+import { moisFermePourLaLigne } from './cra-perimetre'
+import { couvreLaLigne } from '@/core/cra/perimetre'
 
 export interface MonthEntry {
   id: string
@@ -183,10 +185,6 @@ export type SaveResult =
    */
   | { ok: false; reason: 'CHEVAUCHEMENT'; startMinute: number }
 
-function monthStartOf(isoDate: string): Date {
-  return new Date(`${isoDate.slice(0, 7)}-01T00:00:00.000Z`)
-}
-
 /**
  * Facteur effectif d'une prestation, en remontant la cascade
  * prestation → mission → client → global.
@@ -275,18 +273,7 @@ export async function saveEntry(args: {
     return { ok: false, reason: 'NON_AFFECTE' }
   }
 
-  const cra = await prisma.cra.findUnique({
-    where: {
-      missionId_userId_month: {
-        missionId: assignment.line.missionId,
-        userId: args.userId,
-        month: monthStartOf(args.date),
-      },
-    },
-    select: { status: true },
-  })
-
-  if (cra && isLocked(cra.status as CraStatus)) {
+  if (await moisFermePourLaLigne(args.userId, args.lineId, args.date)) {
     return { ok: false, reason: 'VERROUILLE' }
   }
 
@@ -613,15 +600,16 @@ async function splitPastForecastByLock(
       month: new Date(`${month}-01T00:00:00.000Z`),
       missionId: { in: [...new Set(lines.map((l) => l.missionId))] },
     },
-    select: { missionId: true, status: true },
+    select: { missionId: true, lineId: true, status: true },
   })
-  const lockedMissions = new Set(
-    cras.filter((c) => isLocked(c.status as CraStatus)).map((c) => c.missionId),
-  )
+  const fermes = cras.filter((c) => isLocked(c.status as CraStatus))
 
   const convertibles = candidates.filter((e) => {
     const missionId = missionByLine.get(e.lineId)
-    return missionId !== undefined && !lockedMissions.has(missionId)
+    return (
+      missionId !== undefined &&
+      !fermes.some((c) => c.missionId === missionId && couvreLaLigne(c.lineId, e.lineId))
+    )
   })
 
   return { candidates, convertibles, lockedCount: candidates.length - convertibles.length }

@@ -17,6 +17,8 @@
 import { prisma } from '@/db/client'
 import { enqueueTimeEntry } from '@/services/sync/outbox'
 import type { Prisma } from '@prisma/client'
+import { TOUTE_LA_MISSION } from '@/core/cra/perimetre'
+import { clePerimetre, saisiesDuPerimetre, type PerimetreCra } from './cra-perimetre'
 
 /** Le premier instant du mois, en UTC. `month` est au format 'YYYY-MM'. */
 function bornes(month: string): { debut: Date; fin: Date } {
@@ -40,7 +42,32 @@ export async function compterPrevisionnelParMission(args: {
   /** 'YYYY-MM' */
   month: string
 }): Promise<Map<string, number>> {
-  if (args.missionIds.length === 0) return new Map()
+  const perimetres = args.missionIds.map((missionId) => ({ missionId, lineId: TOUTE_LA_MISSION }))
+  const par = await compterPrevisionnelParPerimetre({
+    userId: args.userId,
+    perimetres,
+    month: args.month,
+  })
+  const out = new Map<string, number>()
+  for (const p of perimetres) {
+    const n = par.get(clePerimetre(p))
+    if (n !== undefined) out.set(p.missionId, n)
+  }
+  return out
+}
+
+/**
+ * Combien de jours prévisionnels chaque périmètre de CRA porte sur ce mois —
+ * toute une mission, ou une seule prestation (`cra-perimetre.ts`). Rendu par
+ * `clePerimetre`, en une seule requête.
+ */
+export async function compterPrevisionnelParPerimetre(args: {
+  userId: string
+  perimetres: ReadonlyArray<PerimetreCra>
+  /** 'YYYY-MM' */
+  month: string
+}): Promise<Map<string, number>> {
+  if (args.perimetres.length === 0) return new Map()
   const { debut, fin } = bornes(args.month)
 
   const saisies = await prisma.timeEntry.findMany({
@@ -48,14 +75,19 @@ export async function compterPrevisionnelParMission(args: {
       userId: args.userId,
       kind: 'PREVISIONNEL',
       date: { gte: debut, lt: fin },
-      line: { missionId: { in: [...args.missionIds] } },
+      OR: args.perimetres.map(saisiesDuPerimetre),
     },
-    select: { line: { select: { missionId: true } } },
+    select: { lineId: true, line: { select: { missionId: true } } },
   })
 
   const par = new Map<string, number>()
-  for (const s of saisies) {
-    par.set(s.line.missionId, (par.get(s.line.missionId) ?? 0) + 1)
+  for (const p of args.perimetres) {
+    const n = saisies.filter(
+      (s) =>
+        s.line.missionId === p.missionId &&
+        (p.lineId === TOUTE_LA_MISSION || s.lineId === p.lineId),
+    ).length
+    if (n > 0) par.set(clePerimetre(p), n)
   }
   return par
 }
@@ -74,7 +106,13 @@ export async function compterPrevisionnelParMission(args: {
  */
 export async function annulerPrevisionnelDuMois(
   tx: Prisma.TransactionClient,
-  args: { userId: string; missionId: string; month: string },
+  args: {
+    userId: string
+    missionId: string
+    month: string
+    /** la seule prestation que le CRA couvre ; absent ou vide = toute la mission */
+    lineId?: string
+  },
 ): Promise<number> {
   const { debut, fin } = bornes(args.month)
 
@@ -85,7 +123,10 @@ export async function annulerPrevisionnelDuMois(
       userId: args.userId,
       kind: 'PREVISIONNEL',
       date: { gte: debut, lt: fin },
-      line: { missionId: args.missionId },
+      ...saisiesDuPerimetre({
+        missionId: args.missionId,
+        lineId: args.lineId ?? TOUTE_LA_MISSION,
+      }),
     },
     select: { id: true },
   })
@@ -122,7 +163,13 @@ export async function annulerPrevisionnelDuMois(
  */
 export async function validerPrevisionnelDuMois(
   tx: Prisma.TransactionClient,
-  args: { userId: string; missionId: string; month: string },
+  args: {
+    userId: string
+    missionId: string
+    month: string
+    /** la seule prestation que le CRA couvre ; absent ou vide = toute la mission */
+    lineId?: string
+  },
 ): Promise<number> {
   const { debut, fin } = bornes(args.month)
 
@@ -131,7 +178,10 @@ export async function validerPrevisionnelDuMois(
       userId: args.userId,
       kind: 'PREVISIONNEL',
       date: { gte: debut, lt: fin },
-      line: { missionId: args.missionId },
+      ...saisiesDuPerimetre({
+        missionId: args.missionId,
+        lineId: args.lineId ?? TOUTE_LA_MISSION,
+      }),
     },
     select: { id: true },
   })

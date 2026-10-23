@@ -40,7 +40,12 @@ export function SuiviTable({ cras }: { cras: CraView[] }) {
           <tr key={cra.id} className="border-b border-rule">
             <td className="px-2 py-1">{libelleMois(cra.month)}</td>
             <td className="px-2 py-1">{cra.clientName}</td>
-            <td className="px-2 py-1">{cra.missionLabel}</td>
+            <td className="px-2 py-1">
+              {cra.missionLabel}
+              {cra.prestationLabel !== null && (
+                <span className="block text-sm text-muted">{cra.prestationLabel}</span>
+              )}
+            </td>
             <td className="px-2 py-1 text-right">{formatJours(cra.synthese.totalCentiemes)}</td>
             <td className="px-2 py-1">
               <StatusBadge status={etatSuivi(cra)} />
