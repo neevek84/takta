@@ -2,10 +2,12 @@ import { prisma } from '@/db/client'
 import type { Prisma } from '@prisma/client'
 import {
   annulerPrevisionnelDuMois,
-  compterPrevisionnelParMission,
+  compterPrevisionnelParPerimetre,
 } from './cra-previsionnel'
 import { missionsArmeesPourDolibarr } from './dolibarr/push'
-import { syntheseParMission, SYNTHESE_VIDE, type SyntheseCra } from './cra-synthese'
+import { syntheseParPerimetre, SYNTHESE_VIDE, type SyntheseCra } from './cra-synthese'
+import { clePerimetre } from './cra-perimetre'
+import { perimetreDuCra, TOUTE_LA_MISSION } from '@/core/cra/perimetre'
 import { applyTransition, InvalidTransitionError, type CraTransition } from '@/core/cra/state-machine'
 import { ENTITY_CRA } from '@/core/sync/policy'
 import type { SignatureStatus } from '@/core/signature/connector'
@@ -59,6 +61,10 @@ export interface CraView {
   missionId: string
   missionLabel: string
   clientName: string
+  /** la prestation que ce CRA couvre seule ; vide quand il couvre toute la mission */
+  lineId: string
+  /** son libellé ; `null` pour un CRA de toute la mission */
+  prestationLabel: string | null
   /** 'YYYY-MM' */
   month: string
   status: CraStatus
@@ -107,7 +113,9 @@ export interface CraView {
 }
 
 const WITH_MISSION = {
-  mission: { include: { client: true } },
+  // Les libellés des prestations, pour nommer celle d'un CRA qui n'en couvre
+  // qu'une : `Cra.lineId` n'est pas une relation — vide, il ne désigne rien.
+  mission: { include: { client: true, lines: { select: { id: true, label: true } } } },
   signatureRequest: {
     select: {
       provider: true,
@@ -132,12 +140,19 @@ const WITH_MISSION = {
 type Row = {
   id: string
   missionId: string
+  lineId: string
   month: Date
   status: string
   invoiceNumber: string | null
   invoicedAt: Date | null
   paidAt: Date | null
-  mission: { label: string; signataireNom: string; signataireEmail: string; client: { name: string } }
+  mission: {
+    label: string
+    signataireNom: string
+    signataireEmail: string
+    client: { name: string }
+    lines: Array<{ id: string; label: string }>
+  }
   signatureRequest: {
     provider: string
     status: string
@@ -182,6 +197,11 @@ function toView(
     missionId: row.missionId,
     missionLabel: row.mission.label,
     clientName: row.mission.client.name,
+    lineId: row.lineId,
+    prestationLabel:
+      row.lineId === TOUTE_LA_MISSION
+        ? null
+        : (row.mission.lines.find((l) => l.id === row.lineId)?.label ?? null),
     month: row.month.toISOString().slice(0, 7),
     status: row.status as CraStatus,
     invoiceNumber: row.invoiceNumber,
@@ -219,6 +239,10 @@ function monthStart(month: string): Date {
  * le journal sous un événement qui ne raconte rien — le CRA n'est ouvert
  * qu'une fois.
  *
+ * `lineId` : la seule prestation que ce CRA couvre, vide (le défaut) pour toute
+ * la mission — voir `@/core/cra/perimetre`. C'est à l'appelant de le déduire
+ * du réglage de la mission : cette fonction ne fait que retrouver ou créer.
+ *
  * `tx` : `prisma` par défaut, pour tout appelant hors transaction — c'est le
  * cas de tous les appelants historiques (l'écran CRA). `genererCra`
  * (`cra-generation.ts`) est seul à passer une transaction à lui, la sienne :
@@ -252,8 +276,11 @@ export async function getOrCreateCra(
   month: string,
   tx: Prisma.TransactionClient | typeof prisma = prisma,
   sortie?: { cree: boolean },
+  lineId: string = TOUTE_LA_MISSION,
 ): Promise<CraView> {
-  const cle = { missionId_userId_month: { missionId, userId, month: monthStart(month) } }
+  const cle = {
+    missionId_userId_month_lineId: { missionId, userId, month: monthStart(month), lineId },
+  }
 
   const existant = await tx.cra.findUnique({ where: cle, include: WITH_MISSION })
   if (existant !== null) {
@@ -264,7 +291,7 @@ export async function getOrCreateCra(
   let row
   try {
     row = await tx.cra.create({
-      data: { missionId, userId, month: monthStart(month) },
+      data: { missionId, userId, month: monthStart(month), lineId },
       include: WITH_MISSION,
     })
   } catch {
@@ -285,7 +312,12 @@ export async function getOrCreateCra(
       action: 'cra.ouvert',
       entityType: 'Cra',
       entityId: row.id,
-      payload: { missionId, month, status: row.status },
+      payload: {
+        missionId,
+        month,
+        status: row.status,
+        ...(lineId === TOUTE_LA_MISSION ? {} : { lineId }),
+      },
     })
   }
 
@@ -369,9 +401,12 @@ export async function transitionCra(
     // consommé sur l'engagement de la mission. L'annulation tombe donc dans la
     // même transaction que la validation.
     if (next === 'VALIDE') {
+      // Seulement celui que ce CRA couvre : valider une commande ne doit pas
+      // emporter les jours prévus d'une autre prestation de la mission.
       previsionnelAnnule = await annulerPrevisionnelDuMois(tx, {
         userId,
         missionId: updated.missionId,
+        lineId: updated.lineId,
         month: updated.month.toISOString().slice(0, 7),
       })
     }
@@ -390,6 +425,7 @@ export async function transitionCra(
     entityId: craId,
     payload: {
       missionId: row.missionId,
+      ...(row.lineId === TOUTE_LA_MISSION ? {} : { lineId: row.lineId }),
       month: row.month.toISOString().slice(0, 7),
       statutAvant: current.status,
       statutApres: next,
@@ -467,20 +503,18 @@ export async function getCra(userId: string, craId: string): Promise<CraView> {
 
   const month = row.month.toISOString().slice(0, 7)
   const archives = await craAvecArchive([row.id])
-  const previsionnel = await compterPrevisionnelParMission({
-    userId,
-    missionIds: [row.missionId],
-    month,
-  })
+  const perimetres = [{ missionId: row.missionId, lineId: row.lineId }]
+  const previsionnel = await compterPrevisionnelParPerimetre({ userId, perimetres, month })
   const armees = await missionsArmeesPourDolibarr([row.missionId])
-  const syntheses = await syntheseParMission({ userId, missionIds: [row.missionId], month })
+  const syntheses = await syntheseParPerimetre({ userId, perimetres, month })
+  const cle = clePerimetre(row)
 
   return toView(
     row,
     archives,
-    row.status === 'VALIDE' ? 0 : (previsionnel.get(row.missionId) ?? 0),
+    row.status === 'VALIDE' ? 0 : (previsionnel.get(cle) ?? 0),
     armees.has(row.missionId),
-    syntheses.get(row.missionId) ?? SYNTHESE_VIDE,
+    syntheses.get(cle) ?? SYNTHESE_VIDE,
   )
 }
 
@@ -572,19 +606,20 @@ export async function listCrasSuivi(
 
   const vues: CraView[] = []
   for (const [mois, lignes] of parMois) {
-    const missionIds = lignes.map((l) => l.missionId)
-    const previsionnel = await compterPrevisionnelParMission({ userId, missionIds, month: mois })
-    const armees = await missionsArmeesPourDolibarr(missionIds)
-    const syntheses = await syntheseParMission({ userId, missionIds, month: mois })
+    const perimetres = lignes.map((l) => ({ missionId: l.missionId, lineId: l.lineId }))
+    const previsionnel = await compterPrevisionnelParPerimetre({ userId, perimetres, month: mois })
+    const armees = await missionsArmeesPourDolibarr(lignes.map((l) => l.missionId))
+    const syntheses = await syntheseParPerimetre({ userId, perimetres, month: mois })
 
     for (const row of lignes) {
+      const cle = clePerimetre(row)
       vues.push(
         toView(
           row,
           archives,
-          row.status === 'VALIDE' ? 0 : (previsionnel.get(row.missionId) ?? 0),
+          row.status === 'VALIDE' ? 0 : (previsionnel.get(cle) ?? 0),
           armees.has(row.missionId),
-          syntheses.get(row.missionId) ?? SYNTHESE_VIDE,
+          syntheses.get(cle) ?? SYNTHESE_VIDE,
         ),
       )
     }
@@ -593,7 +628,9 @@ export async function listCrasSuivi(
   // Le regroupement par mois a défait l'ordre de la requête : on le rétablit.
   return vues.sort(
     (a, b) =>
-      b.month.localeCompare(a.month) || a.missionLabel.localeCompare(b.missionLabel, 'fr'),
+      b.month.localeCompare(a.month) ||
+      a.missionLabel.localeCompare(b.missionLabel, 'fr') ||
+      (a.prestationLabel ?? '').localeCompare(b.prestationLabel ?? '', 'fr'),
   )
 }
 
@@ -601,12 +638,17 @@ export interface CraNonCloture {
   missionId: string
   missionLabel: string
   clientName: string
+  /** la prestation que ce CRA couvrirait seule ; vide pour toute la mission */
+  lineId: string
+  /** son libellé ; `null` pour un CRA de toute la mission */
+  prestationLabel: string | null
   /** 'ABSENT' quand aucune ligne de CRA n'existe encore pour ce mois */
   status: CraStatus | 'ABSENT'
 }
 
 /**
- * Les missions saisies sur un mois dont le CRA n'est pas parti.
+ * Les CRA d'un mois saisi qui ne sont pas partis : un par mission, ou un par
+ * prestation quand la mission est réglée ainsi (`Mission.modeCra`).
  *
  * **Ne crée rien** : un rappel qui ouvrirait des CRA pour pouvoir annoncer
  * qu'ils sont ouverts serait absurde, et écrire depuis un traitement de fond
@@ -626,39 +668,60 @@ export async function listCrasNonClotures(
   const saisies = await prisma.timeEntry.findMany({
     where: { userId, date: { gte: debut, lt: fin } },
     select: {
+      lineId: true,
       line: {
         select: {
           missionId: true,
-          mission: { select: { label: true, client: { select: { name: true } } } },
+          label: true,
+          mission: { select: { label: true, modeCra: true, client: { select: { name: true } } } },
         },
       },
     },
   })
 
-  const missions = new Map<string, { missionLabel: string; clientName: string }>()
+  const attendus = new Map<string, Omit<CraNonCloture, 'status'>>()
   for (const s of saisies) {
-    missions.set(s.line.missionId, {
+    const lineId = perimetreDuCra(s.line.mission.modeCra, s.lineId)
+    const missionId = s.line.missionId
+    attendus.set(clePerimetre({ missionId, lineId }), {
+      missionId,
       missionLabel: s.line.mission.label,
       clientName: s.line.mission.client.name,
+      lineId,
+      prestationLabel: lineId === TOUTE_LA_MISSION ? null : s.line.label,
     })
   }
-  if (missions.size === 0) return []
+  if (attendus.size === 0) return []
 
   const cras = await prisma.cra.findMany({
-    where: { userId, month: debut, missionId: { in: [...missions.keys()] } },
-    select: { missionId: true, status: true },
+    where: {
+      userId,
+      month: debut,
+      missionId: { in: [...new Set([...attendus.values()].map((a) => a.missionId))] },
+    },
+    select: { missionId: true, lineId: true, status: true },
   })
-  const statutParMission = new Map(cras.map((c) => [c.missionId, c.status as CraStatus]))
+  const statutParPerimetre = new Map(cras.map((c) => [clePerimetre(c), c.status as CraStatus]))
 
   const out: CraNonCloture[] = []
-  for (const [missionId, info] of missions) {
-    const status = statutParMission.get(missionId)
+  for (const [cle, info] of attendus) {
+    const status = statutParPerimetre.get(cle)
     // Envoyé, validé ou refusé : le CRA a quitté le brouillon, il n'est plus
-    // « à clôturer ».
+    // « à clôturer ». Celui de toute la mission vaut pour chacune de ses
+    // prestations : un mois parti avant que la mission change de réglage n'a
+    // plus rien à clôturer.
+    const missionEntiere = statutParPerimetre.get(
+      clePerimetre({ missionId: info.missionId, lineId: TOUTE_LA_MISSION }),
+    )
+    if (missionEntiere !== undefined && missionEntiere !== 'BROUILLON') continue
     if (status !== undefined && status !== 'BROUILLON') continue
-    out.push({ missionId, ...info, status: status ?? 'ABSENT' })
+    out.push({ ...info, status: status ?? 'ABSENT' })
   }
-  return out.sort((a, b) => a.missionLabel.localeCompare(b.missionLabel, 'fr'))
+  return out.sort(
+    (a, b) =>
+      a.missionLabel.localeCompare(b.missionLabel, 'fr') ||
+      (a.prestationLabel ?? '').localeCompare(b.prestationLabel ?? '', 'fr'),
+  )
 }
 
 /**

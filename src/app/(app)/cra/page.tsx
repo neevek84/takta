@@ -44,7 +44,9 @@ export default async function SuiviCraPage({
           </p>
           {souffrance.map((cra: CraView) => (
             <p key={cra.id} className="text-sm">
-              {cra.clientName} · {cra.missionLabel} · {cra.month} — envoyé le{' '}
+              {cra.clientName} · {cra.missionLabel}
+              {cra.prestationLabel !== null && <> · {cra.prestationLabel}</>} · {cra.month} — envoyé
+              le{' '}
               {cra.signature?.sentAt.toISOString().slice(0, 10)}
             </p>
           ))}

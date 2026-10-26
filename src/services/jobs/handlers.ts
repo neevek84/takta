@@ -129,7 +129,9 @@ export const rappelCloture: JobHandler = async (ctx) => {
     gabaritRappelCloture({
       mois,
       missions: aClôturer.map((c) => ({
-        label: `${c.clientName} — ${c.missionLabel}`,
+        label: `${c.clientName} — ${c.missionLabel}${
+          c.prestationLabel === null ? '' : ` · ${c.prestationLabel}`
+        }`,
         etat: c.status,
       })),
     }),

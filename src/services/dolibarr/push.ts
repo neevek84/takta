@@ -1,4 +1,5 @@
 import { prisma } from '@/db/client'
+import { saisiesDuPerimetre } from '@/services/cra-perimetre'
 import { isArrete } from '@/core/cra/state-machine'
 import { buildTimeSpentPayloads, type PushableEntry } from '@/core/dolibarr/timespent'
 import { ENTITY_CRA } from '@/core/sync/policy'
@@ -156,7 +157,7 @@ export async function pushCraTimes(args: {
 
   const cra = await prisma.cra.findFirst({
     where: { id: args.craId, userId: args.userId },
-    select: { id: true, missionId: true, month: true, status: true },
+    select: { id: true, missionId: true, lineId: true, month: true, status: true },
   })
 
   // CRA disparu, ou appartenant à quelqu'un d'autre : rien à pousser, et ce
@@ -200,10 +201,11 @@ export async function pushCraTimes(args: {
   const debut = new Date(Date.UTC(cra.month.getUTCFullYear(), cra.month.getUTCMonth(), 1))
   const fin = new Date(Date.UTC(cra.month.getUTCFullYear(), cra.month.getUTCMonth() + 1, 1))
 
-  // Un CRA porte une mission et un mois : les deux bornes sont dans la requête.
-  // Sans le filtre de mission, le temps d'une autre mission du même mois
-  // partirait sur ce projet-ci, et le client verrait facturé du temps passé
-  // ailleurs.
+  // Un CRA porte une mission — ou une seule de ses prestations — et un mois :
+  // les bornes sont dans la requête. Sans le filtre de mission, le temps d'une
+  // autre mission du même mois partirait sur ce projet-ci, et le client verrait
+  // facturé du temps passé ailleurs ; sans celui de la prestation, valider une
+  // commande pousserait aussi le temps d'une autre, pas encore validée.
   //
   // Le tri « réalisé seulement » n'est PAS répété ici : c'est
   // `buildTimeSpentPayloads` qui le porte, et le dupliquer laisserait les deux
@@ -215,7 +217,7 @@ export async function pushCraTimes(args: {
     where: {
       userId: args.userId,
       date: { gte: debut, lt: fin },
-      line: { missionId: cra.missionId },
+      ...saisiesDuPerimetre(cra),
     },
     select: {
       id: true,

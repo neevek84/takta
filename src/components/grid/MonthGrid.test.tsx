@@ -32,6 +32,7 @@ const lines: LineForGrid[] = [
     soldCentiemes: 3000,
     allowedSlotIds: [],
     lieuDefaut: 'DISTANCE',
+    modeCra: 'MISSION',
   },
   {
     id: 'l2',
@@ -43,6 +44,7 @@ const lines: LineForGrid[] = [
     soldCentiemes: 1000,
     allowedSlotIds: ['nuit'],
     lieuDefaut: 'DISTANCE',
+    modeCra: 'MISSION',
   },
 ]
 

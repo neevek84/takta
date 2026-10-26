@@ -1,5 +1,4 @@
 import { prisma } from '@/db/client'
-import { isLocked } from '@/core/cra/state-machine'
 import type { ConflictKind, ConflictResolution } from '@/core/sync/policy'
 import {
   ENTITY_TIME_ENTRY,
@@ -9,9 +8,10 @@ import {
   estBlocSecondaire,
   PROVIDER_GOOGLE,
 } from '@/core/sync/policy'
-import type { CraStatus, TimeEntryKind } from '@/core/types'
+import type { TimeEntryKind } from '@/core/types'
 import { saveEntry, toIsoDate } from '@/services/time-entries'
 import { enqueueSync } from './outbox'
+import { moisFermePourLaLigne } from '@/services/cra-perimetre'
 
 export interface OpenConflict {
   id: string
@@ -132,8 +132,8 @@ function minutesEntre(startLocal: string, endLocal: string): number {
  * Le mois de cette saisie est-il verrouillé ?
  *
  * Lecture seule, et **jamais** une seconde règle : le verrou reste jugé par
- * `isLocked`, la fonction que `saveEntry` interroge sur le même couple
- * (mission, mois). Rien ici ne peut donc autoriser une écriture que
+ * `moisFermePourLaLigne`, la fonction que `saveEntry` interroge pour la même
+ * prestation et le même mois. Rien ici ne peut donc autoriser une écriture que
  * `saveEntry` refuserait — c'est l'inverse : on refuse **avant** d'écrire.
  *
  * Sans ce coup d'œil préalable, l'ordre imposé (écrire la nouvelle position
@@ -143,24 +143,7 @@ function minutesEntre(startLocal: string, endLocal: string): number {
  * l'arbitrage promet précisément de ne jamais faire.
  */
 async function moisVerrouille(userId: string, lineId: string, isoDate: string): Promise<boolean> {
-  const line = await prisma.missionLine.findUnique({
-    where: { id: lineId },
-    select: { missionId: true },
-  })
-  if (line === null) return false
-
-  const cra = await prisma.cra.findUnique({
-    where: {
-      missionId_userId_month: {
-        missionId: line.missionId,
-        userId,
-        month: new Date(`${isoDate.slice(0, 7)}-01T00:00:00.000Z`),
-      },
-    },
-    select: { status: true },
-  })
-
-  return cra !== null && isLocked(cra.status as CraStatus)
+  return moisFermePourLaLigne(userId, lineId, isoDate)
 }
 
 export async function resolveConflict(args: {

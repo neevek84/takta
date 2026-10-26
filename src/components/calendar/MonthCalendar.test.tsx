@@ -32,6 +32,7 @@ const ligneJour: LineForGrid = {
   soldCentiemes: 3000,
   allowedSlotIds: [],
   lieuDefaut: 'DISTANCE',
+  modeCra: 'MISSION',
 }
 
 const ligneHeure: LineForGrid = { ...ligneJour, id: 'l2', label: 'Astreinte', displayUnit: 'HEURE' }

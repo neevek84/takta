@@ -9,7 +9,7 @@ function ligne(over: Partial<LineForGrid>): LineForGrid {
   return {
     id: 'l1', label: 'Consultant ITSM', missionLabel: 'ITSM', clientName: 'ACME',
     displayUnit: 'JOUR', minutesParJour: 480, soldCentiemes: 3000, allowedSlotIds: [],
-    lieuDefaut: 'DISTANCE', ...over,
+    lieuDefaut: 'DISTANCE', modeCra: 'MISSION', ...over,
   }
 }
 

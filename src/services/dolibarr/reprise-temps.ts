@@ -42,6 +42,7 @@ import { resolveLineMinutesParJour } from '@/services/time-entries'
 import { DOLIBARR, type DolibarrApi, type DolibarrTimeSpent } from './api'
 import { LIEN_LIGNE, LIEN_TEMPS_REPRIS, LIEN_UTILISATEUR } from './liens'
 import { enqueueTimeEntry } from '@/services/sync/outbox'
+import { perimetreDuCra, TOUTE_LA_MISSION } from '@/core/cra/perimetre'
 
 /** La constante Dolibarr qui dit combien d'heures vaut une journée. */
 const CONSTANTE_JOURNEE = 'TIMESHEET_DAY_DURATION'
@@ -296,6 +297,12 @@ export async function reprendreLesTemps(args: {
 
   const repris = await dejaRepris()
   const settings = await getSettings()
+  // Le CRA à verrouiller suit le réglage de la mission : toute la mission, ou
+  // chaque prestation reprise. Clé `lineIdDuCra|mois`.
+  const { modeCra } = await prisma.mission.findUniqueOrThrow({
+    where: { id: args.missionId },
+    select: { modeCra: true },
+  })
   const moisTouches = new Set<string>()
   // Un auteur introuvable n'est signalé qu'une fois, pas une fois par temps.
   const introuvables = new Set<number>()
@@ -407,7 +414,7 @@ export async function reprendreLesTemps(args: {
         })
         repris.add(String(t.id))
         resultat.reprises += 1
-        moisTouches.add(moisDe(jour!))
+        moisTouches.add(`${perimetreDuCra(modeCra, p.lineId)}|${moisDe(jour!)}`)
       }
     }
   }
@@ -415,24 +422,28 @@ export async function reprendreLesTemps(args: {
   // Le verrouillage vient en dernier, et **jamais** par `transitionCra` : c'est
   // cette transition qui met le push en file. Un CRA validé ici ne pousse rien,
   // ce qui est exactement le propos — les temps sont déjà chez Dolibarr.
-  for (const mois of [...moisTouches].sort()) {
+  for (const cle of [...moisTouches].sort()) {
+    const [lineId = TOUTE_LA_MISSION, mois = ''] = cle.split('|')
     await prisma.cra.upsert({
       where: {
-        missionId_userId_month: {
+        missionId_userId_month_lineId: {
           missionId: args.missionId,
           userId: args.userId,
           month: new Date(`${mois}-01T00:00:00Z`),
+          lineId,
         },
       },
       create: {
         missionId: args.missionId,
         userId: args.userId,
         month: new Date(`${mois}-01T00:00:00Z`),
+        lineId,
         status: 'VALIDE',
       },
       update: { status: 'VALIDE' },
     })
-    resultat.moisVerrouilles.push(mois)
+    // Un mois par prestation reprise s'annoncerait autant de fois.
+    if (!resultat.moisVerrouilles.includes(mois)) resultat.moisVerrouilles.push(mois)
   }
 
   return resultat

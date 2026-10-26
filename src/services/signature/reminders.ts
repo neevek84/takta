@@ -1,4 +1,5 @@
 import { prisma } from '@/db/client'
+import { libelleDuCra } from '@/core/cra/perimetre'
 import type { SignatureConnector } from '@/core/signature/connector'
 import { empreinteJeton } from '@/core/auth/reinitialisation'
 import { libelleMois } from '@/core/cra/document'
@@ -93,7 +94,8 @@ export async function runSignatureReminders(
       cra: {
         select: {
           month: true,
-          mission: { select: { label: true, client: { select: { name: true } } } },
+          lineId: true,
+          mission: { select: { label: true, client: { select: { name: true } }, lines: { select: { id: true, label: true } } } },
         },
       },
       relances: true,
@@ -150,7 +152,7 @@ export async function runSignatureReminders(
         to: demande.signataireEmail,
         gabarit: gabaritRelanceClient({
           clientNom: demande.cra.mission.client.name,
-          missionLabel: demande.cra.mission.label,
+          missionLabel: libelleDuCra(demande.cra),
           moisLibelle: libelleMois(mois),
           signataireNom: demande.signataireNom,
           lien: `${demande.origine}/v/${jeton}`,

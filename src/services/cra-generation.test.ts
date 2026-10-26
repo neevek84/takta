@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import { prisma } from '@/db/client'
 import { createClient } from './clients'
-import { createMission, createLine } from './missions'
+import { createMission, createLine, updateMissionModeCra } from './missions'
 import { genererCra } from './cra-generation'
 import { currentAuditSeq, readAuditSince } from './audit'
+import { transitionCra } from './cra'
+import { moisFermePourLaLigne } from './cra-perimetre'
 
 /**
  * Un interrupteur pour provoquer, réellement, l'échec précis que le test
@@ -339,5 +341,126 @@ describe('genererCra', () => {
 
     const apres = await readAuditSince({ since: avant })
     expect(apres).toHaveLength(0)
+  })
+})
+
+/**
+ * Une mission réglée sur un CRA par prestation : un projet renouvelé par
+ * commandes, chacune rangée en prestation et facturée à part.
+ */
+describe('genererCra — un CRA par prestation', () => {
+  let ligne2 = ''
+
+  beforeEach(async () => {
+    const l2 = await createLine({
+      missionId,
+      label: 'Renouvellement',
+      userId,
+      soldCentiemes: 2300,
+      tjmCents: 0,
+    })
+    ligne2 = l2.id
+  })
+
+  it('règle la mission, consigne le changement, et refuse un réglage inconnu ou d’un autre', async () => {
+    const avant = await currentAuditSeq()
+    expect(await updateMissionModeCra(userId, missionId, 'PRESTATION')).toEqual({ ok: true })
+    // Reposé à l'identique : rien à écrire, rien à consigner.
+    expect(await updateMissionModeCra(userId, missionId, 'PRESTATION')).toEqual({ ok: true })
+    const journal = await readAuditSince({ since: avant })
+    expect(journal.map((e) => [e.action, e.payload])).toEqual([
+      ['reglage.modifie', { modeCra: { avant: 'MISSION', apres: 'PRESTATION' } }],
+    ])
+
+    expect(await updateMissionModeCra(userId, missionId, 'FACTURE')).toMatchObject({ ok: false })
+    expect(await updateMissionModeCra(userId2, missionId, 'MISSION')).toMatchObject({ ok: false })
+    expect((await prisma.mission.findUnique({ where: { id: missionId } }))?.modeCra).toBe('PRESTATION')
+  })
+
+  it('ouvre un CRA par prestation, et chacun ne traite que son prévisionnel', async () => {
+    expect(await updateMissionModeCra(userId, missionId, 'PRESTATION')).toEqual({ ok: true })
+    const prevu1 = await saisirSur(lineId, '2026-03-10', 'PREVISIONNEL')
+    const prevu2 = await saisirSur(ligne2, '2026-03-11', 'PREVISIONNEL')
+
+    const r1 = await genererCra(userId, { lineId, month: '2026-03', previsionnel: 'VALIDER' })
+    expect(r1).toMatchObject({ ok: true, previsionnelTraite: 1 })
+    expect((await prisma.timeEntry.findUnique({ where: { id: prevu1 } }))?.kind).toBe('REALISE')
+    // L'autre commande garde son prévisionnel : sa génération n'a pas eu lieu.
+    expect((await prisma.timeEntry.findUnique({ where: { id: prevu2 } }))?.kind).toBe('PREVISIONNEL')
+
+    const r2 = await genererCra(userId, { lineId: ligne2, month: '2026-03', previsionnel: 'SUPPRIMER' })
+    expect(r2).toMatchObject({ ok: true, previsionnelTraite: 1 })
+
+    const cras = await prisma.cra.findMany({
+      where: { missionId, userId, month: monthStart('2026-03') },
+      orderBy: { lineId: 'asc' },
+    })
+    expect(cras.map((c) => c.lineId).sort()).toEqual([lineId, ligne2].sort())
+  })
+
+  it('valider le CRA d’une prestation ne ferme pas la saisie de l’autre', async () => {
+    await updateMissionModeCra(userId, missionId, 'PRESTATION')
+    const r = await genererCra(userId, { lineId, month: '2026-03', previsionnel: 'SUPPRIMER' })
+    if (!r.ok) throw new Error('génération refusée')
+    await transitionCra(userId, r.craId, 'ENVOYER')
+
+    expect(await moisFermePourLaLigne(userId, lineId, '2026-03')).toBe(true)
+    expect(await moisFermePourLaLigne(userId, ligne2, '2026-03')).toBe(false)
+  })
+
+  it('remplace un brouillon de mission jamais envoyé', async () => {
+    const avant = await genererCra(userId, { lineId, month: '2026-03', previsionnel: 'SUPPRIMER' })
+    if (!avant.ok) throw new Error('génération refusée')
+
+    await updateMissionModeCra(userId, missionId, 'PRESTATION')
+    const apres = await genererCra(userId, { lineId, month: '2026-03', previsionnel: 'SUPPRIMER' })
+
+    expect(apres.ok).toBe(true)
+    expect(await prisma.cra.findUnique({ where: { id: avant.craId } })).toBeNull()
+    const cras = await prisma.cra.findMany({ where: { missionId, userId, month: monthStart('2026-03') } })
+    expect(cras.map((c) => c.lineId)).toEqual([lineId])
+  })
+
+  it('refuse de doubler un CRA de mission déjà envoyé, et ne touche à rien', async () => {
+    const mission = await genererCra(userId, { lineId, month: '2026-03', previsionnel: 'SUPPRIMER' })
+    if (!mission.ok) throw new Error('génération refusée')
+    await transitionCra(userId, mission.craId, 'ENVOYER')
+    await updateMissionModeCra(userId, missionId, 'PRESTATION')
+    const prevu = await saisirSur(ligne2, '2026-03-12', 'PREVISIONNEL')
+
+    const r = await genererCra(userId, { lineId: ligne2, month: '2026-03', previsionnel: 'SUPPRIMER' })
+
+    expect(r).toEqual({
+      ok: false,
+      raison: 'AUTRE_PERIMETRE',
+      craId: mission.craId,
+      statut: 'ENVOYE',
+      prestationLabel: null,
+    })
+    expect(await prisma.timeEntry.findUnique({ where: { id: prevu } })).not.toBeNull()
+  })
+
+  it('refuse un CRA de mission quand une prestation a déjà le sien, envoyé', async () => {
+    await updateMissionModeCra(userId, missionId, 'PRESTATION')
+    const parPrestation = await genererCra(userId, {
+      lineId: ligne2,
+      month: '2026-03',
+      previsionnel: 'SUPPRIMER',
+    })
+    if (!parPrestation.ok) throw new Error('génération refusée')
+    await transitionCra(userId, parPrestation.craId, 'ENVOYER')
+    await updateMissionModeCra(userId, missionId, 'MISSION')
+
+    const r = await genererCra(userId, { lineId, month: '2026-03', previsionnel: 'SUPPRIMER' })
+
+    expect(r).toEqual({
+      ok: false,
+      raison: 'AUTRE_PERIMETRE',
+      craId: parPrestation.craId,
+      statut: 'ENVOYE',
+      prestationLabel: 'Renouvellement',
+    })
+    const cras = await prisma.cra.findMany({ where: { missionId, userId, month: monthStart('2026-03') } })
+    expect(cras).toHaveLength(1)
   })
 })

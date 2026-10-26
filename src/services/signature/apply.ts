@@ -1,4 +1,5 @@
 import { prisma } from '@/db/client'
+import { libelleDuCra } from '@/core/cra/perimetre'
 import { canTransition, InvalidTransitionError, type CraTransition } from '@/core/cra/state-machine'
 import type { SignatureConnector, SignatureStatus } from '@/core/signature/connector'
 import type { CraStatus } from '@/core/types'
@@ -242,8 +243,9 @@ async function notifierIssue(
     select: {
       id: true,
       month: true,
+      lineId: true,
       user: { select: { email: true } },
-      mission: { select: { label: true, client: { select: { name: true } } } },
+      mission: { select: { label: true, client: { select: { name: true } }, lines: { select: { id: true, label: true } } } },
       signatureRequest: {
         select: {
           signataireNom: true,
@@ -259,9 +261,10 @@ async function notifierIssue(
 
   const d = cra.signatureRequest
   const mois = cra.month.toISOString().slice(0, 7)
+  const libelle = libelleDuCra(cra)
   const contexte = {
     clientNom: cra.mission.client.name,
-    missionLabel: cra.mission.label,
+    missionLabel: libelle,
     moisLibelle: libelleMois(mois),
     signataireNom: d.signataireNom,
   }
@@ -272,7 +275,7 @@ async function notifierIssue(
         ? []
         : [
             {
-              nom: `${nomFichierCra(cra.mission.client.name, cra.mission.label, mois).replace(/\.pdf$/, '')}-signe.pdf`,
+              nom: `${nomFichierCra(cra.mission.client.name, libelle, mois).replace(/\.pdf$/, '')}-signe.pdf`,
               type: 'application/pdf',
               octets: new Uint8Array(d.signedPdf),
             },

@@ -1,4 +1,5 @@
 import { prisma } from '@/db/client'
+import { libelleDuCra } from '@/core/cra/perimetre'
 import { canTransition, InvalidTransitionError } from '@/core/cra/state-machine'
 import { libelleMois } from '@/core/cra/document'
 import { gabaritAnnulationClient } from '@/core/notify/signature'
@@ -34,7 +35,7 @@ export async function annulerEnvoi(
 
   const cra = await prisma.cra.findFirst({
     where: { id: craId, userId },
-    include: { mission: { include: { client: true } }, signatureRequest: true },
+    include: { mission: { include: { client: true, lines: { select: { id: true, label: true } } } }, signatureRequest: true },
   })
   if (cra === null || !canTransition(cra.status as CraStatus, 'ANNULER_ENVOI')) return echec('TRANSITION_IMPOSSIBLE')
 
@@ -100,7 +101,7 @@ export async function annulerEnvoi(
       to: demande.signataireEmail,
       gabarit: gabaritAnnulationClient({
         clientNom: cra.mission.client.name,
-        missionLabel: cra.mission.label,
+        missionLabel: libelleDuCra(cra),
         moisLibelle: libelleMois(cra.month.toISOString().slice(0, 7)),
         signataireNom: demande.signataireNom,
       }),

@@ -20,12 +20,15 @@ import type { ChoixPrevisionnel } from '@/services/cra-generation'
 export function PanneauGeneration({
   month,
   missionLabel,
+  parPrestation = false,
   previsionnel,
   onChoix,
   onAnnuler,
 }: {
   month: string
   missionLabel: string
+  /** la mission est réglée sur un CRA par prestation : le compte et le CRA ne couvrent qu'elle */
+  parPrestation?: boolean
   previsionnel: number
   onChoix: (choix: ChoixPrevisionnel) => void
   onAnnuler: () => void
@@ -40,7 +43,8 @@ export function PanneauGeneration({
     <div className="mb-3">
       <Banner tone="warning" title={`Générer le CRA de ${libelleMois(month)} ?`}>
         <p className="mb-2">
-          Ce mois porte encore {jours} sur la mission « {missionLabel} ».
+          Ce mois porte encore {jours} sur {parPrestation ? 'la prestation' : 'la mission'} «{' '}
+          {missionLabel} ».
         </p>
         <p className="mb-2">
           <strong>Valider</strong> les passe en réalisé : ils compteront dans le CRA, y compris les

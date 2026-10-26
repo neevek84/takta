@@ -6,6 +6,7 @@ import { zonesSignature } from '@/core/cra/signature-zones'
 import type { SignatureChamp } from '@/core/signature/connector'
 import type { TimeEntryKind } from '@/core/types'
 import { readSettingsRow } from './settings'
+import { couvreLaLigne, libelleDuCra, TOUTE_LA_MISSION } from '@/core/cra/perimetre'
 
 export interface CraPdf {
   fileName: string
@@ -79,6 +80,9 @@ function moisDuCra(month: Date): string {
 interface ContexteCra {
   craId: string
   missionId: string
+  /** la seule prestation que ce CRA couvre ; vide pour toute la mission */
+  lineId: string
+  /** le libellé imprimé : la mission, suivie de la prestation quand le CRA n'en couvre qu'une */
   missionLabel: string
   clientNom: string
   /** 'YYYY-MM' */
@@ -96,19 +100,24 @@ interface ContexteCra {
 async function chargerContexte(userId: string, craId: string): Promise<ContexteCra> {
   const cra = await prisma.cra.findFirstOrThrow({
     where: { id: craId, userId },
-    include: { mission: { include: { client: true } } },
+    include: { mission: { include: { client: true, lines: { select: { id: true, label: true } } } } },
   })
 
   const mois = moisDuCra(cra.month)
+  // Un CRA par prestation se nomme par sa prestation aussi : deux commandes
+  // d'un même projet, le même mois, donneraient sinon deux fichiers du même
+  // nom — et le client ne saurait pas lequel il signe.
+  const missionLabel = libelleDuCra(cra)
   return {
     craId: cra.id,
     missionId: cra.missionId,
-    missionLabel: cra.mission.label,
+    lineId: cra.lineId,
+    missionLabel,
     clientNom: cra.mission.client.name,
     mois,
     signataireNom: cra.mission.signataireNom,
     signataireEmail: cra.mission.signataireEmail,
-    fileName: nomFichierCra(cra.mission.client.name, cra.mission.label, mois),
+    fileName: nomFichierCra(cra.mission.client.name, missionLabel, mois),
   }
 }
 
@@ -125,8 +134,15 @@ export async function buildCraPdf(userId: string, craId: string): Promise<CraPdf
   // cours de mois a bien été servie, et l'écarter ferait disparaître du CRA du
   // temps réellement réalisé. Une ligne sans aucune cellule ne s'imprime de
   // toute façon pas (`buildCraDocument` la saute).
+  //
+  // Un CRA de prestation n'imprime que la sienne : c'est elle que la facture
+  // de cette commande porte.
   const lignes = await prisma.missionLine.findMany({
-    where: { missionId: contexte.missionId, assignments: { some: { userId } } },
+    where: {
+      missionId: contexte.missionId,
+      assignments: { some: { userId } },
+      ...(contexte.lineId === TOUTE_LA_MISSION ? {} : { id: contexte.lineId }),
+    },
     orderBy: [{ position: 'asc' }, { id: 'asc' }],
     select: { id: true, label: true, soldCentiemes: true },
   })
@@ -145,11 +161,14 @@ export async function buildCraPdf(userId: string, craId: string): Promise<CraPdf
   // Les mois que le client a déjà validés. Tout le reste du réalisé est « en
   // validation », le mois de ce document compris — son propre CRA n'est pas
   // encore validé au moment où on le compose.
+  // Pour un CRA de prestation, ceux qui la couvrent : le sien, ou celui de
+  // toute la mission d'avant un changement de réglage.
   const cras = await prisma.cra.findMany({
     where: { missionId: contexte.missionId, userId, status: 'VALIDE' },
-    select: { month: true },
+    select: { month: true, lineId: true },
   })
   const moisValides = cras
+    .filter((c) => contexte.lineId === TOUTE_LA_MISSION || couvreLaLigne(c.lineId, contexte.lineId))
     .filter((c) => !Number.isNaN(c.month.getTime()))
     .map((c) => c.month.toISOString().slice(0, 7))
 

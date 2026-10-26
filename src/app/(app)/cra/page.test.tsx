@@ -47,6 +47,8 @@ function unCra(
     missionId: 'm1',
     missionLabel: 'ITSM',
     clientName: 'ACME',
+    lineId: '',
+    prestationLabel: null,
     month: '2026-03',
     status,
     invoiceNumber: null,

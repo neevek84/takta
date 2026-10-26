@@ -16,6 +16,7 @@ vi.mock('./actions', () => ({
 vi.mock('./LigneForm', () => ({ LigneForm: () => <div data-testid="ligne-form" /> }))
 vi.mock('./SignataireForm', () => ({ SignataireForm: () => <div data-testid="signataire-form" /> }))
 vi.mock('./LieuMissionForm', () => ({ LieuMissionForm: () => <div data-testid="lieu-mission-form" /> }))
+vi.mock('./ModeCraForm', () => ({ ModeCraForm: () => <div data-testid="mode-cra-form" /> }))
 
 import { MissionsExplorer, type CommandeOuverte } from './MissionsExplorer'
 
@@ -30,6 +31,7 @@ function mission(patch: Partial<MissionForUser> & { id: string }): MissionForUse
     signataireNom: '',
     signataireEmail: '',
     lieuDefaut: 'DISTANCE',
+    modeCra: 'MISSION',
     lines: [],
     ...patch,
   }

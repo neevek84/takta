@@ -9,11 +9,12 @@ import { parseQuantity } from '@/core/time/units'
 import { listActiveLines } from '@/services/missions'
 import {
   genererCra,
-  resoudreMissionAffectee,
+  resoudrePerimetreAffecte,
   type ChoixPrevisionnel,
   type ResultatGeneration,
 } from '@/services/cra-generation'
-import { compterPrevisionnelParMission } from '@/services/cra-previsionnel'
+import { compterPrevisionnelParPerimetre } from '@/services/cra-previsionnel'
+import { clePerimetre } from '@/services/cra-perimetre'
 import { getBusyRange, type ResultatAgenda } from '@/services/availability'
 import type { CellState } from '@/core/saisie/cycle'
 import type { ClearReport, FillReport } from '@/core/saisie/report'
@@ -158,14 +159,14 @@ export async function validerJoursPasses(
 }
 
 /**
- * Combien de jours en prévisionnel la mission de cette prestation porte-t-elle
- * sur ce mois ?
+ * Combien de jours en prévisionnel le CRA de cette prestation couvrira-t-il sur
+ * ce mois — ceux de toute sa mission, ou les siens seuls selon le réglage ?
  *
  * Lu **au clic** et non au rendu : c'est un chiffre qui bouge à chaque saisie,
  * et l'afficher figé depuis le rendu de la page ferait poser la question sur
  * un nombre faux.
  *
- * `resoudreMissionAffectee` est la même vérification d'affectation que
+ * `resoudrePerimetreAffecte` est la même vérification d'affectation que
  * `genererCra` : un utilisateur qui n'est plus affecté à cette prestation n'a
  * rien à en compter, `genererCra` le lui dira explicitement (`NON_AFFECTE`) au
  * moment d'agir.
@@ -176,19 +177,23 @@ export async function compterPrevisionnelDeLaLigne(args: {
 }): Promise<number> {
   const user = await requireUser()
 
-  const missionId = await resoudreMissionAffectee(user.id, args.lineId)
-  if (missionId === null) return 0
+  // Le périmètre du CRA à venir : toute la mission, ou cette seule prestation
+  // quand la mission est réglée ainsi. Compter plus large ferait poser la
+  // question sur des jours que la génération ne touchera pas.
+  const perimetre = await resoudrePerimetreAffecte(user.id, args.lineId)
+  if (perimetre === null) return 0
 
-  const par = await compterPrevisionnelParMission({
+  const par = await compterPrevisionnelParPerimetre({
     userId: user.id,
-    missionIds: [missionId],
+    perimetres: [perimetre],
     month: args.month,
   })
-  return par.get(missionId) ?? 0
+  return par.get(clePerimetre(perimetre)) ?? 0
 }
 
 /**
- * Génère le CRA du mois pour la mission de la prestation choisie.
+ * Génère le CRA du mois pour la prestation choisie : celui de toute sa mission,
+ * ou le sien seul quand la mission est réglée sur un CRA par prestation.
  *
  * Le choix du prévisionnel vient de l'utilisateur, jamais d'un défaut : voir
  * `PanneauGeneration`.

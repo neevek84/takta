@@ -23,11 +23,14 @@
  * corrigé d'un seul côté.
  */
 import { prisma } from '@/db/client'
+import type { Prisma } from '@prisma/client'
 import { annulerPrevisionnelDuMois, validerPrevisionnelDuMois } from './cra-previsionnel'
 import { getOrCreateCra } from './cra'
 import { appendAudit, actorOf } from './audit'
 import type { CraStatus } from '@/core/types'
 import { isLocked } from '@/core/cra/state-machine'
+import { perimetreDuCra, TOUTE_LA_MISSION } from '@/core/cra/perimetre'
+import type { PerimetreCra } from './cra-perimetre'
 
 export type ChoixPrevisionnel = 'VALIDER' | 'SUPPRIMER'
 
@@ -39,6 +42,20 @@ export type ResultatGeneration =
    * le bon geste de sortie (rouvrir, ou annuler l'envoi).
    */
   | { ok: false; raison: 'MOIS_FERME'; craId: string; statut: CraStatus }
+  /**
+   * Un CRA de l'**autre** forme couvre déjà ces jours, et il a vécu : envoyé,
+   * validé, refusé, ou porteur d'un envoi passé. C'est le cas d'une mission
+   * qui a changé de réglage en cours de route. Générer ici ferait figurer les
+   * mêmes jours sur deux CRA — donc sur deux factures. `prestationLabel` nomme
+   * ce CRA : `null` pour celui de toute la mission.
+   */
+  | {
+      ok: false
+      raison: 'AUTRE_PERIMETRE'
+      craId: string
+      statut: CraStatus
+      prestationLabel: string | null
+    }
   | { ok: false; raison: 'NON_AFFECTE' }
 
 function monthStart(month: string): Date {
@@ -65,24 +82,90 @@ class MoisDejaValideError extends Error {
 }
 
 /**
- * Résout la mission derrière une prestation, et vérifie au passage que
- * l'utilisateur y est affecté — en une lecture scopée.
+ * Un CRA de l'autre forme qui a vécu, découvert **pendant** la transaction :
+ * levée pour l'annuler entière, comme `MoisDejaValideError`.
+ */
+class ChevauchementError extends Error {
+  constructor(readonly resultat: ResultatGeneration & { raison: 'AUTRE_PERIMETRE' }) {
+    super('Un autre CRA couvre déjà ces jours.')
+  }
+}
+
+/**
+ * Le premier CRA de l'autre forme, sur ce mois, qui a **vécu** — tout sauf un
+ * brouillon jamais envoyé — rendu comme refus ; `null` s'il n'y en a pas.
+ */
+async function crasChevauchantsVecus(
+  client: Prisma.TransactionClient | typeof prisma,
+  userId: string,
+  perimetre: PerimetreCra,
+  month: string,
+): Promise<(ResultatGeneration & { raison: 'AUTRE_PERIMETRE' }) | null> {
+  const autres = await client.cra.findMany({
+    where: {
+      missionId: perimetre.missionId,
+      userId,
+      month: monthStart(month),
+      ...chevauchants(perimetre),
+    },
+    select: {
+      id: true,
+      lineId: true,
+      status: true,
+      signatureRequest: { select: { id: true } },
+      _count: { select: { envoisClos: true } },
+      mission: { select: { lines: { select: { id: true, label: true } } } },
+    },
+    orderBy: { lineId: 'asc' },
+  })
+  const vecu = autres.find(
+    (c) => c.status !== 'BROUILLON' || c.signatureRequest !== null || c._count.envoisClos > 0,
+  )
+  if (vecu === undefined) return null
+  return {
+    ok: false,
+    raison: 'AUTRE_PERIMETRE',
+    craId: vecu.id,
+    statut: vecu.status as CraStatus,
+    prestationLabel:
+      vecu.lineId === TOUTE_LA_MISSION
+        ? null
+        : (vecu.mission.lines.find((l) => l.id === vecu.lineId)?.label ?? vecu.lineId),
+  }
+}
+
+/**
+ * Ce que couvrira le CRA généré depuis cette prestation : toute sa mission, ou
+ * elle seule, selon le réglage de la mission (`Mission.modeCra`) — et, au
+ * passage, la preuve que l'utilisateur y est affecté, en une lecture scopée.
  *
  * Partagée entre `genererCra` et `compterPrevisionnelDeLaLigne` (l'action de
  * la Saisie qui lit le nombre de jours avant de poser la question) : les deux
  * ont besoin de la même garantie — le client ne décide pas seul sur quelle
- * mission on lit ou on écrit. Une seconde version de ce contrôle aurait
- * divergé de la première au premier défaut corrigé d'un seul côté.
+ * mission on lit ou on écrit — et du même périmètre, faute de quoi la question
+ * porterait sur d'autres jours que ceux que la génération touche.
  */
-export async function resoudreMissionAffectee(
+export async function resoudrePerimetreAffecte(
   userId: string,
   lineId: string,
-): Promise<string | null> {
+): Promise<PerimetreCra | null> {
   const line = await prisma.missionLine.findFirst({
     where: { id: lineId, assignments: { some: { userId } } },
-    select: { missionId: true },
+    select: { missionId: true, mission: { select: { modeCra: true } } },
   })
-  return line?.missionId ?? null
+  if (line === null) return null
+  return { missionId: line.missionId, lineId: perimetreDuCra(line.mission.modeCra, lineId) }
+}
+
+/**
+ * Les CRA de l'autre forme qui couvrent une partie des mêmes jours : pour un
+ * CRA de prestation, celui de toute la mission ; pour un CRA de mission, ceux
+ * de chacune de ses prestations.
+ */
+function chevauchants(p: PerimetreCra): { lineId: string } | { NOT: { lineId: string } } {
+  return p.lineId === TOUTE_LA_MISSION
+    ? { NOT: { lineId: TOUTE_LA_MISSION } }
+    : { lineId: TOUTE_LA_MISSION }
 }
 
 /**
@@ -90,18 +173,28 @@ export async function resoudreMissionAffectee(
  *
  * `lineId` et non `missionId` : c'est ce que l'écran de saisie connaît. La
  * mission est résolue ici, **et l'affectation vérifiée au passage** — le
- * client ne décide pas seul sur quelle mission on écrit.
+ * client ne décide pas seul sur quelle mission on écrit. Le réglage de la
+ * mission dit ensuite si le CRA couvre toute la mission ou cette seule
+ * prestation (`@/core/cra/perimetre`).
+ *
+ * **Jamais deux CRA sur les mêmes jours.** Quand la mission a changé de
+ * réglage, un CRA de l'autre forme peut exister sur ce mois. S'il n'a jamais
+ * vécu — brouillon, sans envoi passé —, il n'est qu'une coquille : les jours
+ * vivent dans les saisies, pas dans le CRA. Il est retiré dans la même
+ * transaction, et celui-ci le remplace. S'il a vécu, la génération est
+ * refusée (`AUTRE_PERIMETRE`) : il reste celui de référence pour ce mois.
  */
 export async function genererCra(
   userId: string,
   args: { lineId: string; month: string; previsionnel: ChoixPrevisionnel },
 ): Promise<ResultatGeneration> {
-  const missionId = await resoudreMissionAffectee(userId, args.lineId)
-  if (missionId === null) return { ok: false, raison: 'NON_AFFECTE' }
+  const perimetre = await resoudrePerimetreAffecte(userId, args.lineId)
+  if (perimetre === null) return { ok: false, raison: 'NON_AFFECTE' }
+  const { missionId, lineId } = perimetre
 
   const existant = await prisma.cra.findUnique({
     where: {
-      missionId_userId_month: { missionId, userId, month: monthStart(args.month) },
+      missionId_userId_month_lineId: { missionId, userId, month: monthStart(args.month), lineId },
     },
     select: { id: true, status: true },
   })
@@ -120,24 +213,45 @@ export async function genererCra(
     }
   }
 
+  // Lu hors transaction pour refuser tôt et sans rien écrire ; la transaction
+  // le relit avant de supprimer quoi que ce soit.
+  const vecu = await crasChevauchantsVecus(prisma, userId, perimetre, args.month)
+  if (vecu !== null) return vecu
+
   let resultat: { previsionnelTraite: number; craId: string; craCree: boolean }
   try {
     resultat = await prisma.$transaction(async (tx) => {
+      const course = await crasChevauchantsVecus(tx, userId, perimetre, args.month)
+      if (course !== null) throw new ChevauchementError(course)
+
+      // Les coquilles de l'autre forme : brouillons sans envoi passé. Elles ne
+      // portent rien que les saisies ne portent déjà.
+      await tx.cra.deleteMany({
+        where: {
+          missionId,
+          userId,
+          month: monthStart(args.month),
+          ...chevauchants(perimetre),
+        },
+      })
+
       const previsionnelTraite =
         args.previsionnel === 'VALIDER'
           ? await validerPrevisionnelDuMois(tx, {
               userId,
               missionId,
+              lineId,
               month: args.month,
             })
           : await annulerPrevisionnelDuMois(tx, {
               userId,
               missionId,
+              lineId,
               month: args.month,
             })
 
       const sortie = { cree: false }
-      const cra = await getOrCreateCra(userId, missionId, args.month, tx, sortie)
+      const cra = await getOrCreateCra(userId, missionId, args.month, tx, sortie, lineId)
 
       // La lecture de garde, plus haut, a laissé passer un mois qui n'était
       // pas encore validé à cet instant-là. S'il l'est devenu entre cette
@@ -155,6 +269,7 @@ export async function genererCra(
     if (err instanceof MoisDejaValideError) {
       return { ok: false, raison: 'MOIS_FERME', craId: err.craId, statut: err.statut }
     }
+    if (err instanceof ChevauchementError) return err.resultat
     throw err
   }
   const { previsionnelTraite, craId, craCree } = resultat
@@ -169,7 +284,12 @@ export async function genererCra(
       action: 'cra.ouvert',
       entityType: 'Cra',
       entityId: craId,
-      payload: { missionId, month: args.month, status: 'BROUILLON' },
+      payload: {
+        missionId,
+        month: args.month,
+        status: 'BROUILLON',
+        ...(lineId === TOUTE_LA_MISSION ? {} : { lineId }),
+      },
     })
   }
 
@@ -184,6 +304,7 @@ export async function genererCra(
       payload: {
         month: args.month,
         missionId,
+        ...(lineId === TOUTE_LA_MISSION ? {} : { lineId }),
         // D'où vient le geste : ce n'est pas l'annulation automatique portée
         // par `cra-previsionnel.ts` à la validation, c'est la question posée
         // à la génération du CRA.

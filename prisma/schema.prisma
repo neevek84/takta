@@ -117,6 +117,12 @@ model Mission {
   /// comme `kind` : le schéma reste dans l'intersection SQLite/Postgres.
   lieuDefaut String @default("DISTANCE")
 
+  /// 'MISSION' | 'PRESTATION'. Ce que couvre un CRA de cette mission : toute
+  /// la mission (défaut), ou une seule prestation. Le second sert les projets
+  /// renouvelés par commandes successives, rangées en prestations d'un même
+  /// projet mais facturées chacune à part.
+  modeCra String @default("MISSION")
+
   client Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
   lines  MissionLine[]
   cras   Cra[]
@@ -224,6 +230,10 @@ model Cra {
   userId    String
   /// premier jour du mois, minuit UTC
   month     DateTime
+  /// La prestation que ce CRA couvre seule ; vide = toute la mission.
+  /// Une chaîne vide et non `null` : l'unicité ci-dessous doit la voir comme
+  /// une valeur, ce que Postgres refuse à `null`.
+  lineId    String   @default("")
   /// 'BROUILLON' | 'ENVOYE' | 'VALIDE' | 'REFUSE'
   status    String   @default("BROUILLON")
 
@@ -240,7 +250,7 @@ model Cra {
   envoisClos       SignatureEnvoiClos[]
   liensClient      LienClient[]
 
-  @@unique([missionId, userId, month])
+  @@unique([missionId, userId, month, lineId])
   @@index([userId])
 }
 
