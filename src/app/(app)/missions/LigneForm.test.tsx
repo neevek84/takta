@@ -35,10 +35,25 @@ const MANUELLE = {
   tjmCents: 80_000,
   displayUnit: 'JOUR' as const,
   engagementSource: 'MANUEL' as const,
+  engagementVerrouille: false,
 }
 
-const REPRISE = { ...MANUELLE, engagementSource: 'DOLIBARR_PROPALE' as const }
-const DEPUIS_COMMANDE = { ...MANUELLE, engagementSource: 'DOLIBARR_COMMANDE' as const }
+const REPRISE = {
+  ...MANUELLE,
+  engagementSource: 'DOLIBARR_PROPALE' as const,
+  engagementVerrouille: true,
+}
+const DEPUIS_COMMANDE = {
+  ...MANUELLE,
+  engagementSource: 'DOLIBARR_COMMANDE' as const,
+  engagementVerrouille: true,
+}
+/** Étiquetée Dolibarr, mais plus rien ne la rattache : une mission locale. */
+const DETACHEE = {
+  ...MANUELLE,
+  engagementSource: 'DOLIBARR_PROJET' as const,
+  engagementVerrouille: false,
+}
 
 /**
  * La visibilité du panneau est décidée par `LigneRow`, pas par ce composant :
@@ -93,6 +108,17 @@ describe('LigneForm', () => {
     expect(screen.getByLabelText('TJM (€)')).toHaveProperty('readOnly', false)
     expect(container.querySelector('input[name="joursVendus"]')).not.toBeNull()
     expect(container.querySelector('input[name="tjmEuros"]')).not.toBeNull()
+  })
+
+  it('laisse modifier les chiffres d une mission locale, même étiquetée Dolibarr', () => {
+    // L'étiquette survit au détachement et au réglage par défaut : la suivre
+    // seule figeait des chiffres qu'aucun document Dolibarr ne tient.
+    const { container } = rendre(DETACHEE)
+    expect(screen.getByLabelText('Jours vendus')).toHaveProperty('readOnly', false)
+    expect(screen.getByLabelText('TJM (€)')).toHaveProperty('readOnly', false)
+    expect(container.querySelector('input[name="joursVendus"]')).not.toBeNull()
+    expect(container.querySelector('input[name="tjmEuros"]')).not.toBeNull()
+    expect(screen.queryByText(/qui en reste maître/)).toBeNull()
   })
 
   it('ne propose pas de modifier des chiffres repris de la propale', () => {

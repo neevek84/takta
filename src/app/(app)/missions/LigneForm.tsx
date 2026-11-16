@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { Field } from '@/components/ui/Field'
 import { Select } from '@/components/ui/Select'
 import { GestionPrestation } from './GestionPrestation'
-import { engagementVerrouille, libelleEngagement } from '@/core/dolibarr/engagement'
+import { libelleEngagement } from '@/core/dolibarr/engagement'
 import type { DisplayUnit, EngagementSource } from '@/core/types'
 
 /**
@@ -23,7 +23,8 @@ import type { DisplayUnit, EngagementSource } from '@/core/types'
  * affectée), et ce refus doit s'afficher plutôt que de laisser l'écran se
  * recomposer à l'identique.
  *
- * Quand l'engagement vient d'une propale Dolibarr, les deux chiffres vendus
+ * Quand l'engagement est tenu par Dolibarr — source Dolibarr **et** mission ou
+ * prestation encore rattachée —, les deux chiffres vendus
  * sont affichés **en lecture seule et hors soumission** : le champ reste
  * visible et lisible — la valeur contractuelle est une information utile —
  * mais il ne porte pas de `name`, donc rien ne part.
@@ -39,6 +40,8 @@ export function LigneForm({
     tjmCents: number
     displayUnit: DisplayUnit
     engagementSource: EngagementSource
+    /** Calculé par le service : source Dolibarr **et** lien encore en place. */
+    engagementVerrouille: boolean
   }
   /** Ferme le panneau — la visibilité est décidée par la ligne du tableau. */
   onClose: () => void
@@ -48,7 +51,7 @@ export function LigneForm({
     null,
   )
 
-  const reprise = engagementVerrouille(line.engagementSource)
+  const reprise = line.engagementVerrouille
 
   return (
     <div className="flex flex-col gap-2">

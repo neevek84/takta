@@ -49,6 +49,7 @@ const MISSIONS: MissionForUser[] = [
         tjmCents: 80000,
         displayUnit: 'JOUR',
         engagementSource: 'DOLIBARR_COMMANDE',
+        engagementVerrouille: true,
         dolibarrTaskId: 51,
       },
     ],
@@ -200,6 +201,7 @@ describe('MissionsExplorer — d’où vient chaque chose', () => {
               tjmCents: 0,
               displayUnit: 'JOUR',
               engagementSource: 'MANUEL',
+              engagementVerrouille: false,
               dolibarrTaskId: 51,
             },
             {
@@ -209,6 +211,7 @@ describe('MissionsExplorer — d’où vient chaque chose', () => {
               tjmCents: 0,
               displayUnit: 'JOUR',
               engagementSource: 'MANUEL',
+              engagementVerrouille: false,
               dolibarrTaskId: null,
             },
           ],
