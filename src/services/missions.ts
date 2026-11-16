@@ -7,6 +7,9 @@ import { engagementVerrouille, libelleEngagement } from '@/core/dolibarr/engagem
 const PROVIDER_DOLIBARR = 'DOLIBARR'
 const ENTITE_MISSION = 'Mission'
 const ENTITE_LIGNE = 'MissionLine'
+// Les correspondances qui rattachent une prestation à Dolibarr : sa tâche,
+// une ligne de propale, une ligne de commande.
+const ENTITES_LIGNE_DOLIBARR = [ENTITE_LIGNE, 'MissionLinePropalLine', 'MissionLineOrderLine']
 import { getSettings } from './settings'
 import { resolveMinutesParJour } from '@/core/rates/cascade'
 import { LIEUX } from '@/core/types'
@@ -181,6 +184,12 @@ export interface MissionForUser {
     engagementSource: EngagementSource
     /** La tâche Dolibarr de cette prestation, `null` quand elle n'en a pas. */
     dolibarrTaskId: number | null
+    /**
+     * Jours vendus et TJM tenus par Dolibarr, donc en lecture seule ici : une
+     * source Dolibarr **et** un lien encore en place (`verrousEffectifs`). Une
+     * mission locale n'est jamais verrouillée, quelle que soit son étiquette.
+     */
+    engagementVerrouille: boolean
   }>
 }
 
@@ -227,6 +236,7 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
     select: { entityType: true, entityId: true, externalId: true },
   })
   const externeDe = new Map(liens.map((l) => [`${l.entityType}|${l.entityId}`, Number(l.externalId)]))
+  const verrous = await verrousEffectifs(missions.flatMap((m) => m.lines))
 
   return missions.map((m) => ({
     id: m.id,
@@ -251,6 +261,7 @@ export async function listMissionsForUser(userId: string): Promise<MissionForUse
       tjmCents: l.tjmCents,
       displayUnit: l.displayUnit as DisplayUnit,
       engagementSource: l.engagementSource as EngagementSource,
+      engagementVerrouille: verrous.get(l.id) === true,
       dolibarrTaskId: externeDe.get(`${ENTITE_LIGNE}|${l.id}`) ?? null,
     })),
   }))
@@ -260,6 +271,51 @@ export type UpdateLineResult =
   | { ok: true }
   | { ok: false; reason: 'ENGAGEMENT_EXTERNE'; message: string }
   | { ok: false; reason: 'NON_AFFECTE' }
+
+/**
+ * Les jours vendus et le TJM de ces prestations sont-ils **réellement** tenus
+ * par Dolibarr ? Une entrée par identifiant de ligne.
+ *
+ * **Pourquoi la source seule ne suffit pas.** `engagementSource` est une
+ * étiquette posée une fois et jamais retirée : une mission détachée de
+ * Dolibarr la garde, et une prestation créée à la main en hérite quand le
+ * réglage par défaut nomme une source Dolibarr. Se fier à elle seule laissait
+ * des missions **locales** avec des chiffres impossibles à modifier, et aucun
+ * document chez Dolibarr pour les modifier à la place.
+ *
+ * Le verrou exige donc les deux : une source Dolibarr, **et** un lien encore
+ * en place — la mission rattachée à un projet, ou la ligne rattachée à une
+ * tâche, une ligne de propale ou une ligne de commande.
+ */
+async function verrousEffectifs(
+  lignes: Array<{ id: string; missionId: string; engagementSource: string }>,
+): Promise<Map<string, boolean>> {
+  const candidates = lignes.filter((l) => engagementVerrouille(l.engagementSource as EngagementSource))
+  const verrous = new Map(lignes.map((l) => [l.id, false]))
+  if (candidates.length === 0) return verrous
+
+  const liens = await prisma.externalLink.findMany({
+    where: {
+      provider: PROVIDER_DOLIBARR,
+      OR: [
+        { entityType: ENTITE_MISSION, entityId: { in: candidates.map((l) => l.missionId) } },
+        { entityType: { in: ENTITES_LIGNE_DOLIBARR }, entityId: { in: candidates.map((l) => l.id) } },
+      ],
+    },
+    select: { entityType: true, entityId: true },
+  })
+  const missionsLiees = new Set(
+    liens.filter((l) => l.entityType === ENTITE_MISSION).map((l) => l.entityId),
+  )
+  const lignesLiees = new Set(
+    liens.filter((l) => l.entityType !== ENTITE_MISSION).map((l) => l.entityId),
+  )
+
+  for (const l of candidates) {
+    verrous.set(l.id, missionsLiees.has(l.missionId) || lignesLiees.has(l.id))
+  }
+  return verrous
+}
 
 /**
  * Modifie une prestation.
@@ -286,11 +342,22 @@ export async function updateLine(args: {
 }): Promise<UpdateLineResult> {
   const affectation = await prisma.assignment.findUnique({
     where: { lineId_userId: { lineId: args.lineId, userId: args.userId } },
-    select: { line: { select: { engagementSource: true, soldCentiemes: true, tjmCents: true } } },
+    select: {
+      line: {
+        select: {
+          id: true,
+          missionId: true,
+          engagementSource: true,
+          soldCentiemes: true,
+          tjmCents: true,
+        },
+      },
+    },
   })
   if (affectation === null) return { ok: false, reason: 'NON_AFFECTE' }
 
   const ligne = affectation.line
+  const verrouillee = (await verrousEffectifs([ligne])).get(ligne.id) === true
   // Renvoyer la valeur affichée n'est pas la modifier : le formulaire repose
   // les deux champs à chaque soumission, y compris quand ils sont en lecture
   // seule. Comparer, plutôt que refuser toute présence, évite un refus devant
@@ -300,7 +367,7 @@ export async function updateLine(args: {
     (args.tjmCents !== undefined && args.tjmCents !== ligne.tjmCents)
 
   const source = ligne.engagementSource as EngagementSource
-  if (engagementVerrouille(source) && toucheEngagement) {
+  if (verrouillee && toucheEngagement) {
     return {
       ok: false,
       reason: 'ENGAGEMENT_EXTERNE',

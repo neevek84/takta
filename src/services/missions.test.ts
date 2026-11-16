@@ -1075,6 +1075,82 @@ describe('engagement issu d une propale', () => {
     expect(mission!.lines[0]!.engagementSource).toBe('DOLIBARR_PROPALE')
   })
 
+  it('expose le verrou effectif : fermé tant que la propale est rattachée', async () => {
+    const d = await decor({ nom: 'PROPALE verrou expose' })
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.id === d.mission.id)
+    expect(mission!.lines[0]!.engagementVerrouille).toBe(true)
+  })
+
+  it('rouvre les chiffres d une mission qui n est plus rattachée à Dolibarr', async () => {
+    // L'étiquette survit au détachement : se fier à elle seule laissait une
+    // mission locale avec des jours vendus et un TJM impossibles à modifier,
+    // et plus aucun document Dolibarr où les modifier à la place.
+    const d = await decor({ nom: 'PROPALE detachee' })
+    await attachPropalLine({
+      userId,
+      lineId: d.ligne.id,
+      proposalId: d.propale.id,
+      propalLineId: d.propale.lines[0]!.id,
+      api: d.api,
+    })
+    await prisma.externalLink.deleteMany({ where: { provider: DOLIBARR, entityId: d.ligne.id } })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.id === d.mission.id)
+    expect(mission!.lines[0]!.engagementSource).toBe('DOLIBARR_PROPALE')
+    expect(mission!.lines[0]!.engagementVerrouille).toBe(false)
+
+    expect(
+      await updateLine({ userId, lineId: d.ligne.id, soldCentiemes: 4500, tjmCents: 65_000 }),
+    ).toEqual({ ok: true })
+    const relue = await prisma.missionLine.findUniqueOrThrow({ where: { id: d.ligne.id } })
+    expect([relue.soldCentiemes, relue.tjmCents]).toEqual([4500, 65_000])
+  })
+
+  it('laisse modifier une prestation locale créée sous un défaut Dolibarr', async () => {
+    // Le réglage « source par défaut » étiquette la ligne, il ne la rattache à
+    // rien : sans lien, aucun document ne tient ses chiffres.
+    await updateSettings({ defaultEngagementSource: 'DOLIBARR_PROJET' })
+    const c = await createClient('DEFAUT client')
+    const m = await createMission({ clientId: c.id, label: 'DEFAUT mission' })
+    const l = await createLine({ missionId: m.id, userId, label: 'Dev', soldCentiemes: 100, tjmCents: 0 })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.id === m.id)
+    expect(mission!.lines[0]!.engagementVerrouille).toBe(false)
+    expect(await updateLine({ userId, lineId: l.id, soldCentiemes: 800 })).toEqual({ ok: true })
+  })
+
+  it('garde le verrou sur une mission rattachée à un projet Dolibarr', async () => {
+    await updateSettings({ defaultEngagementSource: 'DOLIBARR_PROJET' })
+    const c = await createClient('PROJET client')
+    const m = await createMission({ clientId: c.id, label: 'PROJET mission' })
+    const l = await createLine({ missionId: m.id, userId, label: 'Dev', soldCentiemes: 100, tjmCents: 0 })
+    await prisma.externalLink.create({
+      data: {
+        userId,
+        entityType: 'Mission',
+        entityId: m.id,
+        provider: DOLIBARR,
+        externalId: '777',
+        syncState: 'SYNCED',
+      },
+    })
+
+    const mission = (await listMissionsForUser(userId)).find((x) => x.id === m.id)
+    expect(mission!.lines[0]!.engagementVerrouille).toBe(true)
+    const r = await updateLine({ userId, lineId: l.id, soldCentiemes: 800 })
+    expect(r).toMatchObject({ ok: false, reason: 'ENGAGEMENT_EXTERNE' })
+
+    await prisma.externalLink.deleteMany({ where: { provider: DOLIBARR, entityId: m.id } })
+  })
+
   it('ne bloque jamais la saisie manuelle quand Dolibarr est en panne', async () => {
     // « C'est un complément, pas une obligation. »
     const d = await decor({ nom: 'PROPALE panne' })

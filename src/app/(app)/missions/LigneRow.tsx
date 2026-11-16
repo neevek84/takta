@@ -32,6 +32,7 @@ export function LigneRow({
     tjmCents: number
     displayUnit: DisplayUnit
     engagementSource: EngagementSource
+    engagementVerrouille: boolean
     dolibarrTaskId: number | null
   }
 }) {
