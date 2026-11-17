@@ -35,6 +35,7 @@ import {
 } from './actions'
 import { BoutonAgenda } from './BoutonAgenda'
 import { PanneauGeneration } from './PanneauGeneration'
+import { PanneauPlanning } from './PanneauPlanning'
 
 /**
  * Les bornes `du`/`au` (incluses) du mois affiché, telles que `props.days`
@@ -298,6 +299,7 @@ export function SaisieClient(props: {
   }
   const [toutLeMois, setToutLeMois] = useState(false)
   const [confirmationVidage, setConfirmationVidage] = useState(false)
+  const [exportPlanning, setExportPlanning] = useState(false)
   const [formulaire, setFormulaire] = useState<{ date: string; etat: CellState } | null>(null)
   /**
    * Ce que le panneau de génération montre, `null` tant qu'aucune génération
@@ -617,9 +619,27 @@ export function SaisieClient(props: {
             >
               Générer le CRA
             </Button>
+            <Button type="button" onClick={() => setExportPlanning((ouvert) => !ouvert)}>
+              Exporter le planning
+            </Button>
           </div>
         )}
       </div>
+
+      {/* Le panneau suit la prestation sélectionnée : il ne fait que composer
+          un lien, rien n'est figé au clic — contrairement à la génération. */}
+      {exportPlanning && ligne !== undefined && (
+        <PanneauPlanning
+          month={props.month}
+          ligne={ligne}
+          lignesDeLaMission={
+            props.lines.filter(
+              (l) => l.clientName === ligne.clientName && l.missionLabel === ligne.missionLabel,
+            ).length
+          }
+          onFermer={() => setExportPlanning(false)}
+        />
+      )}
 
       {/* C'est destructeur et ça doit se dire. Un panneau en ligne plutôt que
           `window.confirm`, qui bloque le fil et n'existe pas au test. */}
